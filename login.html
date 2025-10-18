@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · 认知控制台</title>
+<link rel="stylesheet" href="styles/app.css">
+</head>
+<body data-page="login">
+<div class="auth-shell">
+  <div class="auth-panel">
+    <h1 class="app-title">认知控制台</h1>
+    <p class="app-subtitle">离线知识对话工作台</p>
+    <div class="auth-tabs">
+      <button class="auth-tab active" data-mode="login">登录</button>
+      <button class="auth-tab" data-mode="register">注册</button>
+    </div>
+    <form id="authForm" class="auth-form">
+      <div class="form-field">
+        <label for="username">用户名</label>
+        <input id="username" name="username" type="text" autocomplete="username" required>
+      </div>
+      <div class="form-field">
+        <label for="password">密码</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+      </div>
+      <div class="form-field" id="roleField" hidden>
+        <label for="role">角色</label>
+        <select id="role" name="role">
+          <option value="operator">操作员</option>
+          <option value="admin">管理员</option>
+        </select>
+      </div>
+      <button type="submit" class="primary-button" id="authSubmit">登录</button>
+      <p class="auth-hint">默认管理员：用户名 admin · 密码 admin123</p>
+    </form>
+    <footer class="app-footer">©️吴嘉辉</footer>
+  </div>
+</div>
+<script src="scripts/app.js"></script>
+</body>
+</html>
