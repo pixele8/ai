@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>知识库 · 认知控制台</title>
+<title>知识库 · 虹小聊</title>
 <link rel="stylesheet" href="styles/app.css">
 </head>
 <body data-page="kb">
 <div class="app-shell">
   <aside class="sidebar" id="bankSidebar">
-    <div class="brand">认知控制台</div>
+    <div class="brand">虹小聊</div>
     <div class="nav-group">
       <a class="nav-link" href="index.html">对话</a>
       <a class="nav-link active" href="kb.html">知识库</a>
@@ -56,6 +56,18 @@
       <div id="chunkPreview" class="chunk-preview"></div>
     </section>
   </main>
+</div>
+<div class="modal hidden" id="chunkModal">
+  <div class="modal-content wide">
+    <h3 id="chunkMeta">分段详情</h3>
+    <form id="chunkForm" class="stack">
+      <textarea id="chunkContent" rows="8" placeholder="编辑分段内容"></textarea>
+      <div class="form-row inline">
+        <button type="submit" class="primary-button">保存</button>
+        <button type="button" class="ghost-button" id="chunkCancel">取消</button>
+      </div>
+    </form>
+  </div>
 </div>
 <footer class="global-footer">©️吴嘉辉</footer>
 <script src="scripts/app.js"></script>

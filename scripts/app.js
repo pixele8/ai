@@ -7,7 +7,7 @@
   var textEncoder = new TextEncoder();
   var faqEditingId = null;
   var pendingLinkFromId = null;
-  var DECISION_PRESETS = [
+  var DEFAULT_DECISION_PRESETS = [
     { id: "init", label: "立项评估" },
     { id: "research", label: "调研分析" },
     { id: "plan", label: "方案制定" },
@@ -16,6 +16,10 @@
     { id: "risk", label: "风险应对" },
     { id: "summary", label: "复盘总结" }
   ];
+  var activeNodeId = null;
+  var chunkEditingId = null;
+  var activeFileFilterId = null;
+  var authBackdropRaf = null;
 
   function padNumber(value) {
     var num = parseInt(value, 10);
@@ -23,6 +27,85 @@
       return "00";
     }
     return num < 10 ? "0" + num : String(num);
+  }
+
+  function deleteKnowledgeFile(fileId) {
+    var bank = getActiveBank();
+    if (!bank) {
+      return;
+    }
+    for (var i = bank.files.length - 1; i >= 0; i -= 1) {
+      if (bank.files[i].id === fileId) {
+        bank.files.splice(i, 1);
+      }
+    }
+    for (var j = bank.chunks.length - 1; j >= 0; j -= 1) {
+      if (bank.chunks[j].fileId === fileId) {
+        bank.chunks.splice(j, 1);
+      }
+    }
+    if (activeFileFilterId === fileId) {
+      activeFileFilterId = null;
+    }
+    rebuildIndex(bank);
+    saveState();
+    renderKnowledge();
+    showToast("文件及分段已删除");
+  }
+
+  function deleteChunk(chunkId) {
+    var bank = getActiveBank();
+    if (!bank) {
+      return;
+    }
+    for (var i = 0; i < bank.chunks.length; i += 1) {
+      if (bank.chunks[i].id === chunkId) {
+        bank.chunks.splice(i, 1);
+        break;
+      }
+    }
+    if (chunkEditingId === chunkId) {
+      closeChunkEditor();
+    }
+    rebuildIndex(bank);
+    saveState();
+    renderKnowledge();
+    showToast("分段已删除");
+  }
+
+  function openChunkEditor(chunkId) {
+    var bank = getActiveBank();
+    if (!bank) {
+      showToast("请选择记忆库");
+      return;
+    }
+    var chunk = lookupChunk(bank, chunkId);
+    if (!chunk) {
+      showToast("未找到对应分段");
+      return;
+    }
+    chunkEditingId = chunkId;
+    var modal = document.getElementById("chunkModal");
+    var meta = document.getElementById("chunkMeta");
+    var content = document.getElementById("chunkContent");
+    if (meta) {
+      meta.textContent = chunk.file + " · 段 " + chunk.order;
+    }
+    if (content) {
+      content.value = chunk.text || "";
+      content.focus();
+    }
+    if (modal) {
+      modal.classList.remove("hidden");
+    }
+  }
+
+  function closeChunkEditor() {
+    var modal = document.getElementById("chunkModal");
+    if (modal) {
+      modal.classList.add("hidden");
+    }
+    chunkEditingId = null;
   }
 
   function formatDateTime(value) {
@@ -50,6 +133,14 @@
       var r = Math.random() * 16;
       return (r | 0).toString(16);
     }) + Date.now().toString(16);
+  }
+
+  function clonePresets(list) {
+    var copy = [];
+    for (var i = 0; i < list.length; i += 1) {
+      copy.push({ id: list[i].id, label: list[i].label });
+    }
+    return copy;
   }
 
   function bankLogoText(name) {
@@ -117,6 +208,79 @@
     }, 3000);
   }
 
+  function cancelAuthBackdrop() {
+    if (authBackdropRaf !== null) {
+      window.cancelAnimationFrame(authBackdropRaf);
+      authBackdropRaf = null;
+    }
+  }
+
+  function initAuthBackdrop() {
+    var container = document.querySelector(".auth-backdrop");
+    if (!container) {
+      cancelAuthBackdrop();
+      return;
+    }
+    cancelAuthBackdrop();
+    while (container.firstChild) {
+      container.removeChild(container.firstChild);
+    }
+    var width = container.clientWidth || window.innerWidth || 960;
+    var height = container.clientHeight || window.innerHeight || 720;
+    var count = Math.max(12, Math.min(28, Math.floor((width + height) / 160)));
+    var palette = [
+      "rgba(118, 165, 255, 0.65)",
+      "rgba(65, 214, 255, 0.6)",
+      "rgba(164, 188, 255, 0.68)"
+    ];
+    var reduceMotion = false;
+    if (window.matchMedia) {
+      try {
+        reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      } catch (err) {
+        reduceMotion = false;
+      }
+    }
+    var nodes = [];
+    for (var i = 0; i < count; i += 1) {
+      var el = document.createElement("span");
+      el.className = "auth-node";
+      el.style.setProperty("--node-color", palette[i % palette.length]);
+      container.appendChild(el);
+      nodes.push({
+        el: el,
+        radius: 120 + Math.random() * 240,
+        speed: 0.4 + Math.random() * 0.9,
+        angle: Math.random() * Math.PI * 2,
+        drift: 0.6 + Math.random() * 0.7
+      });
+    }
+    var centerX = width / 2;
+    var centerY = height / 2;
+    if (reduceMotion) {
+      for (var j = 0; j < nodes.length; j += 1) {
+        var node = nodes[j];
+        var offsetX = Math.cos(node.angle) * node.radius * node.drift;
+        var offsetY = Math.sin(node.angle) * node.radius * 0.6;
+        node.el.style.transform = "translate3d(" + (centerX + offsetX) + "px, " + (centerY + offsetY) + "px, 0)";
+      }
+      return;
+    }
+    function tick() {
+      centerX = container.clientWidth / 2;
+      centerY = container.clientHeight / 2;
+      for (var k = 0; k < nodes.length; k += 1) {
+        var item = nodes[k];
+        item.angle += 0.0024 * item.speed;
+        var x = Math.cos(item.angle) * item.radius * item.drift;
+        var y = Math.sin(item.angle) * item.radius * 0.62;
+        item.el.style.transform = "translate3d(" + (centerX + x) + "px, " + (centerY + y) + "px, 0)";
+      }
+      authBackdropRaf = window.requestAnimationFrame(tick);
+    }
+    tick();
+  }
+
   function saveState() {
     if (!state) {
       return;
@@ -150,6 +314,7 @@
         activeSessionId: null,
         decisions: [],
         activeDecisionId: null,
+        decisionPresets: clonePresets(DEFAULT_DECISION_PRESETS),
         adminFlags: { reasoning: false, reasoningLevel: 1 },
         settings: {
           topN: 5,
@@ -193,6 +358,19 @@
     if (!state.decisions) {
       state.decisions = [];
     }
+    if (!state.decisionPresets || state.decisionPresets.length === 0) {
+      state.decisionPresets = clonePresets(DEFAULT_DECISION_PRESETS);
+    } else {
+      for (var presetIndex = 0; presetIndex < state.decisionPresets.length; presetIndex += 1) {
+        var preset = state.decisionPresets[presetIndex];
+        if (!preset.id) {
+          preset.id = uuid();
+        }
+        if (!preset.label) {
+          preset.label = "节点";
+        }
+      }
+    }
     for (var i = 0; i < state.banks.length; i += 1) {
       var bank = state.banks[i];
       if (!bank.name) {
@@ -210,6 +388,9 @@
       if (!bank.chunks) {
         bank.chunks = [];
       }
+      if (!bank.files) {
+        bank.files = [];
+      }
       if (!bank.index) {
         bank.index = { df: {}, postings: {}, docLengths: {}, avgdl: 0, totalDocs: 0 };
       }
@@ -222,6 +403,56 @@
       if (!bank.logs) {
         bank.logs = [];
       }
+      var fileMap = {};
+      for (var f = 0; f < bank.files.length; f += 1) {
+        var file = bank.files[f];
+        if (!file.id) {
+          file.id = uuid();
+        }
+        if (typeof file.chunks !== "number") {
+          file.chunks = 0;
+        }
+        if (typeof file.size !== "number") {
+          file.size = 0;
+        }
+        fileMap[file.id] = file;
+      }
+      for (var c = 0; c < bank.chunks.length; c += 1) {
+        var chunk = bank.chunks[c];
+        if (!chunk.id) {
+          chunk.id = uuid();
+        }
+        if (!chunk.fileId) {
+          var matchedId = null;
+          for (var mapIndex = 0; mapIndex < bank.files.length; mapIndex += 1) {
+            if (bank.files[mapIndex].name === chunk.file) {
+              matchedId = bank.files[mapIndex].id;
+              break;
+            }
+          }
+          if (!matchedId) {
+            var generated = { id: uuid(), name: chunk.file || "导入文件", chunks: 0, size: 0 };
+            bank.files.push(generated);
+            fileMap[generated.id] = generated;
+            matchedId = generated.id;
+          }
+          chunk.fileId = matchedId;
+        }
+      }
+      for (var resetIndex = 0; resetIndex < bank.files.length; resetIndex += 1) {
+        bank.files[resetIndex].chunks = 0;
+        bank.files[resetIndex].size = 0;
+      }
+      for (var chunkIndex = 0; chunkIndex < bank.chunks.length; chunkIndex += 1) {
+        var entry = bank.chunks[chunkIndex];
+        var fileEntry = fileMap[entry.fileId];
+        if (fileEntry) {
+          fileEntry.chunks += 1;
+          fileEntry.size += entry.text ? entry.text.length : 0;
+          entry.file = fileEntry.name;
+        }
+      }
+      rebuildIndex(bank);
       for (var j = 0; j < bank.faqs.length; j += 1) {
         var faq = bank.faqs[j];
         if (!faq.id) {
@@ -771,12 +1002,18 @@
           titleRow.className = "evidence-title";
           var source = document.createElement("span");
           source.className = "evidence-source";
-          source.textContent = message.evidence[j].source + " · 段 " + message.evidence[j].chunk;
+          if (message.evidence[j].type === "faq") {
+            source.textContent = "FAQ · " + message.evidence[j].source;
+          } else {
+            source.textContent = message.evidence[j].source + " · 段 " + message.evidence[j].chunk;
+          }
           titleRow.appendChild(source);
           if (typeof message.evidence[j].score === "number") {
             var score = document.createElement("span");
             score.className = "evidence-score";
-            score.textContent = message.evidence[j].score.toFixed(2);
+            score.textContent = message.evidence[j].type === "faq"
+              ? message.evidence[j].score + "%"
+              : message.evidence[j].score.toFixed(2);
             titleRow.appendChild(score);
           }
           ecard.appendChild(titleRow);
@@ -858,12 +1095,18 @@
       header.className = "evidence-title";
       var source = document.createElement("span");
       source.className = "evidence-source";
-      source.textContent = evidence[i].source + " · 段 " + evidence[i].chunk;
+      if (evidence[i].type === "faq") {
+        source.textContent = "FAQ · " + evidence[i].source;
+      } else {
+        source.textContent = evidence[i].source + " · 段 " + evidence[i].chunk;
+      }
       header.appendChild(source);
       if (typeof evidence[i].score === "number") {
         var score = document.createElement("span");
         score.className = "evidence-score";
-        score.textContent = evidence[i].score.toFixed(2);
+        score.textContent = evidence[i].type === "faq"
+          ? evidence[i].score + "%"
+          : evidence[i].score.toFixed(2);
         header.appendChild(score);
       }
       card.appendChild(header);
@@ -935,14 +1178,55 @@
     return chunks;
   }
 
-  function addChunksToIndex(bank, fileName, chunks) {
-    for (var i = 0; i < chunks.length; i += 1) {
-      var chunkId = fileName + "#" + (bank.index.totalDocs + 1);
-      var text = chunks[i];
-      var docTokens = tokenize(text);
+  function rebuildIndex(bank) {
+    if (!bank) {
+      return;
+    }
+    if (!bank.files) {
+      bank.files = [];
+    }
+    var fileMap = {};
+    for (var fileIndex = 0; fileIndex < bank.files.length; fileIndex += 1) {
+      var fileEntry = bank.files[fileIndex];
+      if (!fileEntry.id) {
+        fileEntry.id = uuid();
+      }
+      fileEntry.chunks = 0;
+      fileEntry.size = 0;
+      fileMap[fileEntry.id] = fileEntry;
+    }
+    if (!bank.index) {
+      bank.index = { df: {}, postings: {}, docLengths: {}, avgdl: 0, totalDocs: 0 };
+    } else {
+      bank.index.df = {};
+      bank.index.postings = {};
+      bank.index.docLengths = {};
+      bank.index.totalDocs = 0;
+      bank.index.avgdl = 0;
+    }
+    var orderMap = {};
+    for (var i = 0; i < bank.chunks.length; i += 1) {
+      var chunk = bank.chunks[i];
+      if (!chunk.fileId) {
+        chunk.fileId = uuid();
+      }
+      if (!fileMap[chunk.fileId]) {
+        var newFile = { id: chunk.fileId, name: chunk.file || "导入文件", chunks: 0, size: 0 };
+        bank.files.push(newFile);
+        fileMap[newFile.id] = newFile;
+      }
+      if (!orderMap[chunk.fileId]) {
+        orderMap[chunk.fileId] = 0;
+      }
+      orderMap[chunk.fileId] += 1;
+      chunk.order = orderMap[chunk.fileId];
+      var owner = fileMap[chunk.fileId];
+      owner.chunks += 1;
+      owner.size += chunk.text ? chunk.text.length : 0;
+      var docTokens = tokenize(chunk.text || "");
       var counts = {};
-      for (var j = 0; j < docTokens.length; j += 1) {
-        var token = docTokens[j];
+      for (var t = 0; t < docTokens.length; t += 1) {
+        var token = docTokens[t];
         if (!counts[token]) {
           counts[token] = 0;
         }
@@ -957,17 +1241,11 @@
           if (!bank.index.postings[tokenKey]) {
             bank.index.postings[tokenKey] = {};
           }
-          bank.index.postings[tokenKey][chunkId] = counts[tokenKey];
+          bank.index.postings[tokenKey][chunk.id] = counts[tokenKey];
         }
       }
-      bank.index.docLengths[chunkId] = docTokens.length;
+      bank.index.docLengths[chunk.id] = docTokens.length;
       bank.index.totalDocs += 1;
-      bank.chunks.push({
-        id: chunkId,
-        file: fileName,
-        order: i + 1,
-        text: text
-      });
     }
     var totalLength = 0;
     var docCount = 0;
@@ -978,6 +1256,29 @@
       }
     }
     bank.index.avgdl = docCount > 0 ? totalLength / docCount : 0;
+  }
+
+  function addChunksToIndex(bank, fileName, chunks, fileId) {
+    if (!bank || !chunks || chunks.length === 0) {
+      return 0;
+    }
+    if (!fileId) {
+      fileId = uuid();
+    }
+    var added = 0;
+    for (var i = 0; i < chunks.length; i += 1) {
+      var chunkId = fileId + "#" + (bank.chunks.length + 1 + i);
+      bank.chunks.push({
+        id: chunkId,
+        file: fileName,
+        fileId: fileId,
+        order: 0,
+        text: chunks[i]
+      });
+      added += 1;
+    }
+    rebuildIndex(bank);
+    return added;
   }
 
   function readFileContent(file) {
@@ -1043,32 +1344,136 @@
       return;
     }
     var bank = getActiveBank();
+    if (!bank) {
+      activeFileFilterId = null;
+    } else if (activeFileFilterId) {
+      var exists = false;
+      for (var fileCheck = 0; fileCheck < bank.files.length; fileCheck += 1) {
+        if (bank.files[fileCheck].id === activeFileFilterId) {
+          exists = true;
+          break;
+        }
+      }
+      if (!exists) {
+        activeFileFilterId = null;
+      }
+    }
     if (fileList) {
       fileList.innerHTML = "";
-    }
-    if (preview) {
-      preview.innerHTML = "";
-    }
-    if (!bank) {
-      return;
-    }
-    for (var i = 0; i < bank.files.length; i += 1) {
-      if (fileList) {
-        var fcard = document.createElement("div");
-        fcard.className = "file-card";
-        fcard.innerHTML = '<strong>' + bank.files[i].name + '</strong><div class="meta">' + bank.files[i].chunks + ' 段 · ' + bank.files[i].size + ' bytes</div>';
-        fileList.appendChild(fcard);
+      if (!bank) {
+        fileList.innerHTML = '<div class="panel-hint">请选择记忆库</div>';
+      } else if (!bank.files || bank.files.length === 0) {
+        fileList.innerHTML = '<div class="panel-hint">暂无已摄取的文件</div>';
+      } else {
+        for (var i = 0; i < bank.files.length; i += 1) {
+          (function (file) {
+            var card = document.createElement("div");
+            card.className = "file-card" + (activeFileFilterId === file.id ? " active" : "");
+            var header = document.createElement("header");
+            var title = document.createElement("div");
+            title.className = "file-title";
+            title.textContent = file.name;
+            var actions = document.createElement("div");
+            actions.className = "card-actions";
+            var focusBtn = document.createElement("button");
+            focusBtn.className = "text-button";
+            focusBtn.type = "button";
+            focusBtn.textContent = activeFileFilterId === file.id ? "显示全部" : "查看";
+            focusBtn.addEventListener("click", function () {
+              if (activeFileFilterId === file.id) {
+                activeFileFilterId = null;
+              } else {
+                activeFileFilterId = file.id;
+              }
+              renderKnowledge();
+            });
+            var delBtn = document.createElement("button");
+            delBtn.className = "text-button danger";
+            delBtn.type = "button";
+            delBtn.textContent = "删除";
+            delBtn.addEventListener("click", function () {
+              if (!window.confirm("确定删除该文件及其所有分段？")) {
+                return;
+              }
+              deleteKnowledgeFile(file.id);
+            });
+            actions.appendChild(focusBtn);
+            actions.appendChild(delBtn);
+            header.appendChild(title);
+            header.appendChild(actions);
+            var meta = document.createElement("div");
+            meta.className = "meta";
+            meta.textContent = file.chunks + " 段 · " + file.size + " bytes";
+            card.appendChild(header);
+            card.appendChild(meta);
+            fileList.appendChild(card);
+          })(bank.files[i]);
+        }
       }
     }
     if (preview) {
+      preview.innerHTML = "";
+      if (!bank) {
+        preview.innerHTML = '<div class="panel-hint">请选择记忆库</div>';
+        return;
+      }
+      if (!bank.chunks || bank.chunks.length === 0) {
+        preview.innerHTML = '<div class="panel-hint">暂无分段内容</div>';
+        return;
+      }
+      var displayed = 0;
       for (var j = 0; j < bank.chunks.length; j += 1) {
-        if (j > 200) {
+        var chunk = bank.chunks[j];
+        if (activeFileFilterId && chunk.fileId !== activeFileFilterId) {
+          continue;
+        }
+        displayed += 1;
+        if (displayed > 250) {
           break;
         }
         var ccard = document.createElement("div");
         ccard.className = "chunk-card";
-        ccard.innerHTML = '<div class="meta">' + bank.chunks[j].file + ' · 段 ' + bank.chunks[j].order + '</div><div class="content">' + bank.chunks[j].text + '</div>';
+        var header = document.createElement("div");
+        header.className = "chunk-header";
+        var meta = document.createElement("div");
+        meta.className = "meta";
+        meta.textContent = chunk.file + " · 段 " + chunk.order;
+        var actions = document.createElement("div");
+        actions.className = "card-actions";
+        var editBtn = document.createElement("button");
+        editBtn.className = "text-button";
+        editBtn.type = "button";
+        editBtn.textContent = "编辑";
+        editBtn.addEventListener("click", function (id) {
+          return function () {
+            openChunkEditor(id);
+          };
+        }(chunk.id));
+        var delBtn = document.createElement("button");
+        delBtn.className = "text-button danger";
+        delBtn.type = "button";
+        delBtn.textContent = "删除";
+        delBtn.addEventListener("click", function (id) {
+          return function () {
+            if (!window.confirm("确定删除该分段？")) {
+              return;
+            }
+            deleteChunk(id);
+          };
+        }(chunk.id));
+        actions.appendChild(editBtn);
+        actions.appendChild(delBtn);
+        header.appendChild(meta);
+        header.appendChild(actions);
+        var body = document.createElement("div");
+        body.className = "content";
+        body.textContent = chunk.text;
+        ccard.appendChild(header);
+        ccard.appendChild(body);
         preview.appendChild(ccard);
+      }
+      if (displayed === 0) {
+        preview.innerHTML = '<div class="panel-hint">所选文件暂无分段</div>';
       }
     }
   }
@@ -1184,7 +1589,7 @@
 
   function smallTalk(text) {
     var patterns = [
-      { regex: /(你好|您好|哈喽|hi|hello)/i, reply: "您好，我是认知控制台助理，很高兴为您服务。" },
+      { regex: /(你好|您好|哈喽|hi|hello)/i, reply: "您好，我是虹小聊助理，很高兴为您服务。" },
       { regex: /(谢谢|感谢)/, reply: "感谢您的反馈，如需更多帮助请随时告诉我。" },
       { regex: /(再见|拜拜|下次见)/, reply: "期待再次为您服务，祝您工作顺利。" },
       { regex: /(你是谁|你是誰|身份|介绍)/, reply: "我是部署在本地的知识对话助手，负责检索知识库并给出专业建议。" },
@@ -1267,14 +1672,23 @@
           evidence.push({ source: chunk.file, chunk: chunk.order, text: chunk.text, score: top[i].score });
         }
       }
-      renderEvidence(evidence, highlightTokens);
-      var best = evidence.length > 0 ? evidence[0] : null;
+      var knowledgeBest = evidence.length > 0 ? evidence[0] : null;
       var faqResult = matchFaq(bank, text);
       var bestFaq = faqResult.best;
+      if (bestFaq && bestFaq.score >= state.settings.faqLow) {
+        evidence.unshift({
+          source: bestFaq.item.question,
+          chunk: "FAQ",
+          text: bestFaq.item.answer,
+          score: bestFaq.score,
+          type: "faq"
+        });
+      }
+      renderEvidence(evidence, highlightTokens);
       if (bestFaq && bestFaq.score >= state.settings.faqHigh) {
         replyText = "FAQ直答：" + bestFaq.item.answer;
-      } else if (best) {
-        replyText = best.text;
+      } else if (knowledgeBest) {
+        replyText = knowledgeBest.text;
         if (bestFaq && bestFaq.score >= state.settings.faqLow) {
           replyText = replyText + "\nFAQ建议：" + bestFaq.item.answer;
         }
@@ -1788,17 +2202,128 @@
       return;
     }
     palette.innerHTML = "";
-    for (var i = 0; i < DECISION_PRESETS.length; i += 1) {
+    var presets = state.decisionPresets || [];
+    for (var i = 0; i < presets.length; i += 1) {
       var item = document.createElement("div");
       item.className = "palette-item";
       item.draggable = true;
-      item.textContent = DECISION_PRESETS[i].label;
-      item.dataset.value = DECISION_PRESETS[i].label;
+      item.textContent = presets[i].label;
+      item.dataset.value = presets[i].label;
       item.addEventListener("dragstart", function (evt) {
         evt.dataTransfer.setData("text/plain", evt.target.dataset.value);
       });
       palette.appendChild(item);
     }
+  }
+
+  function renderPresetEditor() {
+    var list = document.getElementById("presetList");
+    if (!list) {
+      return;
+    }
+    list.innerHTML = "";
+    var presets = state.decisionPresets || [];
+    if (presets.length === 0) {
+      presets = clonePresets(DEFAULT_DECISION_PRESETS);
+    }
+    for (var i = 0; i < presets.length; i += 1) {
+      var row = document.createElement("div");
+      row.className = "preset-row";
+      row.dataset.id = presets[i].id;
+      var input = document.createElement("input");
+      input.type = "text";
+      input.value = presets[i].label;
+      input.placeholder = "常用步骤名称";
+      row.appendChild(input);
+      var del = document.createElement("button");
+      del.type = "button";
+      del.className = "text-button danger";
+      del.textContent = "删除";
+      del.addEventListener("click", function (evt) {
+        var target = evt.target.parentNode;
+        if (target && target.parentNode && target.parentNode.children.length > 1) {
+          target.parentNode.removeChild(target);
+        } else {
+          showToast("至少保留一个常用节点");
+        }
+      });
+      row.appendChild(del);
+      list.appendChild(row);
+    }
+  }
+
+  function openPresetManager() {
+    var modal = document.getElementById("presetModal");
+    if (!modal) {
+      return;
+    }
+    renderPresetEditor();
+    modal.classList.remove("hidden");
+  }
+
+  function closePresetManager() {
+    var modal = document.getElementById("presetModal");
+    if (modal) {
+      modal.classList.add("hidden");
+    }
+  }
+
+  function addPresetRow() {
+    var list = document.getElementById("presetList");
+    if (!list) {
+      return;
+    }
+    var row = document.createElement("div");
+    row.className = "preset-row";
+    row.dataset.id = uuid();
+    var input = document.createElement("input");
+    input.type = "text";
+    input.placeholder = "常用步骤名称";
+    row.appendChild(input);
+    var del = document.createElement("button");
+    del.type = "button";
+    del.className = "text-button danger";
+    del.textContent = "删除";
+    del.addEventListener("click", function () {
+      if (row.parentNode && row.parentNode.children.length > 1) {
+        row.parentNode.removeChild(row);
+      } else {
+        showToast("至少保留一个常用节点");
+      }
+    });
+    row.appendChild(del);
+    list.appendChild(row);
+    input.focus();
+  }
+
+  function savePresetChanges() {
+    var list = document.getElementById("presetList");
+    if (!list) {
+      return;
+    }
+    var rows = list.querySelectorAll(".preset-row");
+    var next = [];
+    for (var i = 0; i < rows.length; i += 1) {
+      var input = rows[i].querySelector("input");
+      if (!input) {
+        continue;
+      }
+      var label = input.value.trim();
+      if (!label) {
+        continue;
+      }
+      var id = rows[i].dataset.id || uuid();
+      next.push({ id: id, label: label });
+    }
+    if (next.length === 0) {
+      showToast("请至少保留一个常用节点");
+      return;
+    }
+    state.decisionPresets = next;
+    saveState();
+    renderDecisionPalette();
+    closePresetManager();
+    showToast("常用节点已更新");
   }
 
   function addTimelineNode(project, label) {
@@ -1921,132 +2446,266 @@
     }
   }
 
-  function createTimelineNode(project, node, locked) {
+  function handleNodeLink(nodeId) {
+    var project = getActiveDecisionProject();
+    if (!project || !project.timeline) {
+      return;
+    }
+    if (!pendingLinkFromId) {
+      pendingLinkFromId = nodeId;
+      hideLinkForm();
+      renderActiveProject();
+      showToast("请选择另一节点完成关联");
+      return;
+    }
+    if (pendingLinkFromId === nodeId) {
+      pendingLinkFromId = null;
+      hideLinkForm();
+      renderActiveProject();
+      return;
+    }
+    openLinkForm(pendingLinkFromId, nodeId);
+  }
+
+  function removeTimelineNode(nodeId) {
+    var project = getActiveDecisionProject();
+    if (!project || !project.timeline) {
+      return;
+    }
+    for (var i = project.timeline.length - 1; i >= 0; i -= 1) {
+      if (project.timeline[i].id === nodeId) {
+        project.timeline.splice(i, 1);
+      }
+    }
+    for (var j = project.links.length - 1; j >= 0; j -= 1) {
+      if (project.links[j].fromId === nodeId || project.links[j].toId === nodeId) {
+        project.links.splice(j, 1);
+      }
+    }
+    if (pendingLinkFromId === nodeId) {
+      pendingLinkFromId = null;
+      hideLinkForm();
+    }
+    if (activeNodeId === nodeId) {
+      activeNodeId = null;
+    }
+    saveState();
+    renderActiveProject();
+    renderDecisionHistory();
+    showToast("节点已移除");
+  }
+
+  function createTimelineNode(project, node, locked, index) {
     var card = document.createElement("div");
-    card.className = "timeline-node";
+    card.className = "mind-node" + (index % 2 === 0 ? " left" : " right");
     card.setAttribute("data-node", node.id);
+    if (activeNodeId === node.id) {
+      card.classList.add("active");
+    }
     if (pendingLinkFromId && pendingLinkFromId === node.id) {
       card.classList.add("linking");
     }
-    var header = document.createElement("header");
-    var titleWrap = document.createElement("div");
-    titleWrap.className = "node-title";
-    var titleInput = document.createElement("input");
-    titleInput.type = "text";
-    titleInput.value = node.title || "";
-    titleInput.placeholder = "节点名称";
-    titleInput.disabled = locked;
-    titleInput.addEventListener("input", function () {
-      node.title = titleInput.value;
-      saveState();
-      renderLinkList(project);
+    var connector = document.createElement("div");
+    connector.className = "mind-node-connector";
+    card.appendChild(connector);
+    var bubble = document.createElement("div");
+    bubble.className = "mind-node-bubble";
+    var title = document.createElement("div");
+    title.className = "mind-node-title";
+    title.textContent = node.title || "未命名节点";
+    var time = document.createElement("div");
+    time.className = "mind-node-time";
+    time.textContent = node.startTime ? formatDateTime(node.startTime) : "时间待定";
+    bubble.appendChild(title);
+    bubble.appendChild(time);
+    bubble.addEventListener("click", function () {
+      openNodeDetail(node.id);
     });
-    titleWrap.appendChild(titleInput);
+    card.appendChild(bubble);
+    var tags = document.createElement("div");
+    tags.className = "mind-node-tags";
+    if (node.reason) {
+      var reasonTag = document.createElement("span");
+      reasonTag.className = "tag";
+      reasonTag.textContent = snippetText(node.reason, 24);
+      tags.appendChild(reasonTag);
+    }
+    if (node.impact) {
+      var impactTag = document.createElement("span");
+      impactTag.className = "tag strong";
+      impactTag.textContent = snippetText(node.impact, 24);
+      tags.appendChild(impactTag);
+    }
+    if (node.note) {
+      var noteTag = document.createElement("span");
+      noteTag.className = "tag muted";
+      noteTag.textContent = snippetText(node.note, 24);
+      tags.appendChild(noteTag);
+    }
+    card.appendChild(tags);
     var actions = document.createElement("div");
-    actions.className = "node-actions";
+    actions.className = "mind-node-actions";
+    var detailBtn = document.createElement("button");
+    detailBtn.className = "chip-button";
+    detailBtn.type = "button";
+    detailBtn.textContent = "详情";
+    detailBtn.addEventListener("click", function (evt) {
+      evt.stopPropagation();
+      openNodeDetail(node.id);
+    });
     var linkBtn = document.createElement("button");
-    linkBtn.className = "text-button";
-    linkBtn.textContent = pendingLinkFromId && pendingLinkFromId === node.id ? "取消关联" : "关联";
+    linkBtn.className = "chip-button";
+    linkBtn.type = "button";
     linkBtn.disabled = locked;
-    linkBtn.addEventListener("click", function () {
+    linkBtn.textContent = pendingLinkFromId && pendingLinkFromId === node.id ? "取消关联" : "关联";
+    linkBtn.addEventListener("click", function (evt) {
+      evt.stopPropagation();
       if (locked) {
         return;
       }
-      if (!pendingLinkFromId) {
-        pendingLinkFromId = node.id;
-        hideLinkForm();
-        renderActiveProject();
-        return;
-      }
-      if (pendingLinkFromId === node.id) {
-        pendingLinkFromId = null;
-        hideLinkForm();
-        renderActiveProject();
-        return;
-      }
-      openLinkForm(pendingLinkFromId, node.id);
+      handleNodeLink(node.id);
     });
-    var delBtn = document.createElement("button");
-    delBtn.className = "text-button danger";
-    delBtn.textContent = "移除";
-    delBtn.disabled = locked;
-    delBtn.addEventListener("click", function () {
-      if (locked) {
-        return;
-      }
-      var idx = project.timeline.indexOf(node);
-      if (idx >= 0) {
-        project.timeline.splice(idx, 1);
-      }
-      for (var i = project.links.length - 1; i >= 0; i -= 1) {
-        if (project.links[i].fromId === node.id || project.links[i].toId === node.id) {
-          project.links.splice(i, 1);
-        }
-      }
-      if (pendingLinkFromId === node.id) {
-        pendingLinkFromId = null;
-        hideLinkForm();
-      }
-      saveState();
-      renderActiveProject();
-      renderDecisionHistory();
-    });
+    actions.appendChild(detailBtn);
     actions.appendChild(linkBtn);
-    actions.appendChild(delBtn);
-    header.appendChild(titleWrap);
-    header.appendChild(actions);
-    var timeLabel = document.createElement("label");
-    timeLabel.textContent = "开始时间";
-    var timeInput = document.createElement("input");
-    timeInput.type = "datetime-local";
-    timeInput.value = node.startTime || "";
-    timeInput.disabled = locked;
-    timeInput.addEventListener("change", function () {
-      node.startTime = timeInput.value;
+    card.appendChild(actions);
+    return card;
+  }
+
+  function refreshNodeBubble(node) {
+    var wrapper = document.querySelector('[data-node="' + node.id + '"]');
+    if (!wrapper) {
+      return;
+    }
+    if (activeNodeId === node.id) {
+      wrapper.classList.add("active");
+    } else {
+      wrapper.classList.remove("active");
+    }
+    var titleEl = wrapper.querySelector(".mind-node-title");
+    if (titleEl) {
+      titleEl.textContent = node.title || "未命名节点";
+    }
+    var timeEl = wrapper.querySelector(".mind-node-time");
+    if (timeEl) {
+      timeEl.textContent = node.startTime ? formatDateTime(node.startTime) : "时间待定";
+    }
+    var tagsEl = wrapper.querySelector(".mind-node-tags");
+    if (tagsEl) {
+      tagsEl.innerHTML = "";
+      if (node.reason) {
+        var reasonTag = document.createElement("span");
+        reasonTag.className = "tag";
+        reasonTag.textContent = snippetText(node.reason, 24);
+        tagsEl.appendChild(reasonTag);
+      }
+      if (node.impact) {
+        var impactTag = document.createElement("span");
+        impactTag.className = "tag strong";
+        impactTag.textContent = snippetText(node.impact, 24);
+        tagsEl.appendChild(impactTag);
+      }
+      if (node.note) {
+        var noteTag = document.createElement("span");
+        noteTag.className = "tag muted";
+        noteTag.textContent = snippetText(node.note, 24);
+        tagsEl.appendChild(noteTag);
+      }
+    }
+  }
+
+  function openNodeDetail(nodeId) {
+    activeNodeId = nodeId;
+    renderActiveProject();
+  }
+
+  function closeNodeDetailPanel() {
+    activeNodeId = null;
+    var panel = document.getElementById("nodeDetailPanel");
+    if (panel) {
+      panel.classList.add("hidden");
+    }
+    renderActiveProject();
+  }
+
+  function renderNodeDetail() {
+    var panel = document.getElementById("nodeDetailPanel");
+    if (!panel) {
+      return;
+    }
+    var project = getActiveDecisionProject();
+    if (!project || !activeNodeId) {
+      panel.classList.add("hidden");
+      return;
+    }
+    var node = findTimelineNode(project, activeNodeId);
+    if (!node) {
+      panel.classList.add("hidden");
+      return;
+    }
+    panel.classList.remove("hidden");
+    panel.classList.toggle("locked", project.completed);
+    var title = document.getElementById("nodeDetailTitle");
+    if (title) {
+      title.textContent = node.title || "未命名节点";
+    }
+    var meta = document.getElementById("nodeDetailMeta");
+    if (meta) {
+      meta.textContent = (project.name || "项目") + " · " + (node.startTime ? formatDateTime(node.startTime) : "时间待定");
+    }
+    var nameInput = document.getElementById("detailName");
+    if (nameInput) {
+      nameInput.value = node.title || "";
+      nameInput.disabled = project.completed;
+    }
+    var startInput = document.getElementById("detailStart");
+    if (startInput) {
+      startInput.value = node.startTime || "";
+      startInput.disabled = project.completed;
+    }
+    var reasonInput = document.getElementById("detailReason");
+    if (reasonInput) {
+      reasonInput.value = node.reason || "";
+      reasonInput.disabled = project.completed;
+    }
+    var impactInput = document.getElementById("detailImpact");
+    if (impactInput) {
+      impactInput.value = node.impact || "";
+      impactInput.disabled = project.completed;
+    }
+    var noteInput = document.getElementById("detailNote");
+    if (noteInput) {
+      noteInput.value = node.note || "";
+      noteInput.disabled = project.completed;
+    }
+    var linkBtn = document.getElementById("detailLink");
+    if (linkBtn) {
+      linkBtn.disabled = project.completed;
+      linkBtn.textContent = pendingLinkFromId ? "选择目标" : "建立关联";
+    }
+    var removeBtn = document.getElementById("detailRemove");
+    if (removeBtn) {
+      removeBtn.disabled = project.completed;
+    }
+  }
+
+  function updateNodeField(field, value) {
+    var project = getActiveDecisionProject();
+    if (!project || !activeNodeId) {
+      return;
+    }
+    var node = findTimelineNode(project, activeNodeId);
+    if (!node) {
+      return;
+    }
+    node[field] = value;
+    if (field === "startTime") {
       sortTimeline(project);
       saveState();
       renderActiveProject();
-    });
-    timeLabel.appendChild(timeInput);
-    var reasonLabel = document.createElement("label");
-    reasonLabel.textContent = "开始原因";
-    var reasonInput = document.createElement("textarea");
-    reasonInput.value = node.reason || "";
-    reasonInput.placeholder = "说明触发该节点的原因";
-    reasonInput.disabled = locked;
-    reasonInput.addEventListener("input", function () {
-      node.reason = reasonInput.value;
-      saveState();
-    });
-    reasonLabel.appendChild(reasonInput);
-    var impactLabel = document.createElement("label");
-    impactLabel.textContent = "产生后果";
-    var impactInput = document.createElement("textarea");
-    impactInput.value = node.impact || "";
-    impactInput.placeholder = "记录该节点带来的影响";
-    impactInput.disabled = locked;
-    impactInput.addEventListener("input", function () {
-      node.impact = impactInput.value;
-      saveState();
-    });
-    impactLabel.appendChild(impactInput);
-    var noteLabel = document.createElement("label");
-    noteLabel.textContent = "备注";
-    var noteInput = document.createElement("textarea");
-    noteInput.value = node.note || "";
-    noteInput.placeholder = "其他补充信息";
-    noteInput.disabled = locked;
-    noteInput.addEventListener("input", function () {
-      node.note = noteInput.value;
-      saveState();
-    });
-    noteLabel.appendChild(noteInput);
-    card.appendChild(header);
-    card.appendChild(timeLabel);
-    card.appendChild(reasonLabel);
-    card.appendChild(impactLabel);
-    card.appendChild(noteLabel);
-    return card;
+      return;
+    }
+    saveState();
+    refreshNodeBubble(node);
   }
 
   function renderActiveProject() {
@@ -2076,6 +2735,10 @@
       empty.textContent = "请先创建或选择项目";
       canvas.appendChild(empty);
       renderLinkList(null);
+      var panel = document.getElementById("nodeDetailPanel");
+      if (panel) {
+        panel.classList.add("hidden");
+      }
       return;
     }
     sortTimeline(project);
@@ -2086,10 +2749,11 @@
       canvas.appendChild(placeholder);
     } else {
       for (var i = 0; i < project.timeline.length; i += 1) {
-        canvas.appendChild(createTimelineNode(project, project.timeline[i], project.completed));
+        canvas.appendChild(createTimelineNode(project, project.timeline[i], project.completed, i));
       }
     }
     renderLinkList(project);
+    renderNodeDetail();
   }
 
   function renderProjectList() {
@@ -2154,6 +2818,7 @@
             state.activeDecisionId = project.id;
             pendingLinkFromId = null;
             hideLinkForm();
+            activeNodeId = null;
             saveState();
             renderProjectList();
             renderActiveProject();
@@ -2208,6 +2873,26 @@
       card.appendChild(header);
       card.appendChild(duration);
       card.appendChild(outcome);
+      if (completed[j].timeline && completed[j].timeline.length > 0) {
+        var steps = document.createElement("ol");
+        steps.className = "history-steps";
+        var limit = Math.min(completed[j].timeline.length, 5);
+        for (var s = 0; s < limit; s += 1) {
+          var step = completed[j].timeline[s];
+          var item = document.createElement("li");
+          var label = step.title || "节点" + (s + 1);
+          var when = step.startTime ? formatDateTime(step.startTime) : "时间待定";
+          item.innerHTML = '<span class="step-name">' + label + '</span><span class="step-meta">' + when + '</span>';
+          steps.appendChild(item);
+        }
+        if (completed[j].timeline.length > limit) {
+          var more = document.createElement("li");
+          more.className = "step-more";
+          more.textContent = "... 等 " + (completed[j].timeline.length - limit) + " 个步骤";
+          steps.appendChild(more);
+        }
+        card.appendChild(steps);
+      }
       container.appendChild(card);
     }
   }
@@ -2341,8 +3026,10 @@
         tasks.push(readFileContent(file).then(function (content) {
           var text = parseFileContent(file.name, content);
           var chunks = chunkText(text, chunkSize, chunkOverlap);
-          addChunksToIndex(bank, file.name, chunks);
-          bank.files.push({ name: file.name, chunks: chunks.length, size: file.size });
+          var fileId = uuid();
+          var entry = { id: fileId, name: file.name, chunks: 0, size: file.size };
+          bank.files.push(entry);
+          entry.chunks = addChunksToIndex(bank, file.name, chunks, fileId);
         }));
       })(files[i]);
     }
@@ -2359,6 +3046,8 @@
     var roleField = document.getElementById("roleField");
     var submit = document.getElementById("authSubmit");
     var mode = "login";
+    initAuthBackdrop();
+    window.addEventListener("resize", initAuthBackdrop);
     function switchMode(target) {
       mode = target;
       for (var i = 0; i < tabs.length; i += 1) {
@@ -2531,12 +3220,64 @@
         }
         var content = title + "\n" + body;
         var chunks = chunkText(content, state.settings.chunkSize, state.settings.chunkOverlap);
-        addChunksToIndex(bank, "手动录入" + Date.now(), chunks);
-        bank.files.push({ name: title, chunks: chunks.length, size: body.length });
+        var fileId = uuid();
+        var entry = { id: fileId, name: title, chunks: 0, size: body.length };
+        bank.files.push(entry);
+        entry.chunks = addChunksToIndex(bank, title, chunks, fileId);
         saveState();
         renderKnowledge();
         showToast("已保存到记忆库");
         manualForm.reset();
+      });
+    }
+    var chunkForm = document.getElementById("chunkForm");
+    if (chunkForm) {
+      chunkForm.addEventListener("submit", function (evt) {
+        evt.preventDefault();
+        if (!chunkEditingId) {
+          closeChunkEditor();
+          return;
+        }
+        var bank = getActiveBank();
+        if (!bank) {
+          showToast("请选择记忆库");
+          return;
+        }
+        var chunk = lookupChunk(bank, chunkEditingId);
+        if (!chunk) {
+          showToast("分段不存在");
+          closeChunkEditor();
+          return;
+        }
+        var contentInput = document.getElementById("chunkContent");
+        if (!contentInput) {
+          return;
+        }
+        var newText = contentInput.value.trim();
+        if (!newText) {
+          showToast("请输入分段内容");
+          return;
+        }
+        chunk.text = newText;
+        rebuildIndex(bank);
+        saveState();
+        renderKnowledge();
+        closeChunkEditor();
+        showToast("分段已更新");
+      });
+    }
+    var chunkCancel = document.getElementById("chunkCancel");
+    if (chunkCancel) {
+      chunkCancel.addEventListener("click", function () {
+        closeChunkEditor();
+      });
+    }
+    var chunkModal = document.getElementById("chunkModal");
+    if (chunkModal) {
+      chunkModal.addEventListener("click", function (evt) {
+        if (evt.target === chunkModal) {
+          closeChunkEditor();
+        }
       });
     }
     var createBankBtn = document.getElementById("createBank");
@@ -2734,6 +3475,38 @@
     ensureActiveBank();
     renderBankList();
     renderDecisionPage();
+    var managePresetBtn = document.getElementById("managePresets");
+    if (managePresetBtn) {
+      managePresetBtn.addEventListener("click", function () {
+        openPresetManager();
+      });
+    }
+    var addPresetBtn = document.getElementById("addPresetRow");
+    if (addPresetBtn) {
+      addPresetBtn.addEventListener("click", function () {
+        addPresetRow();
+      });
+    }
+    var savePresetBtn = document.getElementById("savePreset");
+    if (savePresetBtn) {
+      savePresetBtn.addEventListener("click", function () {
+        savePresetChanges();
+      });
+    }
+    var cancelPresetBtn = document.getElementById("cancelPreset");
+    if (cancelPresetBtn) {
+      cancelPresetBtn.addEventListener("click", function () {
+        closePresetManager();
+      });
+    }
+    var presetModal = document.getElementById("presetModal");
+    if (presetModal) {
+      presetModal.addEventListener("click", function (evt) {
+        if (evt.target === presetModal) {
+          closePresetManager();
+        }
+      });
+    }
     var projectForm = document.getElementById("projectForm");
     var newProjectBtn = document.getElementById("newProject");
     var cancelProjectBtn = document.getElementById("cancelProject");
@@ -2914,6 +3687,68 @@
         if (modal) {
           modal.classList.add("hidden");
         }
+      });
+    }
+    var detailClose = document.getElementById("closeNodeDetail");
+    if (detailClose) {
+      detailClose.addEventListener("click", function () {
+        closeNodeDetailPanel();
+      });
+    }
+    var detailName = document.getElementById("detailName");
+    if (detailName) {
+      detailName.addEventListener("input", function () {
+        updateNodeField("title", detailName.value);
+        var titleEl = document.getElementById("nodeDetailTitle");
+        if (titleEl) {
+          titleEl.textContent = detailName.value.trim() || "未命名节点";
+        }
+      });
+    }
+    var detailStart = document.getElementById("detailStart");
+    if (detailStart) {
+      detailStart.addEventListener("change", function () {
+        updateNodeField("startTime", detailStart.value);
+      });
+    }
+    var detailReason = document.getElementById("detailReason");
+    if (detailReason) {
+      detailReason.addEventListener("input", function () {
+        updateNodeField("reason", detailReason.value);
+      });
+    }
+    var detailImpact = document.getElementById("detailImpact");
+    if (detailImpact) {
+      detailImpact.addEventListener("input", function () {
+        updateNodeField("impact", detailImpact.value);
+      });
+    }
+    var detailNote = document.getElementById("detailNote");
+    if (detailNote) {
+      detailNote.addEventListener("input", function () {
+        updateNodeField("note", detailNote.value);
+      });
+    }
+    var detailLink = document.getElementById("detailLink");
+    if (detailLink) {
+      detailLink.addEventListener("click", function () {
+        if (!activeNodeId) {
+          return;
+        }
+        handleNodeLink(activeNodeId);
+        renderNodeDetail();
+      });
+    }
+    var detailRemove = document.getElementById("detailRemove");
+    if (detailRemove) {
+      detailRemove.addEventListener("click", function () {
+        if (!activeNodeId) {
+          return;
+        }
+        if (!window.confirm("确定移除该节点及其关联？")) {
+          return;
+        }
+        removeTimelineNode(activeNodeId);
       });
     }
     var createBankBtn = document.getElementById("createBank");
