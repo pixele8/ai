@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FAQ · 认知控制台</title>
+<link rel="stylesheet" href="styles/app.css">
+</head>
+<body data-page="faq">
+<div class="app-shell">
+  <aside class="sidebar" id="bankSidebar">
+    <div class="brand">认知控制台</div>
+    <div class="nav-group">
+      <a class="nav-link" href="index.html">对话</a>
+      <a class="nav-link" href="kb.html">知识库</a>
+      <a class="nav-link active" href="faq.html">FAQ</a>
+      <a class="nav-link" href="admin.html">系统</a>
+    </div>
+    <div class="sidebar-section">
+      <div class="section-title">记忆库</div>
+      <div class="badge-list" id="bankList"></div>
+      <button class="ghost-button" id="createBank">新建记忆库</button>
+    </div>
+    <button class="ghost-button" id="logoutButton">退出登录</button>
+  </aside>
+  <main class="main-panel">
+    <header class="main-header">
+      <div class="header-info">
+        <div class="bank-badge" id="activeBankBadge">未选择记忆库</div>
+        <div class="header-sub">管理常用问题及相似匹配</div>
+      </div>
+      <div class="user-info" id="userInfo"></div>
+    </header>
+    <section class="panel">
+      <h2>FAQ 列表</h2>
+      <div class="panel-actions">
+        <button class="primary-button" id="addFaq">新增 FAQ</button>
+        <button class="ghost-button" id="exportFaq">导出 JSON</button>
+        <label class="ghost-button upload-label">导入 JSON<input type="file" id="importFaq" accept="application/json"></label>
+      </div>
+      <div id="faqList" class="faq-list"></div>
+    </section>
+    <section class="panel">
+      <h2>问句匹配测试</h2>
+      <div class="form-inline">
+        <input type="text" id="faqQuery" placeholder="输入测试问句">
+        <button class="ghost-button" id="matchFaq">匹配</button>
+      </div>
+      <div id="faqMatchResult" class="match-result"></div>
+    </section>
+    <section class="panel">
+      <h2>知识库问句解析</h2>
+      <button class="ghost-button" id="extractFromKb">从知识库解析</button>
+      <div id="kbFaqPreview" class="faq-preview"></div>
+    </section>
+  </main>
+</div>
+<footer class="global-footer">©️吴嘉辉</footer>
+<script src="scripts/app.js"></script>
+</body>
+</html>
