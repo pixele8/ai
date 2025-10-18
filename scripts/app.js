@@ -5,6 +5,45 @@
   var currentUser = null;
   var toastTimer = null;
   var textEncoder = new TextEncoder();
+  var faqEditingId = null;
+  var pendingLinkFromId = null;
+  var DECISION_PRESETS = [
+    { id: "init", label: "立项评估" },
+    { id: "research", label: "调研分析" },
+    { id: "plan", label: "方案制定" },
+    { id: "review", label: "方案评审" },
+    { id: "execute", label: "执行跟踪" },
+    { id: "risk", label: "风险应对" },
+    { id: "summary", label: "复盘总结" }
+  ];
+
+  function padNumber(value) {
+    var num = parseInt(value, 10);
+    if (isNaN(num)) {
+      return "00";
+    }
+    return num < 10 ? "0" + num : String(num);
+  }
+
+  function formatDateTime(value) {
+    if (!value) {
+      return "--";
+    }
+    try {
+      var date = new Date(value);
+      if (isNaN(date.getTime())) {
+        return value;
+      }
+      var year = date.getFullYear();
+      var month = padNumber(date.getMonth() + 1);
+      var day = padNumber(date.getDate());
+      var hour = padNumber(date.getHours());
+      var minute = padNumber(date.getMinutes());
+      return year + "-" + month + "-" + day + " " + hour + ":" + minute;
+    } catch (err) {
+      return value;
+    }
+  }
 
   function uuid() {
     return "xxxxxx".replace(/[x]/g, function () {
@@ -109,6 +148,8 @@
         banks: [],
         activeBankId: null,
         activeSessionId: null,
+        decisions: [],
+        activeDecisionId: null,
         adminFlags: { reasoning: false, reasoningLevel: 1 },
         settings: {
           topN: 5,
@@ -131,6 +172,12 @@
         faqHigh: 75
       };
     }
+    if (!state.decisions) {
+      state.decisions = [];
+    }
+    if (typeof state.activeDecisionId === "undefined") {
+      state.activeDecisionId = null;
+    }
     normalizeState();
     saveState();
     return Promise.resolve();
@@ -142,6 +189,9 @@
     }
     if (!state.banks) {
       state.banks = [];
+    }
+    if (!state.decisions) {
+      state.decisions = [];
     }
     for (var i = 0; i < state.banks.length; i += 1) {
       var bank = state.banks[i];
@@ -174,6 +224,9 @@
       }
       for (var j = 0; j < bank.faqs.length; j += 1) {
         var faq = bank.faqs[j];
+        if (!faq.id) {
+          faq.id = uuid();
+        }
         if (!faq.createdAt) {
           faq.createdAt = new Date().toISOString();
         }
@@ -182,6 +235,86 @@
         }
         faq.norm = normalizeQuestionText(faq.question);
       }
+      for (var k = 0; k < bank.logs.length; k += 1) {
+        var log = bank.logs[k];
+        if (!log.id) {
+          log.id = uuid();
+        }
+        if (!log.time) {
+          log.time = new Date().toISOString();
+        }
+      }
+      for (var m = 0; m < bank.common.length; m += 1) {
+        if (!bank.common[m].id) {
+          bank.common[m].id = uuid();
+        }
+      }
+    }
+    var hasActive = false;
+    for (var n = 0; n < state.decisions.length; n += 1) {
+      var project = state.decisions[n];
+      if (!project.id) {
+        project.id = uuid();
+      }
+      if (state.activeDecisionId === project.id) {
+        hasActive = true;
+      }
+      if (!project.name) {
+        project.name = "未命名项目";
+      }
+      if (!project.startTime) {
+        project.startTime = "";
+      }
+      if (!project.timeline) {
+        project.timeline = [];
+      }
+      if (!project.links) {
+        project.links = [];
+      }
+      if (!project.createdAt) {
+        project.createdAt = new Date().toISOString();
+      }
+      if (typeof project.completed === "undefined") {
+        project.completed = false;
+      }
+      for (var t = 0; t < project.timeline.length; t += 1) {
+        var node = project.timeline[t];
+        if (!node.id) {
+          node.id = uuid();
+        }
+        if (!node.createdAt) {
+          node.createdAt = new Date().toISOString();
+        }
+        if (!node.title) {
+          node.title = "节点";
+        }
+        if (!node.reason) {
+          node.reason = "";
+        }
+        if (!node.impact) {
+          node.impact = "";
+        }
+        if (!node.note) {
+          node.note = "";
+        }
+        if (!node.startTime) {
+          node.startTime = "";
+        }
+      }
+      for (var q = 0; q < project.links.length; q += 1) {
+        var link = project.links[q];
+        if (!link.id) {
+          link.id = uuid();
+        }
+        if (!link.createdAt) {
+          link.createdAt = new Date().toISOString();
+        }
+      }
+    }
+    if (state.decisions.length === 0) {
+      state.activeDecisionId = null;
+    } else if (!hasActive) {
+      state.activeDecisionId = state.decisions[0].id;
     }
   }
 
@@ -1231,6 +1364,43 @@
     return inter / union;
   }
 
+  function resetFaqForm() {
+    var form = document.getElementById("faqForm");
+    if (!form) {
+      return;
+    }
+    form.reset();
+    faqEditingId = null;
+    form.removeAttribute("data-editing");
+    var mode = document.getElementById("faqFormMode");
+    if (mode) {
+      mode.textContent = "新增";
+    }
+  }
+
+  function startFaqEdit(faq) {
+    var form = document.getElementById("faqForm");
+    if (!form || !faq) {
+      return;
+    }
+    var questionInput = document.getElementById("faqQuestion");
+    var answerInput = document.getElementById("faqAnswer");
+    if (questionInput) {
+      questionInput.value = faq.question || "";
+      questionInput.focus();
+      questionInput.setSelectionRange(questionInput.value.length, questionInput.value.length);
+    }
+    if (answerInput) {
+      answerInput.value = faq.answer || "";
+    }
+    faqEditingId = faq.id;
+    form.setAttribute("data-editing", faq.id);
+    var mode = document.getElementById("faqFormMode");
+    if (mode) {
+      mode.textContent = "编辑";
+    }
+  }
+
   function renderFaqList() {
     var list = document.getElementById("faqList");
     if (!list) {
@@ -1241,61 +1411,76 @@
     if (!bank) {
       return;
     }
-    for (var i = 0; i < bank.faqs.length; i += 1) {
+    if (bank.faqs.length === 0) {
+      list.innerHTML = '<div class="panel-hint">当前记忆库暂无 FAQ</div>';
+      return;
+    }
+    var ordered = bank.faqs.slice().sort(function (a, b) {
+      var ta = a.updatedAt || a.createdAt || "";
+      var tb = b.updatedAt || b.createdAt || "";
+      return tb.localeCompare(ta);
+    });
+    for (var i = 0; i < ordered.length; i += 1) {
       (function (faq) {
         var card = document.createElement("div");
         card.className = "faq-card";
+        if (faqEditingId && faqEditingId === faq.id) {
+          card.className += " active";
+        }
         var header = document.createElement("header");
         var title = document.createElement("div");
-        title.innerHTML = '<span class="badge-strong">Q</span> ' + faq.question;
+        var qBadge = document.createElement("span");
+        qBadge.className = "badge-strong";
+        qBadge.textContent = "Q";
+        title.appendChild(qBadge);
+        title.appendChild(document.createTextNode(" " + faq.question));
         var tools = document.createElement("div");
+        tools.className = "card-actions";
         var editBtn = document.createElement("button");
-        editBtn.className = "ghost-button";
+        editBtn.className = "text-button";
         editBtn.textContent = "编辑";
         editBtn.addEventListener("click", function () {
-          var q = window.prompt("问题", faq.question);
-          if (!q) {
-            return;
-          }
-          var a = window.prompt("答案", faq.answer);
-          if (!a) {
-            return;
-          }
-          faq.question = q;
-          faq.answer = a;
-          faq.norm = normalizeQuestionText(q);
-          faq.updatedBy = currentUser ? currentUser.username : "";
-          faq.updatedAt = new Date().toISOString();
-          saveState();
-          renderFaqList();
+          startFaqEdit(faq);
         });
         var delBtn = document.createElement("button");
-        delBtn.className = "ghost-button";
+        delBtn.className = "text-button danger";
         delBtn.textContent = "删除";
         delBtn.addEventListener("click", function () {
-          if (window.confirm("确定删除该FAQ？")) {
-            var idx = bank.faqs.indexOf(faq);
-            if (idx >= 0) {
-              bank.faqs.splice(idx, 1);
-            }
-            saveState();
-            renderFaqList();
+          if (!window.confirm("确定删除该 FAQ？")) {
+            return;
           }
+          var idx = bank.faqs.indexOf(faq);
+          if (idx >= 0) {
+            bank.faqs.splice(idx, 1);
+          }
+          if (faqEditingId === faq.id) {
+            resetFaqForm();
+          }
+          saveState();
+          renderFaqList();
         });
         tools.appendChild(editBtn);
         tools.appendChild(delBtn);
         header.appendChild(title);
         header.appendChild(tools);
         var body = document.createElement("div");
-        body.innerHTML = '<span class="badge-strong">A</span> ' + faq.answer;
+        var aBadge = document.createElement("span");
+        aBadge.className = "badge-strong";
+        aBadge.textContent = "A";
+        body.appendChild(aBadge);
+        body.appendChild(document.createTextNode(" " + faq.answer));
         var meta = document.createElement("div");
         meta.className = "meta";
-        meta.textContent = "创建人:" + (faq.createdBy || "") + " · 更新时间:" + (faq.updatedAt || faq.createdAt || "");
+        var metaText = "创建人:" + (faq.createdBy || "") + " · 更新时间:" + formatDateTime(faq.updatedAt || faq.createdAt || "");
+        if (faq.updatedBy) {
+          metaText += " · 更新人:" + faq.updatedBy;
+        }
+        meta.textContent = metaText;
         card.appendChild(header);
         card.appendChild(body);
         card.appendChild(meta);
         list.appendChild(card);
-      })(bank.faqs[i]);
+      })(ordered[i]);
     }
   }
 
@@ -1498,13 +1683,560 @@
       list.textContent = "请选择记忆库";
       return;
     }
-    for (var i = 0; i < bank.logs.length; i += 1) {
-      var log = bank.logs[i];
-      var card = document.createElement("div");
-      card.className = "log-card";
-      card.innerHTML = '<header><div>' + log.question + '</div><div class="meta">' + log.time + '</div></header><div>摘要：' + log.summary + '</div><div class="meta">来源数 ' + log.sources + ' · 用户 ' + log.user + '</div>';
-      list.appendChild(card);
+    if (bank.logs.length === 0) {
+      list.innerHTML = '<div class="panel-hint">暂无日志</div>';
+      return;
     }
+    for (var i = 0; i < bank.logs.length; i += 1) {
+      (function (entry) {
+        var card = document.createElement("div");
+        card.className = "log-card";
+        var header = document.createElement("header");
+        var title = document.createElement("div");
+        title.textContent = entry.question;
+        var actions = document.createElement("div");
+        actions.className = "card-actions";
+        var delBtn = document.createElement("button");
+        delBtn.className = "text-button danger";
+        delBtn.textContent = "删除";
+        delBtn.addEventListener("click", function () {
+          var idx = bank.logs.indexOf(entry);
+          if (idx >= 0) {
+            bank.logs.splice(idx, 1);
+            saveState();
+            renderLogs();
+          }
+        });
+        actions.appendChild(delBtn);
+        header.appendChild(title);
+        header.appendChild(actions);
+        var summary = document.createElement("div");
+        summary.textContent = "摘要：" + (entry.summary || "");
+        var meta = document.createElement("div");
+        meta.className = "meta";
+        meta.textContent = "时间 " + formatDateTime(entry.time) + " · 来源数 " + (entry.sources || 0) + " · 用户 " + (entry.user || "");
+        card.appendChild(header);
+        card.appendChild(summary);
+        card.appendChild(meta);
+        list.appendChild(card);
+      })(bank.logs[i]);
+    }
+  }
+
+  function getDecisionProjectById(id) {
+    if (!state || !state.decisions) {
+      return null;
+    }
+    for (var i = 0; i < state.decisions.length; i += 1) {
+      if (state.decisions[i].id === id) {
+        return state.decisions[i];
+      }
+    }
+    return null;
+  }
+
+  function getActiveDecisionProject() {
+    if (!state) {
+      return null;
+    }
+    return getDecisionProjectById(state.activeDecisionId);
+  }
+
+  function deleteDecisionProject(projectId) {
+    if (!state || !state.decisions || !projectId) {
+      return false;
+    }
+    for (var i = 0; i < state.decisions.length; i += 1) {
+      if (state.decisions[i].id === projectId) {
+        state.decisions.splice(i, 1);
+        if (state.activeDecisionId === projectId) {
+          state.activeDecisionId = null;
+        }
+        saveState();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function sortTimeline(project) {
+    if (!project || !project.timeline) {
+      return;
+    }
+    project.timeline.sort(function (a, b) {
+      var ta = a.startTime || "";
+      var tb = b.startTime || "";
+      if (ta && tb) {
+        if (ta === tb) {
+          return (a.createdAt || "").localeCompare(b.createdAt || "");
+        }
+        return ta.localeCompare(tb);
+      }
+      if (ta) {
+        return -1;
+      }
+      if (tb) {
+        return 1;
+      }
+      return (a.createdAt || "").localeCompare(b.createdAt || "");
+    });
+  }
+
+  function renderDecisionPalette() {
+    var palette = document.getElementById("decisionPalette");
+    if (!palette) {
+      return;
+    }
+    palette.innerHTML = "";
+    for (var i = 0; i < DECISION_PRESETS.length; i += 1) {
+      var item = document.createElement("div");
+      item.className = "palette-item";
+      item.draggable = true;
+      item.textContent = DECISION_PRESETS[i].label;
+      item.dataset.value = DECISION_PRESETS[i].label;
+      item.addEventListener("dragstart", function (evt) {
+        evt.dataTransfer.setData("text/plain", evt.target.dataset.value);
+      });
+      palette.appendChild(item);
+    }
+  }
+
+  function addTimelineNode(project, label) {
+    if (!project || !project.timeline) {
+      return;
+    }
+    var node = {
+      id: uuid(),
+      title: label || "节点",
+      startTime: project.startTime || "",
+      reason: "",
+      impact: "",
+      note: "",
+      createdAt: new Date().toISOString()
+    };
+    project.timeline.push(node);
+    sortTimeline(project);
+  }
+
+  function findTimelineNode(project, id) {
+    if (!project || !project.timeline) {
+      return null;
+    }
+    for (var i = 0; i < project.timeline.length; i += 1) {
+      if (project.timeline[i].id === id) {
+        return project.timeline[i];
+      }
+    }
+    return null;
+  }
+
+  function findNodeTitle(project, id) {
+    var node = findTimelineNode(project, id);
+    if (!node) {
+      return "节点";
+    }
+    return node.title || "节点";
+  }
+
+  function hideLinkForm() {
+    var form = document.getElementById("linkForm");
+    if (form) {
+      form.classList.add("hidden");
+      form.removeAttribute("data-from");
+      form.removeAttribute("data-to");
+      form.reset();
+    }
+    var summary = document.getElementById("linkSummary");
+    if (summary) {
+      summary.textContent = "";
+    }
+  }
+
+  function openLinkForm(fromId, toId) {
+    var project = getActiveDecisionProject();
+    var form = document.getElementById("linkForm");
+    var summary = document.getElementById("linkSummary");
+    if (!project || !form || !summary) {
+      return;
+    }
+    var fromTitle = findNodeTitle(project, fromId);
+    var toTitle = findNodeTitle(project, toId);
+    summary.textContent = fromTitle + " → " + toTitle;
+    form.classList.remove("hidden");
+    form.setAttribute("data-from", fromId);
+    form.setAttribute("data-to", toId);
+    var relation = document.getElementById("linkRelation");
+    if (relation) {
+      relation.focus();
+    }
+  }
+
+  function renderLinkList(project) {
+    var list = document.getElementById("linkList");
+    if (!list) {
+      return;
+    }
+    list.innerHTML = "";
+    if (!project || !project.links || project.links.length === 0) {
+      list.innerHTML = '<div class="panel-hint">暂无关联</div>';
+      return;
+    }
+    for (var i = 0; i < project.links.length; i += 1) {
+      (function (link) {
+        var item = document.createElement("div");
+        item.className = "link-item";
+        var info = document.createElement("div");
+        var relation = link.relation || "关联";
+        var note = link.note ? " · " + link.note : "";
+        var fromLabel = document.createElement("strong");
+        fromLabel.textContent = findNodeTitle(project, link.fromId);
+        var toLabel = document.createElement("strong");
+        toLabel.textContent = findNodeTitle(project, link.toId);
+        info.appendChild(fromLabel);
+        info.appendChild(document.createTextNode(" → "));
+        info.appendChild(toLabel);
+        var metaInfo = document.createElement("div");
+        metaInfo.className = "meta";
+        metaInfo.textContent = relation + note;
+        info.appendChild(metaInfo);
+        var actions = document.createElement("div");
+        actions.className = "card-actions";
+        var delBtn = document.createElement("button");
+        delBtn.className = "text-button danger";
+        delBtn.textContent = "删除";
+        delBtn.addEventListener("click", function () {
+          var idx = project.links.indexOf(link);
+          if (idx >= 0) {
+            project.links.splice(idx, 1);
+            saveState();
+            renderLinkList(project);
+            renderDecisionHistory();
+          }
+        });
+        actions.appendChild(delBtn);
+        item.appendChild(info);
+        item.appendChild(actions);
+        list.appendChild(item);
+      })(project.links[i]);
+    }
+  }
+
+  function createTimelineNode(project, node, locked) {
+    var card = document.createElement("div");
+    card.className = "timeline-node";
+    card.setAttribute("data-node", node.id);
+    if (pendingLinkFromId && pendingLinkFromId === node.id) {
+      card.classList.add("linking");
+    }
+    var header = document.createElement("header");
+    var titleWrap = document.createElement("div");
+    titleWrap.className = "node-title";
+    var titleInput = document.createElement("input");
+    titleInput.type = "text";
+    titleInput.value = node.title || "";
+    titleInput.placeholder = "节点名称";
+    titleInput.disabled = locked;
+    titleInput.addEventListener("input", function () {
+      node.title = titleInput.value;
+      saveState();
+      renderLinkList(project);
+    });
+    titleWrap.appendChild(titleInput);
+    var actions = document.createElement("div");
+    actions.className = "node-actions";
+    var linkBtn = document.createElement("button");
+    linkBtn.className = "text-button";
+    linkBtn.textContent = pendingLinkFromId && pendingLinkFromId === node.id ? "取消关联" : "关联";
+    linkBtn.disabled = locked;
+    linkBtn.addEventListener("click", function () {
+      if (locked) {
+        return;
+      }
+      if (!pendingLinkFromId) {
+        pendingLinkFromId = node.id;
+        hideLinkForm();
+        renderActiveProject();
+        return;
+      }
+      if (pendingLinkFromId === node.id) {
+        pendingLinkFromId = null;
+        hideLinkForm();
+        renderActiveProject();
+        return;
+      }
+      openLinkForm(pendingLinkFromId, node.id);
+    });
+    var delBtn = document.createElement("button");
+    delBtn.className = "text-button danger";
+    delBtn.textContent = "移除";
+    delBtn.disabled = locked;
+    delBtn.addEventListener("click", function () {
+      if (locked) {
+        return;
+      }
+      var idx = project.timeline.indexOf(node);
+      if (idx >= 0) {
+        project.timeline.splice(idx, 1);
+      }
+      for (var i = project.links.length - 1; i >= 0; i -= 1) {
+        if (project.links[i].fromId === node.id || project.links[i].toId === node.id) {
+          project.links.splice(i, 1);
+        }
+      }
+      if (pendingLinkFromId === node.id) {
+        pendingLinkFromId = null;
+        hideLinkForm();
+      }
+      saveState();
+      renderActiveProject();
+      renderDecisionHistory();
+    });
+    actions.appendChild(linkBtn);
+    actions.appendChild(delBtn);
+    header.appendChild(titleWrap);
+    header.appendChild(actions);
+    var timeLabel = document.createElement("label");
+    timeLabel.textContent = "开始时间";
+    var timeInput = document.createElement("input");
+    timeInput.type = "datetime-local";
+    timeInput.value = node.startTime || "";
+    timeInput.disabled = locked;
+    timeInput.addEventListener("change", function () {
+      node.startTime = timeInput.value;
+      sortTimeline(project);
+      saveState();
+      renderActiveProject();
+    });
+    timeLabel.appendChild(timeInput);
+    var reasonLabel = document.createElement("label");
+    reasonLabel.textContent = "开始原因";
+    var reasonInput = document.createElement("textarea");
+    reasonInput.value = node.reason || "";
+    reasonInput.placeholder = "说明触发该节点的原因";
+    reasonInput.disabled = locked;
+    reasonInput.addEventListener("input", function () {
+      node.reason = reasonInput.value;
+      saveState();
+    });
+    reasonLabel.appendChild(reasonInput);
+    var impactLabel = document.createElement("label");
+    impactLabel.textContent = "产生后果";
+    var impactInput = document.createElement("textarea");
+    impactInput.value = node.impact || "";
+    impactInput.placeholder = "记录该节点带来的影响";
+    impactInput.disabled = locked;
+    impactInput.addEventListener("input", function () {
+      node.impact = impactInput.value;
+      saveState();
+    });
+    impactLabel.appendChild(impactInput);
+    var noteLabel = document.createElement("label");
+    noteLabel.textContent = "备注";
+    var noteInput = document.createElement("textarea");
+    noteInput.value = node.note || "";
+    noteInput.placeholder = "其他补充信息";
+    noteInput.disabled = locked;
+    noteInput.addEventListener("input", function () {
+      node.note = noteInput.value;
+      saveState();
+    });
+    noteLabel.appendChild(noteInput);
+    card.appendChild(header);
+    card.appendChild(timeLabel);
+    card.appendChild(reasonLabel);
+    card.appendChild(impactLabel);
+    card.appendChild(noteLabel);
+    return card;
+  }
+
+  function renderActiveProject() {
+    var nameEl = document.getElementById("activeProjectName");
+    var metaEl = document.getElementById("activeProjectMeta");
+    var canvas = document.getElementById("timelineCanvas");
+    var completeBtn = document.getElementById("completeProject");
+    var project = getActiveDecisionProject();
+    if (nameEl) {
+      nameEl.textContent = project ? project.name : "未选择项目";
+    }
+    if (metaEl) {
+      var startText = project && project.startTime ? formatDateTime(project.startTime) : "--";
+      metaEl.textContent = "开始时间：" + startText;
+    }
+    if (completeBtn) {
+      completeBtn.disabled = !project || project.completed;
+    }
+    if (!canvas) {
+      return;
+    }
+    canvas.classList.toggle("locked", !project || project.completed);
+    canvas.innerHTML = "";
+    if (!project) {
+      var empty = document.createElement("div");
+      empty.className = "timeline-placeholder";
+      empty.textContent = "请先创建或选择项目";
+      canvas.appendChild(empty);
+      renderLinkList(null);
+      return;
+    }
+    sortTimeline(project);
+    if (!project.timeline || project.timeline.length === 0) {
+      var placeholder = document.createElement("div");
+      placeholder.className = "timeline-placeholder";
+      placeholder.textContent = "拖动右侧常用项目到此处，开始绘制决策链";
+      canvas.appendChild(placeholder);
+    } else {
+      for (var i = 0; i < project.timeline.length; i += 1) {
+        canvas.appendChild(createTimelineNode(project, project.timeline[i], project.completed));
+      }
+    }
+    renderLinkList(project);
+  }
+
+  function renderProjectList() {
+    var list = document.getElementById("projectList");
+    if (!list) {
+      return;
+    }
+    list.innerHTML = "";
+    if (!state.decisions || state.decisions.length === 0) {
+      list.innerHTML = '<div class="panel-hint">暂无项目</div>';
+      return;
+    }
+    var ordered = state.decisions.slice().sort(function (a, b) {
+      var ta = a.createdAt || "";
+      var tb = b.createdAt || "";
+      return tb.localeCompare(ta);
+    });
+    if (!state.activeDecisionId || !getDecisionProjectById(state.activeDecisionId)) {
+      state.activeDecisionId = ordered[0].id;
+      saveState();
+    }
+    for (var i = 0; i < ordered.length; i += 1) {
+        (function (project) {
+          var isActive = state.activeDecisionId === project.id;
+          var item = document.createElement("div");
+          item.className = "history-item" + (project.completed ? " completed" : "");
+          if (isActive) {
+            item.className += " active";
+          }
+          var header = document.createElement("header");
+          var title = document.createElement("div");
+          title.textContent = project.name;
+          var actions = document.createElement("div");
+          actions.className = "card-actions";
+          var removeBtn = document.createElement("button");
+          removeBtn.className = "text-button danger";
+          removeBtn.type = "button";
+          removeBtn.textContent = "删除";
+          removeBtn.addEventListener("click", function (evt) {
+            evt.stopPropagation();
+            if (!window.confirm("确认删除该项目？")) {
+              return;
+            }
+            if (deleteDecisionProject(project.id)) {
+              pendingLinkFromId = null;
+              hideLinkForm();
+              renderDecisionPage();
+              showToast("项目已删除");
+            }
+          });
+          actions.appendChild(removeBtn);
+          header.appendChild(title);
+          header.appendChild(actions);
+          var meta = document.createElement("div");
+          meta.className = "meta";
+          var start = formatDateTime(project.startTime);
+          var nodes = project.timeline ? project.timeline.length : 0;
+          meta.textContent = "开始 " + start + " · 节点 " + nodes;
+          item.appendChild(header);
+          item.appendChild(meta);
+          item.addEventListener("click", function () {
+            state.activeDecisionId = project.id;
+            pendingLinkFromId = null;
+            hideLinkForm();
+            saveState();
+            renderProjectList();
+            renderActiveProject();
+            renderDecisionHistory();
+          });
+          list.appendChild(item);
+        })(ordered[i]);
+    }
+  }
+
+  function renderDecisionHistory() {
+    var container = document.getElementById("decisionHistory");
+    if (!container) {
+      return;
+    }
+    container.innerHTML = "";
+    if (!state.decisions || state.decisions.length === 0) {
+      container.innerHTML = '<div class="panel-hint">暂无历史记录</div>';
+      return;
+    }
+    var completed = [];
+    for (var i = 0; i < state.decisions.length; i += 1) {
+      if (state.decisions[i].completed) {
+        completed.push(state.decisions[i]);
+      }
+    }
+    if (completed.length === 0) {
+      container.innerHTML = '<div class="panel-hint">暂无已完成的决策</div>';
+      return;
+    }
+    completed.sort(function (a, b) {
+      var ta = a.endTime || a.updatedAt || a.createdAt || "";
+      var tb = b.endTime || b.updatedAt || b.createdAt || "";
+      return tb.localeCompare(ta);
+    });
+    for (var j = 0; j < completed.length; j += 1) {
+      var card = document.createElement("div");
+      card.className = "history-card";
+      var header = document.createElement("header");
+      var title = document.createElement("div");
+      title.textContent = completed[j].name;
+      var score = document.createElement("div");
+      score.className = "score";
+      score.textContent = typeof completed[j].score === "number" ? "评分 " + completed[j].score : "评分 --";
+      header.appendChild(title);
+      header.appendChild(score);
+      var duration = document.createElement("div");
+      duration.className = "meta";
+      duration.textContent = formatDateTime(completed[j].startTime) + " → " + formatDateTime(completed[j].endTime);
+      var outcome = document.createElement("div");
+      outcome.textContent = "效果：" + (completed[j].outcome || "");
+      card.appendChild(header);
+      card.appendChild(duration);
+      card.appendChild(outcome);
+      container.appendChild(card);
+    }
+  }
+
+  function renderDecisionPage() {
+    renderDecisionPalette();
+    renderProjectList();
+    renderActiveProject();
+    renderDecisionHistory();
+  }
+
+  function handleTimelineDrop(evt) {
+    evt.preventDefault();
+    evt.stopPropagation();
+    var project = getActiveDecisionProject();
+    if (!project || project.completed) {
+      return;
+    }
+    var label = evt.dataTransfer.getData("text/plain");
+    if (!label) {
+      return;
+    }
+    label = label.trim();
+    if (!label) {
+      return;
+    }
+    addTimelineNode(project, label);
+    saveState();
+    renderActiveProject();
   }
 
   function resetPassword(user) {
@@ -1824,27 +2556,62 @@
     renderBankList();
     updateBankBadge();
     renderFaqList();
+    resetFaqForm();
     var bank = getActiveBank();
     if (bank) {
       renderKbFaqPreview(extractFaqCandidates(bank));
     }
-    var addBtn = document.getElementById("addFaq");
-    if (addBtn) {
-      addBtn.addEventListener("click", function () {
+    var faqForm = document.getElementById("faqForm");
+    if (faqForm) {
+      faqForm.addEventListener("submit", function (evt) {
+        evt.preventDefault();
         var bank = getActiveBank();
         if (!bank) {
           showToast("请选择记忆库");
           return;
         }
-        var q = window.prompt("问题");
-        if (!q) {
+        var question = document.getElementById("faqQuestion").value.trim();
+        var answer = document.getElementById("faqAnswer").value.trim();
+        if (!question || !answer) {
+          showToast("请填写完整的问题和答案");
           return;
         }
-        var a = window.prompt("答案");
-        if (!a) {
+        if (faqEditingId) {
+          var target = null;
+          for (var i = 0; i < bank.faqs.length; i += 1) {
+            if (bank.faqs[i].id === faqEditingId) {
+              target = bank.faqs[i];
+              break;
+            }
+          }
+          if (!target) {
+            showToast("未找到要编辑的 FAQ");
+            resetFaqForm();
+            renderFaqList();
+            return;
+          }
+          var normalized = normalizeQuestionText(question);
+          for (var j = 0; j < bank.faqs.length; j += 1) {
+            if (bank.faqs[j].id !== target.id) {
+              var existingNorm = bank.faqs[j].norm || normalizeQuestionText(bank.faqs[j].question);
+              if (existingNorm === normalized) {
+                showToast("已存在相同的问题");
+                return;
+              }
+            }
+          }
+          target.question = question;
+          target.answer = answer;
+          target.norm = normalized;
+          target.updatedAt = new Date().toISOString();
+          target.updatedBy = currentUser ? currentUser.username : "";
+          saveState();
+          renderFaqList();
+          resetFaqForm();
+          showToast("FAQ 已更新");
           return;
         }
-        var inserted = upsertFaq(bank, q, a, {
+        var inserted = upsertFaq(bank, question, answer, {
           createdAt: new Date().toISOString(),
           createdBy: currentUser ? currentUser.username : ""
         });
@@ -1852,7 +2619,14 @@
           saveState();
           renderFaqList();
           showToast(inserted.created ? "FAQ 已新增" : "FAQ 已更新");
+          resetFaqForm();
         }
+      });
+    }
+    var resetFaqBtn = document.getElementById("resetFaqForm");
+    if (resetFaqBtn) {
+      resetFaqBtn.addEventListener("click", function () {
+        resetFaqForm();
       });
     }
     var exportBtn = document.getElementById("exportFaq");
@@ -1942,6 +2716,204 @@
           return;
         }
         renderKbFaqPreview(extractFaqCandidates(bank));
+      });
+    }
+    var createBankBtn = document.getElementById("createBank");
+    if (createBankBtn) {
+      createBankBtn.addEventListener("click", createBank);
+    }
+    var logoutBtn = document.getElementById("logoutButton");
+    if (logoutBtn) {
+      logoutBtn.addEventListener("click", logout);
+    }
+  }
+
+  function initDecisionPage() {
+    requireAuth();
+    setNavUserInfo();
+    ensureActiveBank();
+    renderBankList();
+    renderDecisionPage();
+    var projectForm = document.getElementById("projectForm");
+    var newProjectBtn = document.getElementById("newProject");
+    var cancelProjectBtn = document.getElementById("cancelProject");
+    function showProjectForm() {
+      if (projectForm) {
+        projectForm.classList.remove("hidden");
+        var nameInput = document.getElementById("projectName");
+        if (nameInput) {
+          nameInput.focus();
+        }
+      }
+    }
+    function hideProjectForm() {
+      if (projectForm) {
+        projectForm.classList.add("hidden");
+        projectForm.reset();
+      }
+    }
+    if (newProjectBtn) {
+      newProjectBtn.addEventListener("click", function () {
+        if (projectForm && projectForm.classList.contains("hidden")) {
+          showProjectForm();
+        } else {
+          hideProjectForm();
+        }
+      });
+    }
+    if (cancelProjectBtn) {
+      cancelProjectBtn.addEventListener("click", function () {
+        hideProjectForm();
+      });
+    }
+    if (projectForm) {
+      projectForm.addEventListener("submit", function (evt) {
+        evt.preventDefault();
+        var nameInput = document.getElementById("projectName");
+        var startInput = document.getElementById("projectStart");
+        var name = nameInput ? nameInput.value.trim() : "";
+        var start = startInput ? startInput.value : "";
+        if (!name || !start) {
+          showToast("请填写项目名称和开始时间");
+          return;
+        }
+        var project = {
+          id: uuid(),
+          name: name,
+          startTime: start,
+          createdAt: new Date().toISOString(),
+          createdBy: currentUser ? currentUser.username : "",
+          timeline: [],
+          links: [],
+          completed: false
+        };
+        state.decisions.unshift(project);
+        state.activeDecisionId = project.id;
+        pendingLinkFromId = null;
+        hideLinkForm();
+        hideProjectForm();
+        saveState();
+        renderDecisionPage();
+        showToast("项目已创建");
+      });
+    }
+    var canvas = document.getElementById("timelineCanvas");
+    if (canvas) {
+      canvas.addEventListener("dragover", function (evt) {
+        var project = getActiveDecisionProject();
+        if (!project || project.completed) {
+          return;
+        }
+        evt.preventDefault();
+      }, true);
+      canvas.addEventListener("drop", handleTimelineDrop, true);
+    }
+    var linkForm = document.getElementById("linkForm");
+    if (linkForm) {
+      linkForm.addEventListener("submit", function (evt) {
+        evt.preventDefault();
+        var project = getActiveDecisionProject();
+        if (!project) {
+          return;
+        }
+        var fromId = linkForm.getAttribute("data-from");
+        var toId = linkForm.getAttribute("data-to");
+        if (!fromId || !toId) {
+          return;
+        }
+        var relationInput = document.getElementById("linkRelation");
+        var noteInput = document.getElementById("linkNote");
+        var relation = relationInput ? relationInput.value.trim() : "";
+        var note = noteInput ? noteInput.value.trim() : "";
+        project.links.push({
+          id: uuid(),
+          fromId: fromId,
+          toId: toId,
+          relation: relation || "关联",
+          note: note,
+          createdAt: new Date().toISOString()
+        });
+        pendingLinkFromId = null;
+        saveState();
+        hideLinkForm();
+        renderActiveProject();
+        renderDecisionHistory();
+      });
+    }
+    var cancelLinkBtn = document.getElementById("cancelLink");
+    if (cancelLinkBtn) {
+      cancelLinkBtn.addEventListener("click", function () {
+        pendingLinkFromId = null;
+        hideLinkForm();
+        renderActiveProject();
+      });
+    }
+    var completeBtn = document.getElementById("completeProject");
+    if (completeBtn) {
+      completeBtn.addEventListener("click", function () {
+        var project = getActiveDecisionProject();
+        if (!project || project.completed) {
+          return;
+        }
+        var modal = document.getElementById("completeModal");
+        if (!modal) {
+          return;
+        }
+        var endInput = document.getElementById("completeEnd");
+        var outcomeInput = document.getElementById("completeOutcome");
+        var scoreInput = document.getElementById("completeScore");
+        if (endInput) {
+          endInput.value = project.endTime || "";
+        }
+        if (outcomeInput) {
+          outcomeInput.value = project.outcome || "";
+        }
+        if (scoreInput) {
+          scoreInput.value = project.score || "";
+        }
+        modal.classList.remove("hidden");
+      });
+    }
+    var completeForm = document.getElementById("completeForm");
+    if (completeForm) {
+      completeForm.addEventListener("submit", function (evt) {
+        evt.preventDefault();
+        var project = getActiveDecisionProject();
+        if (!project) {
+          return;
+        }
+        var endInput = document.getElementById("completeEnd");
+        var outcomeInput = document.getElementById("completeOutcome");
+        var scoreInput = document.getElementById("completeScore");
+        project.endTime = endInput ? endInput.value : "";
+        project.outcome = outcomeInput ? outcomeInput.value.trim() : "";
+        var scoreValue = scoreInput ? parseInt(scoreInput.value, 10) : NaN;
+        project.score = isNaN(scoreValue) ? null : scoreValue;
+        project.completed = true;
+        project.updatedAt = new Date().toISOString();
+        pendingLinkFromId = null;
+        hideLinkForm();
+        saveState();
+        renderDecisionPage();
+        var modal = document.getElementById("completeModal");
+        if (modal) {
+          modal.classList.add("hidden");
+        }
+        completeForm.reset();
+        showToast("决策已归档");
+      });
+    }
+    var cancelComplete = document.getElementById("cancelComplete");
+    if (cancelComplete) {
+      cancelComplete.addEventListener("click", function () {
+        var modal = document.getElementById("completeModal");
+        var form = document.getElementById("completeForm");
+        if (form) {
+          form.reset();
+        }
+        if (modal) {
+          modal.classList.add("hidden");
+        }
       });
     }
     var createBankBtn = document.getElementById("createBank");
@@ -2069,6 +3041,8 @@
         initKbPage();
       } else if (page === "faq") {
         initFaqPage();
+      } else if (page === "decision") {
+        initDecisionPage();
       } else if (page === "admin") {
         initAdminPage();
       } else {
