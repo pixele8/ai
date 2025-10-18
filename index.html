@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>对话 · 认知控制台</title>
+<link rel="stylesheet" href="styles/app.css">
+</head>
+<body data-page="chat">
+<div class="app-shell">
+  <aside class="sidebar" id="bankSidebar">
+    <div class="brand">认知控制台</div>
+    <div class="nav-group">
+      <a class="nav-link active" href="index.html">对话</a>
+      <a class="nav-link" href="kb.html">知识库</a>
+      <a class="nav-link" href="faq.html">FAQ</a>
+      <a class="nav-link" href="decision.html">决策链</a>
+      <a class="nav-link" href="admin.html">系统</a>
+    </div>
+    <div class="sidebar-section">
+      <div class="section-title">记忆库</div>
+      <div class="badge-list" id="bankList"></div>
+      <button class="ghost-button" id="createBank">新建记忆库</button>
+    </div>
+    <div class="sidebar-section">
+      <div class="section-title">会话</div>
+      <div class="session-list" id="sessionList"></div>
+      <button class="ghost-button" id="createSession">新建会话</button>
+    </div>
+    <button class="ghost-button" id="logoutButton">退出登录</button>
+  </aside>
+  <main class="main-panel">
+    <header class="main-header">
+      <div class="header-info">
+        <div class="bank-badge" id="activeBankBadge">未选择记忆库</div>
+        <div class="settings-entry" id="settingsToggle">设置</div>
+      </div>
+      <div class="user-info" id="userInfo"></div>
+    </header>
+    <section class="chips-bar" id="commonChips"></section>
+    <section class="chat-area" id="chatArea"></section>
+    <section class="chat-input">
+      <div class="evidence-panel" id="evidencePanel"></div>
+      <textarea id="chatInput" placeholder="请输入问题…" rows="3"></textarea>
+      <div class="chat-actions">
+        <label class="switch"><input type="checkbox" id="reasoningToggle"><span>启用推理</span></label>
+        <button class="primary-button" id="sendMessage">发送</button>
+      </div>
+    </section>
+  </main>
+  <aside class="settings-drawer" id="settingsDrawer">
+    <div class="drawer-header">
+      <h2>对话设置</h2>
+      <button class="icon-button" id="closeSettings">×</button>
+    </div>
+    <form id="settingsForm" class="drawer-form">
+      <label>TopN<input type="number" id="settingTopN" min="1" max="20"></label>
+      <label>chunkSize<input type="number" id="settingChunkSize" min="50" max="2000"></label>
+      <label>chunkOverlap<input type="number" id="settingChunkOverlap" min="0" max="500"></label>
+      <label>推理强度<input type="number" id="settingReasonLevel" min="1" max="3"></label>
+      <label>FAQ低阈值(%)<input type="number" id="settingFaqLow" min="0" max="100"></label>
+      <label>FAQ高阈值(%)<input type="number" id="settingFaqHigh" min="0" max="100"></label>
+      <button type="submit" class="primary-button">保存</button>
+    </form>
+  </aside>
+</div>
+<footer class="global-footer">©️吴嘉辉</footer>
+<script src="scripts/app.js"></script>
+</body>
+</html>
