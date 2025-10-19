@@ -21,16 +21,14 @@
   var activeFileFilterId = null;
   var authBackdropRaf = null;
   var decisionLayoutRaf = null;
-  var DEFAULT_SESSION_GUIDE = {
-    title: "新会话引导",
-    description: "请补充本次沟通的目标、关键背景和期望成果，以便虹小聊提供更精准的协助。",
-    fields: [
-      { id: "goal", label: "沟通目标", placeholder: "希望解决的关键问题" },
-      { id: "milestone", label: "关键时间节点", placeholder: "例如上线时间或里程碑" },
-      { id: "stakeholder", label: "主要干系人", placeholder: "列出需要同步的角色或团队" }
-    ]
-  };
-
+  var sessionMenuSessionId = null;
+  var historySearchTerm = "";
+  var historyGroupFilter = "all";
+  var historyGrouping = "group";
+  var pendingChunkHighlightId = null;
+  var detailProjectId = null;
+  var detailHighlightId = null;
+  var detailNoteTimer = null;
   function padNumber(value) {
     var num = parseInt(value, 10);
     if (isNaN(num)) {
@@ -143,6 +141,24 @@
       var r = Math.random() * 16;
       return (r | 0).toString(16);
     }) + Date.now().toString(16);
+  }
+
+  function getQueryParam(name) {
+    if (!name) {
+      return "";
+    }
+    var search = window.location.search || "";
+    if (search.length > 1 && search.charAt(0) === "?") {
+      search = search.substring(1);
+    }
+    var parts = search.split("&");
+    for (var i = 0; i < parts.length; i += 1) {
+      var pair = parts[i].split("=");
+      if (decodeURIComponent(pair[0] || "") === name) {
+        return decodeURIComponent(pair[1] || "");
+      }
+    }
+    return "";
   }
 
   function clonePresets(list) {
@@ -332,8 +348,7 @@
           chunkOverlap: 80,
           faqLow: 40,
           faqHigh: 75
-        },
-        sessionGuide: JSON.parse(JSON.stringify(DEFAULT_SESSION_GUIDE))
+        }
       };
     }
     if (!state.adminFlags) {
@@ -353,9 +368,6 @@
     }
     if (typeof state.activeDecisionId === "undefined") {
       state.activeDecisionId = null;
-    }
-    if (!state.sessionGuide || !state.sessionGuide.fields) {
-      state.sessionGuide = JSON.parse(JSON.stringify(DEFAULT_SESSION_GUIDE));
     }
     normalizeState();
     saveState();
@@ -428,8 +440,11 @@
         if (!sess.messages) {
           sess.messages = [];
         }
-        if (!sess.guideAnswers || typeof sess.guideAnswers !== "object") {
-          sess.guideAnswers = {};
+        if (typeof sess.note !== "string") {
+          sess.note = "";
+        }
+        if (typeof sess.manualTitle !== "boolean") {
+          sess.manualTitle = false;
         }
       }
       var fileMap = {};
@@ -493,6 +508,15 @@
         if (!faq.createdBy) {
           faq.createdBy = "";
         }
+        if (!faq.source) {
+          faq.source = "manual";
+        }
+        if (typeof faq.auto !== "boolean") {
+          faq.auto = false;
+        }
+        if (!faq.origin) {
+          faq.origin = "";
+        }
         faq.norm = normalizeQuestionText(faq.question);
       }
       for (var k = 0; k < bank.logs.length; k += 1) {
@@ -527,6 +551,21 @@
       }
       if (!project.startTime) {
         project.startTime = "";
+      }
+      if (!project.group) {
+        project.group = "未分组";
+      }
+      if (!project.note) {
+        project.note = "";
+      }
+      if (typeof project.outcome !== "string") {
+        project.outcome = project.outcome ? String(project.outcome) : "";
+      }
+      if (!project.tags || !Array.isArray(project.tags)) {
+        project.tags = [];
+      }
+      if (!project.comments || !Array.isArray(project.comments)) {
+        project.comments = [];
       }
       if (!project.timeline) {
         project.timeline = [];
@@ -576,32 +615,26 @@
           link.strength = "medium";
         }
       }
+      for (var cm = 0; cm < project.comments.length; cm += 1) {
+        var comment = project.comments[cm];
+        if (!comment.id) {
+          comment.id = uuid();
+        }
+        if (!comment.user) {
+          comment.user = "";
+        }
+        if (!comment.createdAt) {
+          comment.createdAt = new Date().toISOString();
+        }
+        if (typeof comment.text !== "string") {
+          comment.text = "";
+        }
+      }
     }
     if (state.decisions.length === 0) {
       state.activeDecisionId = null;
     } else if (!hasActive) {
       state.activeDecisionId = state.decisions[0].id;
-    }
-    if (!state.sessionGuide || !state.sessionGuide.fields) {
-      state.sessionGuide = JSON.parse(JSON.stringify(DEFAULT_SESSION_GUIDE));
-    }
-    if (!state.sessionGuide.title) {
-      state.sessionGuide.title = DEFAULT_SESSION_GUIDE.title;
-    }
-    if (!state.sessionGuide.description) {
-      state.sessionGuide.description = DEFAULT_SESSION_GUIDE.description;
-    }
-    for (var fieldIndex = 0; fieldIndex < state.sessionGuide.fields.length; fieldIndex += 1) {
-      var field = state.sessionGuide.fields[fieldIndex];
-      if (!field.id) {
-        field.id = uuid();
-      }
-      if (!field.label) {
-        field.label = "字段" + (fieldIndex + 1);
-      }
-      if (typeof field.placeholder !== "string") {
-        field.placeholder = "";
-      }
     }
   }
 
@@ -628,6 +661,15 @@
       if (meta && meta.createdBy && !existing.createdBy) {
         existing.createdBy = meta.createdBy;
       }
+      if (meta && meta.source) {
+        existing.source = meta.source;
+      }
+      if (meta && typeof meta.auto === "boolean") {
+        existing.auto = meta.auto;
+      }
+      if (meta && meta.origin) {
+        existing.origin = meta.origin;
+      }
       return { item: existing, created: false };
     }
     var now = meta && meta.createdAt ? meta.createdAt : new Date().toISOString();
@@ -638,7 +680,10 @@
       answer: answer,
       createdAt: now,
       createdBy: createdBy,
-      norm: normalized
+      norm: normalized,
+      source: meta && meta.source ? meta.source : "manual",
+      auto: meta && typeof meta.auto === "boolean" ? meta.auto : false,
+      origin: meta && meta.origin ? meta.origin : ""
     };
     if (meta && meta.updatedAt) {
       faq.updatedAt = meta.updatedAt;
@@ -895,11 +940,78 @@
     }
   }
 
+  function closeSessionMenu() {
+    var menu = document.getElementById("sessionMenu");
+    if (menu) {
+      menu.classList.add("hidden");
+    }
+    sessionMenuSessionId = null;
+  }
+
+  function openSessionMenu(sessionId, x, y) {
+    var menu = document.getElementById("sessionMenu");
+    if (!menu) {
+      return;
+    }
+    sessionMenuSessionId = sessionId;
+    menu.style.left = x + "px";
+    menu.style.top = y + "px";
+    menu.classList.remove("hidden");
+    window.requestAnimationFrame(function () {
+      var rect = menu.getBoundingClientRect();
+      var left = rect.left;
+      var top = rect.top;
+      if (rect.right > window.innerWidth) {
+        left = Math.max(8, window.innerWidth - rect.width - 8);
+      }
+      if (rect.bottom > window.innerHeight) {
+        top = Math.max(8, window.innerHeight - rect.height - 8);
+      }
+      menu.style.left = left + "px";
+      menu.style.top = top + "px";
+    });
+  }
+
+  function promptRenameSession(session) {
+    if (!session) {
+      return;
+    }
+    var name = window.prompt("会话名称", session.title || "");
+    if (name === null) {
+      return;
+    }
+    var trimmed = name.trim();
+    if (!trimmed) {
+      trimmed = "新会话";
+    }
+    session.title = trimmed;
+    session.manualTitle = true;
+    saveState();
+    renderSessionList();
+    renderChat();
+    showToast("会话名称已更新");
+  }
+
+  function promptSessionNote(session) {
+    if (!session) {
+      return;
+    }
+    var note = window.prompt("会话备注", session.note || "");
+    if (note === null) {
+      return;
+    }
+    session.note = note.trim();
+    saveState();
+    renderSessionList();
+    showToast(session.note ? "备注已更新" : "备注已清除");
+  }
+
   function renderSessionList() {
     var container = document.getElementById("sessionList");
     if (!container) {
       return;
     }
+    closeSessionMenu();
     container.innerHTML = "";
     var bank = getActiveBank();
     if (!bank) {
@@ -909,9 +1021,20 @@
       (function (session) {
         var card = document.createElement("div");
         card.className = "session-card" + (session.id === state.activeSessionId ? " active" : "");
+        card.dataset.id = session.id;
+        card.title = session.note ? session.note : session.title;
+        var info = document.createElement("div");
+        info.className = "session-info";
         var title = document.createElement("div");
         title.className = "session-title";
         title.textContent = session.title;
+        info.appendChild(title);
+        if (session.note) {
+          var note = document.createElement("div");
+          note.className = "session-note";
+          note.textContent = snippetText(session.note, 48);
+          info.appendChild(note);
+        }
         var remove = document.createElement("button");
         remove.className = "session-remove";
         remove.type = "button";
@@ -924,13 +1047,17 @@
             renderChat();
           }
         });
-        card.appendChild(title);
+        card.appendChild(info);
         card.appendChild(remove);
         card.addEventListener("click", function () {
           state.activeSessionId = session.id;
           saveState();
           renderSessionList();
           renderChat();
+        });
+        card.addEventListener("contextmenu", function (evt) {
+          evt.preventDefault();
+          openSessionMenu(session.id, evt.clientX, evt.clientY);
         });
         container.appendChild(card);
       })(bank.sessions[i]);
@@ -948,14 +1075,14 @@
       title: "新会话",
       createdAt: new Date().toISOString(),
       messages: [],
-      guideAnswers: {}
+      note: "",
+      manualTitle: false
     };
     bank.sessions.unshift(session);
     state.activeSessionId = session.id;
     saveState();
     renderSessionList();
     renderChat();
-    openGuideModal(session, true);
   }
 
   function findSession(bank, sessionId) {
@@ -978,6 +1105,9 @@
   }
 
   function autoTitle(session) {
+    if (session.manualTitle) {
+      return;
+    }
     if (session.messages.length === 0) {
       session.title = "新会话";
       return;
@@ -1017,29 +1147,6 @@
     return result;
   }
 
-  function updateGuideToggle(session) {
-    var toggle = document.getElementById("guideToggle");
-    if (!toggle) {
-      return;
-    }
-    var config = state.sessionGuide;
-    if (!session || !config || !config.fields || config.fields.length === 0) {
-      toggle.classList.add("hidden");
-      return;
-    }
-    toggle.classList.remove("hidden");
-    var hasValue = false;
-    if (session.guideAnswers) {
-      for (var key in session.guideAnswers) {
-        if (session.guideAnswers.hasOwnProperty(key) && session.guideAnswers[key]) {
-          hasValue = true;
-          break;
-        }
-      }
-    }
-    toggle.textContent = hasValue ? "查看引导" : "填写引导";
-  }
-
   function renderChat() {
     var area = document.getElementById("chatArea");
     if (!area) {
@@ -1048,31 +1155,36 @@
     area.innerHTML = "";
     var bank = getActiveBank();
     if (!bank) {
-      updateGuideToggle(null);
       renderEvidence([], []);
       area.innerHTML = '<div class="message"><div class="message-bubble"><div class="content">请先创建记忆库</div></div></div>';
       return;
     }
     var session = findSession(bank, state.activeSessionId);
     if (!session) {
-      updateGuideToggle(null);
       renderEvidence([], []);
       area.innerHTML = '<div class="message"><div class="message-bubble"><div class="content">请选择或新建会话</div></div></div>';
       return;
     }
-    updateGuideToggle(session);
     for (var i = 0; i < session.messages.length; i += 1) {
       var message = session.messages[i];
+      var role = message.role === "user" ? "user" : "assistant";
       var wrapper = document.createElement("div");
-      wrapper.className = "message " + (message.role === "user" ? "user" : "assistant");
+      wrapper.className = "message " + role;
+      var avatar = document.createElement("div");
+      avatar.className = "message-avatar " + role;
+      avatar.textContent = role === "user" ? "我" : "虹";
       var bubble = document.createElement("div");
       bubble.className = "message-bubble";
       var meta = document.createElement("div");
       meta.className = "meta";
-      meta.textContent = message.role === "user" ? "用户" : "助理";
+      meta.textContent = role === "user" ? "用户" : "助理";
       var content = document.createElement("div");
       content.className = "content";
-      content.innerHTML = highlightKeywords(message.text, message.tags || []);
+      if (role === "user") {
+        content.textContent = message.text;
+      } else {
+        content.innerHTML = highlightKeywords(message.text, message.tags || []);
+      }
       bubble.appendChild(meta);
       bubble.appendChild(content);
       if (message.evidence && message.evidence.length > 0) {
@@ -1092,7 +1204,13 @@
           bubble.appendChild(embedPanel);
         }
       }
-      wrapper.appendChild(bubble);
+      if (role === "assistant") {
+        wrapper.appendChild(avatar);
+        wrapper.appendChild(bubble);
+      } else {
+        wrapper.appendChild(bubble);
+        wrapper.appendChild(avatar);
+      }
       area.appendChild(wrapper);
     }
     area.scrollTop = area.scrollHeight;
@@ -1195,8 +1313,13 @@
         card.className = "evidence-card" + (embedded ? " embedded" : "");
         var header = document.createElement("div");
         header.className = "evidence-title";
-        var source = document.createElement("span");
+        var source = document.createElement(info.url ? "a" : "span");
         source.className = "evidence-source";
+        if (info.url) {
+          source.href = info.url;
+          source.target = "_blank";
+          source.rel = "noopener";
+        }
         if (type === "faq") {
           source.textContent = "FAQ · " + info.source;
         } else if (type === "decision") {
@@ -1242,117 +1365,6 @@
       return;
     }
     renderEvidenceGroups(panel, evidence, keywords, false);
-  }
-
-  function getGuideConfig() {
-    if (!state || !state.sessionGuide || !state.sessionGuide.fields || state.sessionGuide.fields.length === 0) {
-      return null;
-    }
-    return state.sessionGuide;
-  }
-
-  function closeGuideModal() {
-    var modal = document.getElementById("guideModal");
-    if (modal) {
-      modal.classList.add("hidden");
-    }
-    var form = document.getElementById("guideForm");
-    if (form) {
-      form.reset();
-      form.removeAttribute("data-session");
-    }
-  }
-
-  function openGuideModal(session, autoFocus) {
-    var config = getGuideConfig();
-    if (!config) {
-      return false;
-    }
-    if (!session) {
-      var bank = getActiveBank();
-      session = bank ? findSession(bank, state.activeSessionId) : null;
-    }
-    if (!session) {
-      return false;
-    }
-    var modal = document.getElementById("guideModal");
-    var form = document.getElementById("guideForm");
-    var title = document.getElementById("guideTitle");
-    var desc = document.getElementById("guideDescription");
-    if (!modal || !form) {
-      return false;
-    }
-    form.innerHTML = "";
-    form.setAttribute("data-session", session.id);
-    if (title) {
-      title.textContent = config.title || "会话引导";
-    }
-    if (desc) {
-      desc.textContent = config.description || "";
-      desc.classList.toggle("hidden", !config.description);
-    }
-    var firstField = null;
-    for (var i = 0; i < config.fields.length; i += 1) {
-      var field = config.fields[i];
-      var wrapper = document.createElement("label");
-      wrapper.textContent = field.label || ("字段" + (i + 1));
-      var textarea = document.createElement("textarea");
-      textarea.name = field.id;
-      textarea.rows = 3;
-      textarea.placeholder = field.placeholder || "";
-      textarea.value = session.guideAnswers && session.guideAnswers[field.id] ? session.guideAnswers[field.id] : "";
-      wrapper.appendChild(textarea);
-      form.appendChild(wrapper);
-      if (!firstField) {
-        firstField = textarea;
-      }
-    }
-    modal.classList.remove("hidden");
-    if (autoFocus && firstField) {
-      firstField.focus();
-    }
-    return true;
-  }
-
-  function handleGuideSubmit(evt) {
-    evt.preventDefault();
-    var form = evt.target;
-    if (!form) {
-      return;
-    }
-    var sessionId = form.getAttribute("data-session");
-    var bank = getActiveBank();
-    var config = getGuideConfig();
-    if (!sessionId || !bank || !config) {
-      closeGuideModal();
-      return;
-    }
-    var session = findSession(bank, sessionId);
-    if (!session) {
-      closeGuideModal();
-      return;
-    }
-    var answers = {};
-    var hasValue = false;
-    for (var i = 0; i < config.fields.length; i += 1) {
-      var field = config.fields[i];
-      var element = form.elements[field.id];
-      var value = element ? element.value.trim() : "";
-      answers[field.id] = value;
-      if (value) {
-        hasValue = true;
-      }
-    }
-    session.guideAnswers = answers;
-    session.guideCompletedAt = hasValue ? new Date().toISOString() : null;
-    saveState();
-    updateGuideToggle(session);
-    closeGuideModal();
-    showToast("引导信息已保存");
-  }
-
-  function skipGuideModal() {
-    closeGuideModal();
   }
 
   function tokenize(text) {
@@ -1411,6 +1423,110 @@
       }
     }
     return chunks;
+  }
+
+  function looksLikeQuestion(line) {
+    if (!line) {
+      return false;
+    }
+    var text = String(line).trim();
+    if (!text) {
+      return false;
+    }
+    if (/[？?]$/.test(text)) {
+      return true;
+    }
+    var starters = ["什么", "为何", "为什么", "如何", "怎样", "是否", "谁", "哪", "怎么", "能否", "可否", "可以"];
+    for (var i = 0; i < starters.length; i += 1) {
+      if (text.indexOf(starters[i]) === 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function extractQaPairsFromText(text) {
+    if (!text) {
+      return [];
+    }
+    var lines = String(text).split(/\r?\n+/);
+    var cleaned = [];
+    for (var i = 0; i < lines.length; i += 1) {
+      var line = lines[i].trim();
+      if (line.length > 0) {
+        cleaned.push(line);
+      }
+    }
+    var pairs = [];
+    var idx = 0;
+    while (idx < cleaned.length) {
+      var current = cleaned[idx];
+      if (looksLikeQuestion(current)) {
+        var answerParts = [];
+        idx += 1;
+        while (idx < cleaned.length && !looksLikeQuestion(cleaned[idx])) {
+          answerParts.push(cleaned[idx]);
+          idx += 1;
+        }
+        var answer = answerParts.join("\n").trim();
+        if (!answer) {
+          answer = "原文未给出直接答案，请结合上下文理解：\n" + current;
+        }
+        pairs.push({ question: current, answer: answer });
+        if (pairs.length >= 10) {
+          break;
+        }
+      } else {
+        idx += 1;
+      }
+    }
+    if (pairs.length === 0 && cleaned.length > 0) {
+      var limit = Math.min(cleaned.length, 3);
+      for (var j = 0; j < limit; j += 1) {
+        pairs.push({
+          question: "第" + (j + 1) + "段的要点是什么？",
+          answer: cleaned[j]
+        });
+      }
+      if (pairs.length === 0) {
+        pairs.push({
+          question: "该资料的核心内容是什么？",
+          answer: cleaned.join("\n").slice(0, 400)
+        });
+      }
+    }
+    return pairs;
+  }
+
+  function ingestQaPairs(bank, pairs, origin) {
+    if (!bank || !pairs || pairs.length === 0) {
+      return 0;
+    }
+    var created = 0;
+    for (var i = 0; i < pairs.length; i += 1) {
+      var item = pairs[i];
+      if (!item || !item.question || !item.answer) {
+        continue;
+      }
+      var meta = {
+        createdBy: currentUser ? currentUser.username : "解析",
+        source: "knowledge",
+        origin: origin || "知识库",
+        auto: true
+      };
+      var result = upsertFaq(bank, item.question, item.answer, meta);
+      if (result && result.item) {
+        result.item.source = "knowledge";
+        result.item.auto = true;
+        if (origin) {
+          result.item.origin = origin;
+        }
+      }
+      if (result && result.created) {
+        created += 1;
+      }
+    }
+    return created;
   }
 
   function rebuildIndex(bank) {
@@ -1657,6 +1773,7 @@
         return;
       }
       var displayed = 0;
+      var highlightApplied = false;
       for (var j = 0; j < bank.chunks.length; j += 1) {
         var chunk = bank.chunks[j];
         if (activeFileFilterId && chunk.fileId !== activeFileFilterId) {
@@ -1667,7 +1784,9 @@
           break;
         }
         var ccard = document.createElement("div");
-        ccard.className = "chunk-card";
+        var highlight = pendingChunkHighlightId && pendingChunkHighlightId === chunk.id;
+        ccard.className = "chunk-card" + (highlight ? " active" : "");
+        ccard.id = "chunk-" + chunk.id;
         var header = document.createElement("div");
         header.className = "chunk-header";
         var meta = document.createElement("div");
@@ -1706,6 +1825,21 @@
         ccard.appendChild(header);
         ccard.appendChild(body);
         preview.appendChild(ccard);
+        if (highlight) {
+          highlightApplied = true;
+          (function (node) {
+            window.setTimeout(function () {
+              try {
+                node.scrollIntoView({ behavior: "smooth", block: "center" });
+              } catch (err) {
+                node.scrollIntoView();
+              }
+            }, 80);
+          })(ccard);
+        }
+      }
+      if (highlightApplied) {
+        pendingChunkHighlightId = null;
       }
       if (displayed === 0) {
         preview.innerHTML = '<div class="panel-hint">所选文件暂无分段</div>';
@@ -1903,12 +2037,14 @@
           outcomeText += "（评分 " + project.score + "）";
         }
         var projectScore = scoreDecisionText(outcomeText, tokens);
-        if (projectScore >= 20) {
+        if (projectScore >= 35) {
           results.push({
             type: "decision",
             source: base + " · 复盘",
             text: outcomeText,
-            score: projectScore
+            score: projectScore,
+            projectId: project.id,
+            url: "decision-history-detail.html?id=" + encodeURIComponent(project.id)
           });
         }
       }
@@ -1928,12 +2064,15 @@
           }
           var nodeText = parts.join("；");
           var nodeScore = scoreDecisionText((node.title || "") + " " + nodeText, tokens);
-          if (nodeScore >= 20 && nodeText) {
+          if (nodeScore >= 35 && nodeText) {
             results.push({
               type: "decision",
               source: label,
               text: nodeText,
-              score: nodeScore
+              score: nodeScore,
+              projectId: project.id,
+              nodeId: node.id,
+              url: "decision-history-detail.html?id=" + encodeURIComponent(project.id) + "#node-" + encodeURIComponent(node.id)
             });
           }
         }
@@ -1948,12 +2087,15 @@
           }
           var linkLabel = base + " · " + findNodeTitle(project, link.fromId) + " → " + findNodeTitle(project, link.toId);
           var linkScore = scoreDecisionText(relationText, tokens);
-          if (linkScore >= 20) {
+          if (linkScore >= 35) {
             results.push({
               type: "decision",
               source: linkLabel,
               text: relationText,
-              score: linkScore
+              score: linkScore,
+              projectId: project.id,
+              linkId: link.id,
+              url: "decision-history-detail.html?id=" + encodeURIComponent(project.id) + "#link-" + encodeURIComponent(link.id)
             });
           }
         }
@@ -2045,7 +2187,10 @@
           source: chunk.file,
           chunk: chunk.order,
           text: chunk.text,
-          score: entry.score
+          score: entry.score,
+          fileId: chunk.fileId,
+          chunkId: chunk.id,
+          url: "kb.html?file=" + encodeURIComponent(chunk.fileId) + "&chunk=" + encodeURIComponent(chunk.id)
         };
         if (!bestKnowledgeEvidence) {
           bestKnowledgeEvidence = knowledgeEntry;
@@ -2256,6 +2401,12 @@
         qBadge.textContent = "Q";
         title.appendChild(qBadge);
         title.appendChild(document.createTextNode(" " + faq.question));
+        if (faq.source === "knowledge") {
+          var autoBadge = document.createElement("span");
+          autoBadge.className = "faq-source";
+          autoBadge.textContent = "知识库解析";
+          title.appendChild(autoBadge);
+        }
         var tools = document.createElement("div");
         tools.className = "card-actions";
         var editBtn = document.createElement("button");
@@ -2296,6 +2447,9 @@
         var metaText = "创建人:" + (faq.createdBy || "") + " · 更新时间:" + formatDateTime(faq.updatedAt || faq.createdAt || "");
         if (faq.updatedBy) {
           metaText += " · 更新人:" + faq.updatedBy;
+        }
+        if (faq.origin) {
+          metaText += " · 来源:" + faq.origin;
         }
         meta.textContent = metaText;
         card.appendChild(header);
@@ -2575,149 +2729,6 @@
         list.appendChild(card);
       })(bank.logs[i]);
     }
-  }
-
-  function renderGuideConfig() {
-    var box = document.getElementById("guideConfig");
-    if (!box) {
-      return;
-    }
-    var config = getGuideConfig();
-    box.innerHTML = "";
-    if (!config) {
-      box.innerHTML = '<div class="panel-hint">尚未配置会话引导表单</div>';
-      return;
-    }
-    var title = document.createElement("h4");
-    title.textContent = config.title || "会话引导";
-    box.appendChild(title);
-    if (config.description) {
-      var desc = document.createElement("p");
-      desc.textContent = config.description;
-      box.appendChild(desc);
-    }
-    if (!config.fields || config.fields.length === 0) {
-      var hint = document.createElement("div");
-      hint.className = "panel-hint";
-      hint.textContent = "暂无字段";
-      box.appendChild(hint);
-      return;
-    }
-    var list = document.createElement("ul");
-    for (var i = 0; i < config.fields.length; i += 1) {
-      var item = document.createElement("li");
-      item.textContent = (i + 1) + ". " + (config.fields[i].label || "字段");
-      list.appendChild(item);
-    }
-    box.appendChild(list);
-  }
-
-  function appendGuideFieldRow(field) {
-    var list = document.getElementById("guideFieldList");
-    if (!list) {
-      return;
-    }
-    var row = document.createElement("div");
-    row.className = "guide-field-row";
-    row.dataset.id = field && field.id ? field.id : uuid();
-    var labelInput = document.createElement("input");
-    labelInput.type = "text";
-    labelInput.placeholder = "字段标题";
-    labelInput.value = field && field.label ? field.label : "";
-    labelInput.setAttribute("data-role", "label");
-    var placeholderInput = document.createElement("input");
-    placeholderInput.type = "text";
-    placeholderInput.placeholder = "填写提示";
-    placeholderInput.value = field && field.placeholder ? field.placeholder : "";
-    placeholderInput.setAttribute("data-role", "placeholder");
-    var removeBtn = document.createElement("button");
-    removeBtn.type = "button";
-    removeBtn.className = "text-button danger";
-    removeBtn.textContent = "移除";
-    removeBtn.addEventListener("click", function () {
-      if (row.parentNode) {
-        row.parentNode.removeChild(row);
-      }
-      var remain = document.querySelectorAll("#guideFieldList .guide-field-row");
-      if (!remain || remain.length === 0) {
-        appendGuideFieldRow();
-      }
-    });
-    row.appendChild(labelInput);
-    row.appendChild(placeholderInput);
-    row.appendChild(removeBtn);
-    list.appendChild(row);
-  }
-
-  function openGuideEditor() {
-    var modal = document.getElementById("guideEditModal");
-    var titleInput = document.getElementById("guideEditTitle");
-    var descInput = document.getElementById("guideEditDesc");
-    var list = document.getElementById("guideFieldList");
-    var config = state.sessionGuide || JSON.parse(JSON.stringify(DEFAULT_SESSION_GUIDE));
-    if (!modal || !list) {
-      return false;
-    }
-    list.innerHTML = "";
-    if (titleInput) {
-      titleInput.value = config.title || "";
-    }
-    if (descInput) {
-      descInput.value = config.description || "";
-    }
-    var fields = config.fields && config.fields.length > 0 ? config.fields : DEFAULT_SESSION_GUIDE.fields;
-    for (var i = 0; i < fields.length; i += 1) {
-      appendGuideFieldRow(fields[i]);
-    }
-    modal.classList.remove("hidden");
-    return true;
-  }
-
-  function closeGuideEditor() {
-    var modal = document.getElementById("guideEditModal");
-    if (modal) {
-      modal.classList.add("hidden");
-    }
-  }
-
-  function saveGuideConfig() {
-    var titleInput = document.getElementById("guideEditTitle");
-    var descInput = document.getElementById("guideEditDesc");
-    var list = document.getElementById("guideFieldList");
-    if (!list) {
-      closeGuideEditor();
-      return;
-    }
-    var rows = list.querySelectorAll(".guide-field-row");
-    var fields = [];
-    for (var i = 0; i < rows.length; i += 1) {
-      var row = rows[i];
-      var labelInput = row.querySelector('input[data-role="label"]');
-      var placeholderInput = row.querySelector('input[data-role="placeholder"]');
-      var label = labelInput ? labelInput.value.trim() : "";
-      var placeholder = placeholderInput ? placeholderInput.value.trim() : "";
-      if (!label) {
-        continue;
-      }
-      fields.push({
-        id: row.dataset.id || uuid(),
-        label: label,
-        placeholder: placeholder
-      });
-    }
-    if (fields.length === 0) {
-      showToast("请至少保留一个字段");
-      return;
-    }
-    state.sessionGuide = {
-      title: titleInput ? titleInput.value.trim() : DEFAULT_SESSION_GUIDE.title,
-      description: descInput ? descInput.value.trim() : "",
-      fields: fields
-    };
-    saveState();
-    renderGuideConfig();
-    closeGuideEditor();
-    showToast("会话引导已更新");
   }
 
   function getDecisionProjectById(id) {
@@ -3488,8 +3499,778 @@
         }
         card.appendChild(steps);
       }
+      var footer = document.createElement("div");
+      footer.className = "history-card-footer";
+      var detailLink = document.createElement("a");
+      detailLink.className = "text-button";
+      detailLink.textContent = "查看详情";
+      detailLink.href = "decision-history-detail.html?id=" + encodeURIComponent(completed[j].id);
+      footer.appendChild(detailLink);
+      card.appendChild(footer);
       container.appendChild(card);
     }
+  }
+
+  function gatherCompletedProjects() {
+    var list = [];
+    if (!state || !state.decisions) {
+      return list;
+    }
+    for (var i = 0; i < state.decisions.length; i += 1) {
+      if (state.decisions[i].completed) {
+        list.push(state.decisions[i]);
+      }
+    }
+    list.sort(function (a, b) {
+      var ta = a.endTime || a.updatedAt || a.createdAt || "";
+      var tb = b.endTime || b.updatedAt || b.createdAt || "";
+      return tb.localeCompare(ta);
+    });
+    return list;
+  }
+
+  function deriveProjectTags(project) {
+    if (!project) {
+      return [];
+    }
+    if (project.tags && project.tags.length > 0) {
+      return project.tags.slice(0, 5);
+    }
+    var tags = [];
+    if (project.timeline) {
+      for (var i = 0; i < project.timeline.length && tags.length < 5; i += 1) {
+        var title = project.timeline[i].title;
+        if (title && tags.indexOf(title) === -1) {
+          tags.push(title);
+        }
+      }
+    }
+    if (tags.length === 0 && project.group) {
+      tags.push(project.group);
+    }
+    return tags.slice(0, 5);
+  }
+
+  function matchesHistorySearch(project) {
+    if (!historySearchTerm) {
+      return true;
+    }
+    var keyword = historySearchTerm.toLowerCase();
+    function contains(value) {
+      if (!value) {
+        return false;
+      }
+      return String(value).toLowerCase().indexOf(keyword) !== -1;
+    }
+    if (contains(project.name) || contains(project.outcome) || contains(project.group) || contains(project.note)) {
+      return true;
+    }
+    if (project.tags) {
+      for (var i = 0; i < project.tags.length; i += 1) {
+        if (contains(project.tags[i])) {
+          return true;
+        }
+      }
+    }
+    if (project.timeline) {
+      for (var j = 0; j < project.timeline.length; j += 1) {
+        if (contains(project.timeline[j].title) || contains(project.timeline[j].reason) || contains(project.timeline[j].impact)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function historyGroupingKey(project) {
+    if (!project) {
+      return "";
+    }
+    if (historyGrouping === "year") {
+      var stamp = project.endTime || project.startTime || "";
+      if (stamp) {
+        try {
+          var year = new Date(stamp).getFullYear();
+          if (!isNaN(year)) {
+            return String(year);
+          }
+        } catch (err) {
+          return "未标记年份";
+        }
+      }
+      return "未标记年份";
+    }
+    return project.group || "未分组";
+  }
+
+  function renderHistoryFilters() {
+    var filterSelect = document.getElementById("historyGroupFilter");
+    if (!filterSelect) {
+      return;
+    }
+    var projects = gatherCompletedProjects();
+    var groups = {};
+    for (var i = 0; i < projects.length; i += 1) {
+      var key = historyGroupingKey(projects[i]);
+      groups[key] = true;
+    }
+    var options = Object.keys(groups);
+    options.sort(function (a, b) {
+      if (historyGrouping === "year") {
+        var ay = parseInt(a, 10);
+        var by = parseInt(b, 10);
+        if (isNaN(ay) && isNaN(by)) {
+          return a.localeCompare(b);
+        }
+        if (isNaN(ay)) {
+          return 1;
+        }
+        if (isNaN(by)) {
+          return -1;
+        }
+        return by - ay;
+      }
+      return a.localeCompare(b);
+    });
+    filterSelect.innerHTML = "";
+    var defaultOption = document.createElement("option");
+    defaultOption.value = "all";
+    defaultOption.textContent = "全部";
+    filterSelect.appendChild(defaultOption);
+    for (var j = 0; j < options.length; j += 1) {
+      var option = document.createElement("option");
+      option.value = options[j];
+      option.textContent = options[j];
+      filterSelect.appendChild(option);
+    }
+    if (historyGroupFilter !== "all") {
+      var found = false;
+      for (var k = 0; k < filterSelect.options.length; k += 1) {
+        if (filterSelect.options[k].value === historyGroupFilter) {
+          filterSelect.value = historyGroupFilter;
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        historyGroupFilter = "all";
+      }
+    }
+  }
+
+  function filterHistoryProjects() {
+    var projects = gatherCompletedProjects();
+    var filtered = [];
+    for (var i = 0; i < projects.length; i += 1) {
+      var groupKey = historyGroupingKey(projects[i]);
+      if (historyGroupFilter !== "all" && groupKey !== historyGroupFilter) {
+        continue;
+      }
+      if (!matchesHistorySearch(projects[i])) {
+        continue;
+      }
+      filtered.push(projects[i]);
+    }
+    return filtered;
+  }
+
+  function renderHistoryGroupsView() {
+    var container = document.getElementById("historyGroups");
+    if (!container) {
+      return;
+    }
+    container.innerHTML = "";
+    var filtered = filterHistoryProjects();
+    if (filtered.length === 0) {
+      container.innerHTML = '<div class="history-group-card empty">暂无符合条件的决策记录</div>';
+      return;
+    }
+    var buckets = {};
+    for (var i = 0; i < filtered.length; i += 1) {
+      var key = historyGroupingKey(filtered[i]);
+      if (!buckets[key]) {
+        buckets[key] = [];
+      }
+      buckets[key].push(filtered[i]);
+    }
+    var keys = Object.keys(buckets);
+    keys.sort(function (a, b) {
+      if (historyGrouping === "year") {
+        var ay = parseInt(a, 10);
+        var by = parseInt(b, 10);
+        if (isNaN(ay) && isNaN(by)) {
+          return a.localeCompare(b);
+        }
+        if (isNaN(ay)) {
+          return 1;
+        }
+        if (isNaN(by)) {
+          return -1;
+        }
+        return by - ay;
+      }
+      if (a === "未分组") {
+        return 1;
+      }
+      if (b === "未分组") {
+        return -1;
+      }
+      return a.localeCompare(b);
+    });
+    for (var j = 0; j < keys.length; j += 1) {
+      var groupCard = document.createElement("div");
+      groupCard.className = "history-group-card";
+      var header = document.createElement("header");
+      var title = document.createElement("h3");
+      title.textContent = keys[j];
+      var meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = "共 " + buckets[keys[j]].length + " 项";
+      header.appendChild(title);
+      header.appendChild(meta);
+      groupCard.appendChild(header);
+      var grid = document.createElement("div");
+      grid.className = "history-items";
+      var items = buckets[keys[j]].slice().sort(function (a, b) {
+        var ta = a.endTime || a.updatedAt || a.createdAt || "";
+        var tb = b.endTime || b.updatedAt || b.createdAt || "";
+        return tb.localeCompare(ta);
+      });
+      for (var n = 0; n < items.length; n += 1) {
+        (function (project) {
+          var card = document.createElement("div");
+          card.className = "history-summary-card";
+          var name = document.createElement("h4");
+          name.textContent = project.name;
+          var metaLine = document.createElement("div");
+          metaLine.className = "history-meta";
+          var period = formatDateTime(project.startTime) + " → " + formatDateTime(project.endTime);
+          metaLine.appendChild(document.createTextNode(period));
+          if (typeof project.score === "number") {
+            var score = document.createElement("span");
+            score.textContent = "评分 " + project.score;
+            metaLine.appendChild(score);
+          }
+          var steps = document.createElement("ol");
+          var timeline = project.timeline || [];
+          var stepCount = Math.min(timeline.length, 4);
+          for (var s = 0; s < stepCount; s += 1) {
+            var li = document.createElement("li");
+            var stepTitle = timeline[s].title || "节点" + (s + 1);
+            var detail = timeline[s].impact || timeline[s].reason || "";
+            li.textContent = detail ? stepTitle + " · " + detail : stepTitle;
+            steps.appendChild(li);
+          }
+          if (timeline.length > stepCount) {
+            var more = document.createElement("li");
+            more.textContent = "...";
+            steps.appendChild(more);
+          }
+          var footer = document.createElement("footer");
+          var tagList = document.createElement("div");
+          tagList.className = "tag-list";
+          var tags = deriveProjectTags(project);
+          for (var t = 0; t < tags.length; t += 1) {
+            var tag = document.createElement("span");
+            tag.className = "tag";
+            tag.textContent = tags[t];
+            tagList.appendChild(tag);
+          }
+          var actions = document.createElement("div");
+          actions.className = "history-actions";
+          var detailLink = document.createElement("a");
+          detailLink.className = "text-button";
+          detailLink.href = "decision-history-detail.html?id=" + encodeURIComponent(project.id);
+          detailLink.textContent = "查看详情";
+          var previewBtn = document.createElement("button");
+          previewBtn.type = "button";
+          previewBtn.className = "text-button";
+          previewBtn.textContent = "预览结论";
+          previewBtn.addEventListener("click", function () {
+            openHistoryPreview(project);
+          });
+          actions.appendChild(previewBtn);
+          actions.appendChild(detailLink);
+          footer.appendChild(tagList);
+          footer.appendChild(actions);
+          card.appendChild(name);
+          card.appendChild(metaLine);
+          if (timeline.length > 0) {
+            card.appendChild(steps);
+          }
+          card.appendChild(footer);
+          grid.appendChild(card);
+        })(items[n]);
+      }
+      groupCard.appendChild(grid);
+      container.appendChild(groupCard);
+    }
+  }
+
+  function openHistoryPreview(project) {
+    var modal = document.getElementById("historyPreviewModal");
+    if (!modal || !project) {
+      return;
+    }
+    var title = document.getElementById("historyPreviewTitle");
+    var body = document.getElementById("historyPreviewBody");
+    if (title) {
+      title.textContent = project.name + " · 决策预览";
+    }
+    if (body) {
+      var lines = [];
+      lines.push("分组：" + (project.group || "未分组"));
+      lines.push("时间：" + formatDateTime(project.startTime) + " → " + formatDateTime(project.endTime));
+      if (typeof project.score === "number") {
+        lines.push("评分：" + project.score);
+      }
+      if (project.outcome) {
+        lines.push("结论：" + project.outcome);
+      }
+      if (project.note) {
+        lines.push("备注：" + project.note);
+      }
+      if (project.timeline && project.timeline.length > 0) {
+        lines.push("");
+        lines.push("时间轴：");
+        for (var i = 0; i < project.timeline.length; i += 1) {
+          var node = project.timeline[i];
+          lines.push("- " + (node.title || "节点" + (i + 1)) + "（" + (formatDateTime(node.startTime) || "时间待定") + "）");
+          if (node.reason) {
+            lines.push("  原因：" + node.reason);
+          }
+          if (node.impact) {
+            lines.push("  影响：" + node.impact);
+          }
+        }
+      }
+      body.textContent = lines.join("\n");
+    }
+    modal.classList.remove("hidden");
+  }
+
+  function closeHistoryPreview() {
+    var modal = document.getElementById("historyPreviewModal");
+    if (modal) {
+      modal.classList.add("hidden");
+    }
+  }
+
+  function downloadHistoryFile(filename, payload) {
+    var blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  function handleHistoryExport() {
+    var projects = filterHistoryProjects();
+    if (projects.length === 0) {
+      showToast("暂无可导出的决策");
+      return;
+    }
+    var payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      decisions: projects
+    };
+    downloadHistoryFile("虹小聊-决策历史.json", payload);
+    showToast("已导出 " + projects.length + " 条决策");
+  }
+
+  function mergeImportedProjects(items) {
+    if (!items || items.length === 0) {
+      return 0;
+    }
+    var added = 0;
+    for (var i = 0; i < items.length; i += 1) {
+      var data = items[i];
+      if (!data || !data.name) {
+        continue;
+      }
+      var copy = JSON.parse(JSON.stringify(data));
+      if (!copy.id || getDecisionProjectById(copy.id)) {
+        copy.id = uuid();
+      }
+      if (copy.timeline) {
+        for (var t = 0; t < copy.timeline.length; t += 1) {
+          if (!copy.timeline[t].id) {
+            copy.timeline[t].id = uuid();
+          }
+        }
+      }
+      if (copy.links) {
+        for (var l = 0; l < copy.links.length; l += 1) {
+          if (!copy.links[l].id) {
+            copy.links[l].id = uuid();
+          }
+        }
+      }
+      state.decisions.push(copy);
+      added += 1;
+    }
+    if (added > 0) {
+      normalizeState();
+      saveState();
+    }
+    return added;
+  }
+
+  function readJsonFile(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        resolve(reader.result);
+      };
+      reader.onerror = function (err) {
+        reject(err);
+      };
+      reader.readAsText(file, "utf-8");
+    });
+  }
+
+  function handleHistoryImport(files) {
+    if (!files || files.length === 0) {
+      return;
+    }
+    readJsonFile(files[0]).then(function (text) {
+      var data = null;
+      try {
+        data = JSON.parse(text);
+      } catch (err) {
+        showToast("导入文件格式错误");
+        return;
+      }
+      var records = [];
+      if (Array.isArray(data)) {
+        records = data;
+      } else if (data && Array.isArray(data.decisions)) {
+        records = data.decisions;
+      }
+      if (records.length === 0) {
+        showToast("导入文件中没有决策记录");
+        return;
+      }
+      var added = mergeImportedProjects(records);
+      renderHistoryFilters();
+      renderHistoryGroupsView();
+      if (added > 0) {
+        showToast("成功导入 " + added + " 条决策");
+      } else {
+        showToast("未发现可导入的决策");
+      }
+    }).catch(function () {
+      showToast("读取导入文件失败");
+    });
+  }
+
+  function renderDetailMeta(project) {
+    var container = document.getElementById("detailMeta");
+    if (!container) {
+      return;
+    }
+    container.innerHTML = "";
+    if (!project) {
+      container.innerHTML = '<div class="panel-hint">未找到对应的决策项目</div>';
+      return;
+    }
+    var groupItem = document.createElement("div");
+    groupItem.className = "meta-item";
+    var groupLabel = document.createElement("div");
+    groupLabel.className = "meta-label";
+    groupLabel.textContent = "分组";
+    var groupInput = document.createElement("input");
+    groupInput.value = project.group || "未分组";
+    groupInput.addEventListener("change", function () {
+      project.group = groupInput.value.trim() || "未分组";
+      saveState();
+      showToast("分组已更新");
+    });
+    groupItem.appendChild(groupLabel);
+    groupItem.appendChild(groupInput);
+    container.appendChild(groupItem);
+
+    var startItem = document.createElement("div");
+    startItem.className = "meta-item";
+    var startLabel = document.createElement("div");
+    startLabel.className = "meta-label";
+    startLabel.textContent = "开始时间";
+    var startValue = document.createElement("div");
+    startValue.className = "meta-value";
+    startValue.textContent = formatDateTime(project.startTime);
+    startItem.appendChild(startLabel);
+    startItem.appendChild(startValue);
+    container.appendChild(startItem);
+
+    var endItem = document.createElement("div");
+    endItem.className = "meta-item";
+    var endLabel = document.createElement("div");
+    endLabel.className = "meta-label";
+    endLabel.textContent = "结束时间";
+    var endValue = document.createElement("div");
+    endValue.className = "meta-value";
+    endValue.textContent = formatDateTime(project.endTime);
+    endItem.appendChild(endLabel);
+    endItem.appendChild(endValue);
+    container.appendChild(endItem);
+
+    var scoreItem = document.createElement("div");
+    scoreItem.className = "meta-item";
+    var scoreLabel = document.createElement("div");
+    scoreLabel.className = "meta-label";
+    scoreLabel.textContent = "评分";
+    var scoreValue = document.createElement("div");
+    scoreValue.className = "meta-value";
+    scoreValue.textContent = typeof project.score === "number" ? project.score : "--";
+    scoreItem.appendChild(scoreLabel);
+    scoreItem.appendChild(scoreValue);
+    container.appendChild(scoreItem);
+
+    var outcomeItem = document.createElement("div");
+    outcomeItem.className = "meta-item";
+    var outcomeLabel = document.createElement("div");
+    outcomeLabel.className = "meta-label";
+    outcomeLabel.textContent = "结论摘要";
+    var outcomeValue = document.createElement("div");
+    outcomeValue.className = "meta-value";
+    outcomeValue.textContent = project.outcome || "暂无结论";
+    outcomeItem.appendChild(outcomeLabel);
+    outcomeItem.appendChild(outcomeValue);
+    container.appendChild(outcomeItem);
+
+    var ownerItem = document.createElement("div");
+    ownerItem.className = "meta-item";
+    var ownerLabel = document.createElement("div");
+    ownerLabel.className = "meta-label";
+    ownerLabel.textContent = "创建人";
+    var ownerValue = document.createElement("div");
+    ownerValue.className = "meta-value";
+    ownerValue.textContent = project.createdBy || "未知";
+    ownerItem.appendChild(ownerLabel);
+    ownerItem.appendChild(ownerValue);
+    container.appendChild(ownerItem);
+  }
+
+  function renderDetailTimeline(project) {
+    var container = document.getElementById("detailTimeline");
+    if (!container) {
+      return;
+    }
+    container.innerHTML = "";
+    if (!project || !project.timeline || project.timeline.length === 0) {
+      container.innerHTML = '<div class="panel-hint">暂无时间轴记录</div>';
+      return;
+    }
+    var highlightNode = detailHighlightId && detailHighlightId.indexOf("node-") === 0 ? detailHighlightId : null;
+    var timeline = project.timeline.slice().sort(function (a, b) {
+      return (a.startTime || "").localeCompare(b.startTime || "");
+    });
+    for (var i = 0; i < timeline.length; i += 1) {
+      var node = timeline[i];
+      var item = document.createElement("div");
+      item.className = "detail-timeline-item";
+      item.id = "node-" + node.id;
+      if (highlightNode && item.id === highlightNode) {
+        item.classList.add("active");
+        window.setTimeout(function (element) {
+          return function () {
+            element.scrollIntoView({ behavior: "smooth", block: "center" });
+          };
+        }(item), 120);
+      }
+      var title = document.createElement("strong");
+      title.textContent = node.title || "节点" + (i + 1);
+      var meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = formatDateTime(node.startTime) || "时间待定";
+      item.appendChild(title);
+      item.appendChild(meta);
+      if (node.reason) {
+        var reason = document.createElement("p");
+        reason.textContent = "原因：" + node.reason;
+        item.appendChild(reason);
+      }
+      if (node.impact) {
+        var impact = document.createElement("p");
+        impact.textContent = "影响：" + node.impact;
+        item.appendChild(impact);
+      }
+      if (node.note) {
+        var note = document.createElement("p");
+        note.textContent = "备注：" + node.note;
+        item.appendChild(note);
+      }
+      container.appendChild(item);
+    }
+  }
+
+  function renderDetailLinks(project) {
+    var container = document.getElementById("detailLinks");
+    if (!container) {
+      return;
+    }
+    container.innerHTML = "";
+    if (!project || !project.links || project.links.length === 0) {
+      container.innerHTML = '<div class="panel-hint">暂无关联记录</div>';
+      return;
+    }
+    var highlightLink = detailHighlightId && detailHighlightId.indexOf("link-") === 0 ? detailHighlightId : null;
+    for (var i = 0; i < project.links.length; i += 1) {
+      var link = project.links[i];
+      var card = document.createElement("div");
+      card.className = "detail-link-card";
+      card.id = "link-" + link.id;
+      if (highlightLink && card.id === highlightLink) {
+        card.classList.add("active");
+        window.setTimeout(function (element) {
+          return function () {
+            element.scrollIntoView({ behavior: "smooth", block: "center" });
+          };
+        }(card), 120);
+      }
+      var relation = document.createElement("div");
+      relation.textContent = (link.relation || "关联") + " · " + findNodeTitle(project, link.fromId) + " → " + findNodeTitle(project, link.toId);
+      card.appendChild(relation);
+      var meta = document.createElement("div");
+      meta.className = "meta";
+      var details = [];
+      if (link.note) {
+        details.push(link.note);
+      }
+      var strength = link.strength || "medium";
+      var strengthLabel = strength === "strong" ? "强" : strength === "weak" ? "弱" : "中";
+      details.push("强度：" + strengthLabel);
+      meta.textContent = details.join(" · ");
+      card.appendChild(meta);
+      container.appendChild(card);
+    }
+  }
+
+  function renderDetailComments(project) {
+    var list = document.getElementById("commentList");
+    if (!list) {
+      return;
+    }
+    list.innerHTML = "";
+    if (!project || !project.comments || project.comments.length === 0) {
+      var empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = "暂无评论";
+      list.appendChild(empty);
+      return;
+    }
+    var sorted = project.comments.slice().sort(function (a, b) {
+      return (b.createdAt || "").localeCompare(a.createdAt || "");
+    });
+    for (var i = 0; i < sorted.length; i += 1) {
+      (function (comment) {
+        var card = document.createElement("div");
+        card.className = "comment-card";
+        var header = document.createElement("header");
+        var author = document.createElement("span");
+        author.textContent = comment.user || "访客";
+        var time = document.createElement("span");
+        time.className = "meta";
+        time.textContent = formatDateTime(comment.createdAt);
+        var info = document.createElement("div");
+        info.className = "comment-info";
+        info.appendChild(author);
+        info.appendChild(time);
+        header.appendChild(info);
+        var actions = document.createElement("div");
+        actions.className = "comment-actions";
+        var remove = document.createElement("button");
+        remove.className = "text-button danger";
+        remove.type = "button";
+        remove.textContent = "删除";
+        remove.addEventListener("click", function () {
+          removeProjectComment(project, comment.id);
+        });
+        actions.appendChild(remove);
+        header.appendChild(actions);
+        var body = document.createElement("div");
+        body.className = "comment-body";
+        body.textContent = comment.text;
+        card.appendChild(header);
+        card.appendChild(body);
+        list.appendChild(card);
+      })(sorted[i]);
+    }
+  }
+
+  function renderDecisionHistoryDetail() {
+    var project = getDecisionProjectById(detailProjectId);
+    var title = document.getElementById("detailTitle");
+    var subtitle = document.getElementById("detailSubtitle");
+    var noteArea = document.getElementById("detailNote");
+    if (!project) {
+      if (title) {
+        title.textContent = "决策详情";
+      }
+      if (subtitle) {
+        subtitle.textContent = "未找到对应的决策记录";
+      }
+      if (noteArea) {
+        noteArea.value = "";
+        noteArea.disabled = true;
+      }
+      renderDetailMeta(null);
+      renderDetailTimeline(null);
+      renderDetailLinks(null);
+      renderDetailComments(null);
+      return;
+    }
+    if (title) {
+      title.textContent = project.name;
+    }
+    if (subtitle) {
+      subtitle.textContent = "归档分组：" + (project.group || "未分组");
+    }
+    if (noteArea) {
+      noteArea.disabled = false;
+      noteArea.value = project.note || "";
+    }
+    renderDetailMeta(project);
+    renderDetailTimeline(project);
+    renderDetailLinks(project);
+    renderDetailComments(project);
+  }
+
+  function addProjectComment(project, text) {
+    if (!project || !text) {
+      return;
+    }
+    var entry = {
+      id: uuid(),
+      text: text,
+      user: currentUser ? currentUser.username : "访客",
+      createdAt: new Date().toISOString()
+    };
+    if (!project.comments) {
+      project.comments = [];
+    }
+    project.comments.unshift(entry);
+    saveState();
+    renderDetailComments(project);
+  }
+
+  function removeProjectComment(project, commentId) {
+    if (!project || !project.comments) {
+      return;
+    }
+    for (var i = 0; i < project.comments.length; i += 1) {
+      if (project.comments[i].id === commentId) {
+        project.comments.splice(i, 1);
+        break;
+      }
+    }
+    saveState();
+    renderDetailComments(project);
   }
 
   function layoutNodeConnectors(canvas) {
@@ -3695,12 +4476,16 @@
     }
     var saltBase64 = window.btoa(saltBinary);
     return deriveKey(password, saltBase64).then(function (hash) {
+      var assignedRole = "operator";
+      if (role === "admin" && currentUser && currentUser.role === "admin") {
+        assignedRole = "admin";
+      }
       var user = {
         id: uuid(),
         username: username,
         salt: saltBase64,
         hash: hash,
-        role: role || "operator",
+        role: assignedRole,
         enabled: true,
         createdAt: new Date().toISOString()
       };
@@ -3728,10 +4513,13 @@
     var chunkSize = chunkSizeInput && chunkSizeInput.value ? parseInt(chunkSizeInput.value, 10) : state.settings.chunkSize;
     var chunkOverlap = chunkOverlapInput && chunkOverlapInput.value ? parseInt(chunkOverlapInput.value, 10) : state.settings.chunkOverlap;
     var tasks = [];
+    var autoFaqCount = 0;
     for (var i = 0; i < files.length; i += 1) {
       (function (file) {
         tasks.push(readFileContent(file).then(function (content) {
           var text = parseFileContent(file.name, content);
+          var qaPairs = extractQaPairsFromText(text);
+          autoFaqCount += ingestQaPairs(bank, qaPairs, file.name);
           var chunks = chunkText(text, chunkSize, chunkOverlap);
           var fileId = uuid();
           var entry = { id: fileId, name: file.name, chunks: 0, size: file.size };
@@ -3751,14 +4539,17 @@
       if (info) {
         info.textContent = "未选择文件";
       }
-      showToast("文件已摄取");
+      if (autoFaqCount > 0) {
+        showToast("文件已摄取，并生成 " + autoFaqCount + " 条问答");
+      } else {
+        showToast("文件已摄取");
+      }
     });
   }
 
   function initLoginPage() {
     var tabs = document.querySelectorAll(".auth-tab");
     var form = document.getElementById("authForm");
-    var roleField = document.getElementById("roleField");
     var submit = document.getElementById("authSubmit");
     var mode = "login";
     initAuthBackdrop();
@@ -3773,10 +4564,8 @@
         }
       }
       if (target === "register") {
-        roleField.hidden = false;
         submit.textContent = "注册";
       } else {
-        roleField.hidden = true;
         submit.textContent = "登录";
       }
     }
@@ -3796,8 +4585,7 @@
           }
         });
       } else {
-        var role = document.getElementById("role").value;
-        register(username, password, role).then(function (ok) {
+        register(username, password, "operator").then(function (ok) {
           if (ok) {
             switchMode("login");
           }
@@ -3837,28 +4625,6 @@
     var createSessionBtn = document.getElementById("createSession");
     if (createSessionBtn) {
       createSessionBtn.addEventListener("click", createSession);
-    }
-    var guideToggle = document.getElementById("guideToggle");
-    if (guideToggle) {
-      guideToggle.addEventListener("click", function () {
-        var bank = getActiveBank();
-        var session = bank ? findSession(bank, state.activeSessionId) : null;
-        if (!openGuideModal(session, true)) {
-          showToast("请先在系统配置引导表单");
-        }
-      });
-    }
-    var guideForm = document.getElementById("guideForm");
-    if (guideForm) {
-      guideForm.addEventListener("submit", handleGuideSubmit);
-    }
-    var closeGuideBtn = document.getElementById("closeGuide");
-    if (closeGuideBtn) {
-      closeGuideBtn.addEventListener("click", closeGuideModal);
-    }
-    var skipGuideBtn = document.getElementById("skipGuide");
-    if (skipGuideBtn) {
-      skipGuideBtn.addEventListener("click", skipGuideModal);
     }
     var createBankBtn = document.getElementById("createBank");
     if (createBankBtn) {
@@ -3914,6 +4680,43 @@
         });
       }
     }
+    var sessionMenu = document.getElementById("sessionMenu");
+    if (sessionMenu) {
+      sessionMenu.addEventListener("click", function (evt) {
+        var target = evt.target;
+        if (!target || target.tagName !== "BUTTON") {
+          return;
+        }
+        var action = target.getAttribute("data-action");
+        var bank = getActiveBank();
+        var session = bank ? findSession(bank, sessionMenuSessionId) : null;
+        closeSessionMenu();
+        if (!session || !action) {
+          return;
+        }
+        if (action === "rename") {
+          promptRenameSession(session);
+        } else if (action === "note") {
+          promptSessionNote(session);
+        }
+      });
+    }
+    document.addEventListener("click", function (evt) {
+      var menu = document.getElementById("sessionMenu");
+      if (!menu || menu.classList.contains("hidden")) {
+        return;
+      }
+      if (!menu.contains(evt.target)) {
+        closeSessionMenu();
+      }
+    });
+    window.addEventListener("resize", closeSessionMenu);
+    document.addEventListener("scroll", closeSessionMenu, true);
+    document.addEventListener("keydown", function (evt) {
+      if (evt.key === "Escape") {
+        closeSessionMenu();
+      }
+    });
     var reasoningToggle = document.getElementById("reasoningToggle");
     if (reasoningToggle) {
       reasoningToggle.checked = state.adminFlags.reasoning;
@@ -3929,6 +4732,14 @@
     ensureActiveBank();
     renderBankList();
     updateBankBadge();
+    var fileParam = getQueryParam("file");
+    var chunkParam = getQueryParam("chunk");
+    if (fileParam) {
+      activeFileFilterId = fileParam;
+    }
+    if (chunkParam) {
+      pendingChunkHighlightId = chunkParam;
+    }
     renderKnowledge();
     var uploader = document.getElementById("kbUploader");
     var processBtn = document.getElementById("processFiles");
@@ -3976,14 +4787,20 @@
           return;
         }
         var content = title + "\n" + body;
+        var qaPairs = extractQaPairsFromText(content);
         var chunks = chunkText(content, state.settings.chunkSize, state.settings.chunkOverlap);
         var fileId = uuid();
         var entry = { id: fileId, name: title, chunks: 0, size: body.length };
         bank.files.push(entry);
         entry.chunks = addChunksToIndex(bank, title, chunks, fileId);
+        var autoFaq = ingestQaPairs(bank, qaPairs, title);
         saveState();
         renderKnowledge();
-        showToast("已保存到记忆库");
+        if (autoFaq > 0) {
+          showToast("已保存到记忆库，并生成 " + autoFaq + " 条问答");
+        } else {
+          showToast("已保存到记忆库");
+        }
         manualForm.reset();
       });
     }
@@ -4304,8 +5121,10 @@
         evt.preventDefault();
         var nameInput = document.getElementById("projectName");
         var startInput = document.getElementById("projectStart");
+        var groupInput = document.getElementById("projectGroup");
         var name = nameInput ? nameInput.value.trim() : "";
         var start = startInput ? startInput.value : "";
+        var group = groupInput ? groupInput.value.trim() : "";
         if (!name || !start) {
           showToast("请填写项目名称和开始时间");
           return;
@@ -4318,7 +5137,11 @@
           createdBy: currentUser ? currentUser.username : "",
           timeline: [],
           links: [],
-          completed: false
+          completed: false,
+          group: group || "未分组",
+          note: "",
+          tags: [],
+          comments: []
         };
         state.decisions.unshift(project);
         state.activeDecisionId = project.id;
@@ -4527,6 +5350,131 @@
     }
   }
 
+  function initDecisionHistoryPage() {
+    requireAuth();
+    setNavUserInfo();
+    ensureActiveBank();
+    renderBankList();
+    updateBankBadge();
+    renderHistoryFilters();
+    renderHistoryGroupsView();
+    var searchInput = document.getElementById("historySearch");
+    if (searchInput) {
+      searchInput.value = historySearchTerm;
+      searchInput.addEventListener("input", function () {
+        historySearchTerm = searchInput.value.trim();
+        renderHistoryGroupsView();
+      });
+    }
+    var groupingSelect = document.getElementById("historyGrouping");
+    if (groupingSelect) {
+      groupingSelect.value = historyGrouping;
+      groupingSelect.addEventListener("change", function () {
+        historyGrouping = groupingSelect.value;
+        historyGroupFilter = "all";
+        renderHistoryFilters();
+        renderHistoryGroupsView();
+      });
+    }
+    var groupSelect = document.getElementById("historyGroupFilter");
+    if (groupSelect) {
+      groupSelect.value = historyGroupFilter;
+      groupSelect.addEventListener("change", function () {
+        historyGroupFilter = groupSelect.value;
+        renderHistoryGroupsView();
+      });
+    }
+    var exportBtn = document.getElementById("historyExportBtn");
+    if (exportBtn) {
+      exportBtn.addEventListener("click", handleHistoryExport);
+    }
+    var importBtn = document.getElementById("historyImportBtn");
+    var importInput = document.getElementById("historyImportInput");
+    if (importBtn && importInput) {
+      importBtn.addEventListener("click", function () {
+        importInput.click();
+      });
+      importInput.addEventListener("change", function () {
+        handleHistoryImport(importInput.files);
+        importInput.value = "";
+      });
+    }
+    var closePreview = document.getElementById("closeHistoryPreview");
+    if (closePreview) {
+      closePreview.addEventListener("click", closeHistoryPreview);
+    }
+    var modal = document.getElementById("historyPreviewModal");
+    if (modal) {
+      modal.addEventListener("click", function (evt) {
+        if (evt.target === modal) {
+          closeHistoryPreview();
+        }
+      });
+    }
+  }
+
+  function initDecisionHistoryDetailPage() {
+    requireAuth();
+    setNavUserInfo();
+    ensureActiveBank();
+    renderBankList();
+    updateBankBadge();
+    detailProjectId = getQueryParam("id");
+    detailHighlightId = (window.location.hash || "").replace("#", "");
+    renderDecisionHistoryDetail();
+    var noteArea = document.getElementById("detailNote");
+    if (noteArea) {
+      noteArea.addEventListener("input", function () {
+        if (detailNoteTimer) {
+          window.clearTimeout(detailNoteTimer);
+        }
+        detailNoteTimer = window.setTimeout(function () {
+          var project = getDecisionProjectById(detailProjectId);
+          if (project) {
+            project.note = noteArea.value.trim();
+            saveState();
+          }
+        }, 400);
+      });
+    }
+    var commentForm = document.getElementById("commentForm");
+    if (commentForm) {
+      commentForm.addEventListener("submit", function (evt) {
+        evt.preventDefault();
+        var project = getDecisionProjectById(detailProjectId);
+        if (!project) {
+          showToast("未找到决策记录");
+          return;
+        }
+        var input = document.getElementById("commentInput");
+        var text = input ? input.value.trim() : "";
+        if (!text) {
+          return;
+        }
+        addProjectComment(project, text);
+        if (input) {
+          input.value = "";
+        }
+      });
+    }
+    var exportBtn = document.getElementById("historyExportSingle");
+    if (exportBtn) {
+      exportBtn.addEventListener("click", function () {
+        var project = getDecisionProjectById(detailProjectId);
+        if (!project) {
+          showToast("未找到决策记录");
+          return;
+        }
+        var safeName = (project.name || "决策").replace(/[\\/:*?"<>|]/g, "_");
+        downloadHistoryFile("虹小聊-" + safeName + ".json", { version: 1, decisions: [project] });
+      });
+    }
+    window.addEventListener("hashchange", function () {
+      detailHighlightId = (window.location.hash || "").replace("#", "");
+      renderDecisionHistoryDetail();
+    });
+  }
+
   function initAdminPage() {
     requireAuth();
     if (!currentUser || currentUser.role !== "admin") {
@@ -4620,42 +5568,6 @@
         showToast("常用问题已新增");
       });
     }
-    renderGuideConfig();
-    var editGuideBtn = document.getElementById("editGuide");
-    if (editGuideBtn) {
-      editGuideBtn.addEventListener("click", function () {
-        if (!openGuideEditor()) {
-          showToast("暂无可编辑字段，请稍后再试");
-        }
-      });
-    }
-    var addGuideFieldBtn = document.getElementById("addGuideField");
-    if (addGuideFieldBtn) {
-      addGuideFieldBtn.addEventListener("click", function () {
-        appendGuideFieldRow();
-      });
-    }
-    var guideEditForm = document.getElementById("guideEditForm");
-    if (guideEditForm) {
-      guideEditForm.addEventListener("submit", function (evt) {
-        evt.preventDefault();
-        saveGuideConfig();
-      });
-    }
-    var cancelGuideEdit = document.getElementById("cancelGuideEdit");
-    if (cancelGuideEdit) {
-      cancelGuideEdit.addEventListener("click", function () {
-        closeGuideEditor();
-      });
-    }
-    var guideEditModal = document.getElementById("guideEditModal");
-    if (guideEditModal) {
-      guideEditModal.addEventListener("click", function (evt) {
-        if (evt.target === guideEditModal) {
-          closeGuideEditor();
-        }
-      });
-    }
     var createBankBtn = document.getElementById("createBank");
     if (createBankBtn) {
       createBankBtn.addEventListener("click", createBank);
@@ -4693,6 +5605,10 @@
         initFaqPage();
       } else if (page === "decision") {
         initDecisionPage();
+      } else if (page === "decision-history") {
+        initDecisionHistoryPage();
+      } else if (page === "decision-history-detail") {
+        initDecisionHistoryDetailPage();
       } else if (page === "admin") {
         initAdminPage();
       } else {
