@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>系统管理 · 虹小聊</title>
+<link rel="stylesheet" href="styles/app.css">
+</head>
+<body data-page="admin">
+<div class="app-shell">
+  <aside class="sidebar" id="bankSidebar">
+    <div class="brand">虹小聊</div>
+    <div class="nav-group">
+      <a class="nav-link" href="index.html">对话</a>
+      <a class="nav-link" href="kb.html">知识库</a>
+      <a class="nav-link" href="favorites.html">收藏夹</a>
+      <a class="nav-link" href="decision.html">决策链</a>
+      <a class="nav-link" href="ai-tools.html">AI 工具箱</a>
+      <a class="nav-link active" href="admin.html">系统</a>
+    </div>
+    <div class="sidebar-section">
+      <div class="section-title">记忆库</div>
+      <div class="badge-list" id="bankList"></div>
+      <button class="ghost-button" id="createBank">新建记忆库</button>
+    </div>
+    <button class="ghost-button" id="logoutButton">退出登录</button>
+  </aside>
+  <main class="main-panel">
+    <header class="main-header">
+      <div class="header-info">
+        <div class="header-title">系统与权限</div>
+        <div class="header-sub">管理员独享功能</div>
+      </div>
+      <div class="user-info" id="userInfo"></div>
+    </header>
+    <section class="panel">
+      <h2>推理控制</h2>
+      <div class="form-inline">
+        <label class="switch"><input type="checkbox" id="globalReasoning"><span>启用推理引擎</span></label>
+        <select id="reasoningStrength">
+          <option value="1">强度 1</option>
+          <option value="2">强度 2</option>
+          <option value="3">强度 3</option>
+        </select>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>用户管理</h2>
+      <button class="primary-button" id="addUser">新增用户</button>
+      <div id="userList" class="user-list"></div>
+    </section>
+    <section class="panel">
+      <h2>常用问题库</h2>
+      <form id="commonForm" class="form-inline">
+        <input type="text" id="commonInput" placeholder="输入常用问题" required>
+        <button type="submit" class="primary-button">新增</button>
+      </form>
+      <div id="commonList" class="common-list"></div>
+    </section>
+    <section class="panel">
+      <h2>决策项目分组</h2>
+      <form id="groupForm" class="form-inline">
+        <input type="text" id="groupInput" placeholder="新增分组名称" required>
+        <button type="submit" class="primary-button">新增</button>
+      </form>
+      <div id="groupList" class="group-list"></div>
+    </section>
+    <section class="panel">
+      <h2>热脏污识别分组</h2>
+      <p class="panel-sub">用于 AI 图像识别分组标注，控制工具中的分组选项。</p>
+      <form id="contamForm" class="form-inline">
+        <input type="text" id="contamInput" placeholder="新增分组名称" required>
+        <button type="submit" class="primary-button">新增</button>
+      </form>
+      <div id="contamList" class="group-list"></div>
+    </section>
+    <section class="panel">
+      <h2>操作日志</h2>
+      <div class="panel-actions">
+        <button class="ghost-button" id="clearLogs">清空全部</button>
+      </div>
+      <div id="logList" class="log-list"></div>
+    </section>
+  </main>
+</div>
+<script src="scripts/app.js"></script>
+</body>
+</html>
