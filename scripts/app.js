@@ -17,6 +17,7 @@
     { id: "risk", label: "风险应对" },
     { id: "summary", label: "复盘总结" }
   ];
+  var DEFAULT_CONTAM_GROUPS = ["待分组", "热斑污染", "线状污染", "颗粒污染"];
   var activeNodeId = null;
   var chunkEditingId = null;
   var activeFileFilterId = null;
@@ -35,6 +36,8 @@
   var qaPreviewTimer = null;
   var qaPreviewPairs = [];
   var bankMenuBankId = null;
+  var visionSubscribers = [];
+
   function padNumber(value) {
     var num = parseInt(value, 10);
     if (isNaN(num)) {
@@ -476,6 +479,71 @@
     }
     if (!state.settings.projectGroups || !Array.isArray(state.settings.projectGroups)) {
       state.settings.projectGroups = ["产品规划", "运营优化", "战略决策"];
+    }
+    if (!state.settings.contaminationGroups || !Array.isArray(state.settings.contaminationGroups)) {
+      state.settings.contaminationGroups = DEFAULT_CONTAM_GROUPS.slice();
+    } else {
+      var rawGroups = state.settings.contaminationGroups;
+      var seenGroups = {};
+      var sanitizedGroups = [];
+      for (var cg = 0; cg < rawGroups.length; cg += 1) {
+        var candidate = rawGroups[cg];
+        if (typeof candidate !== "string") {
+          continue;
+        }
+        var trimmedCandidate = candidate.trim();
+        if (!trimmedCandidate) {
+          continue;
+        }
+        if (seenGroups[trimmedCandidate]) {
+          continue;
+        }
+        seenGroups[trimmedCandidate] = true;
+        sanitizedGroups.push(trimmedCandidate);
+      }
+      if (sanitizedGroups.length === 0) {
+        sanitizedGroups = DEFAULT_CONTAM_GROUPS.slice();
+      }
+      state.settings.contaminationGroups = sanitizedGroups;
+    }
+    if (!state.tools || typeof state.tools !== "object") {
+      state.tools = {};
+    }
+    if (!Array.isArray(state.tools.visionHistory)) {
+      state.tools.visionHistory = [];
+    }
+    if (!Array.isArray(state.tools.visionCorrections)) {
+      state.tools.visionCorrections = [];
+    }
+    for (var vh = 0; vh < state.tools.visionHistory.length; vh += 1) {
+      var inference = state.tools.visionHistory[vh];
+      if (!inference.id) {
+        inference.id = uuid();
+      }
+      if (!inference.findings || !Array.isArray(inference.findings)) {
+        inference.findings = [];
+      }
+      for (var vf = 0; vf < inference.findings.length; vf += 1) {
+        var finding = inference.findings[vf];
+        if (!finding.id) {
+          finding.id = uuid();
+        }
+        if (!finding.status) {
+          finding.status = "auto";
+        }
+        if (typeof finding.probability !== "number") {
+          finding.probability = 0;
+        }
+        if (!finding.type) {
+          finding.type = "未知类型";
+        }
+      }
+    }
+    for (var vc = 0; vc < state.tools.visionCorrections.length; vc += 1) {
+      var correction = state.tools.visionCorrections[vc];
+      if (!correction.id) {
+        correction.id = uuid();
+      }
     }
     var sanitizedGroups = [];
     var groupSeen = {};
@@ -1000,6 +1068,197 @@
       state.settings.projectGroups = ["产品规划", "运营优化", "战略决策"];
     }
     return state.settings.projectGroups;
+  }
+
+  function getContaminationGroups() {
+    if (!state.settings.contaminationGroups || state.settings.contaminationGroups.length === 0) {
+      state.settings.contaminationGroups = DEFAULT_CONTAM_GROUPS.slice();
+    }
+    return state.settings.contaminationGroups.slice();
+  }
+
+  function ensureVisionStore() {
+    if (!state.tools || typeof state.tools !== "object") {
+      state.tools = {};
+    }
+    if (!Array.isArray(state.tools.visionHistory)) {
+      state.tools.visionHistory = [];
+    }
+    if (!Array.isArray(state.tools.visionCorrections)) {
+      state.tools.visionCorrections = [];
+    }
+  }
+
+  function cloneVisionHistory() {
+    ensureVisionStore();
+    try {
+      return JSON.parse(JSON.stringify(state.tools.visionHistory));
+    } catch (err) {
+      console.warn("cloneVisionHistory failed", err);
+      return [];
+    }
+  }
+
+  function cloneVisionCorrections() {
+    ensureVisionStore();
+    try {
+      return JSON.parse(JSON.stringify(state.tools.visionCorrections));
+    } catch (err) {
+      console.warn("cloneVisionCorrections failed", err);
+      return [];
+    }
+  }
+
+  function getVisionCorrections() {
+    return cloneVisionCorrections();
+  }
+
+  function getVisionSnapshot() {
+    return {
+      history: cloneVisionHistory(),
+      groups: getContaminationGroups(),
+      corrections: cloneVisionCorrections()
+    };
+  }
+
+  function emitVisionChange() {
+    if (!visionSubscribers || visionSubscribers.length === 0) {
+      return;
+    }
+    var snapshot = getVisionSnapshot();
+    for (var i = 0; i < visionSubscribers.length; i += 1) {
+      try {
+        visionSubscribers[i](snapshot);
+      } catch (err) {
+        console.error("vision subscriber error", err);
+      }
+    }
+  }
+
+  function subscribeVision(callback) {
+    if (typeof callback !== "function") {
+      return function () {};
+    }
+    visionSubscribers.push(callback);
+    try {
+      callback(getVisionSnapshot());
+    } catch (err) {
+      console.error("vision init callback error", err);
+    }
+    return function () {
+      var index = visionSubscribers.indexOf(callback);
+      if (index !== -1) {
+        visionSubscribers.splice(index, 1);
+      }
+    };
+  }
+
+  function recordVisionInference(entry) {
+    ensureVisionStore();
+    if (!entry) {
+      return null;
+    }
+    var now = new Date().toISOString();
+    var sanitized = {
+      id: entry.id || uuid(),
+      runAt: entry.runAt || now,
+      analyst: entry.analyst || (currentUser ? currentUser.username : ""),
+      bankId: entry.bankId || (state.activeBankId || null),
+      bankName: entry.bankName || (getActiveBank() ? getActiveBank().name : ""),
+      model: entry.model || {},
+      image: entry.image || null,
+      findings: [],
+      summary: entry.summary || null,
+      createdAt: now,
+      updatedAt: now
+    };
+    if (entry.findings && Array.isArray(entry.findings)) {
+      for (var i = 0; i < entry.findings.length; i += 1) {
+        var finding = entry.findings[i];
+        if (!finding) {
+          continue;
+        }
+        sanitized.findings.push({
+          id: finding.id || uuid(),
+          type: finding.type || "未知类型",
+          probability: typeof finding.probability === "number" ? finding.probability : 0,
+          group: finding.group || null,
+          status: finding.status || "auto",
+          bounds: finding.bounds || null,
+          metrics: finding.metrics || null,
+          probabilities: finding.probabilities || null,
+          notes: finding.notes || "",
+          createdAt: finding.createdAt || now
+        });
+      }
+    }
+    state.tools.visionHistory.unshift(sanitized);
+    if (state.tools.visionHistory.length > 20) {
+      state.tools.visionHistory = state.tools.visionHistory.slice(0, 20);
+    }
+    saveState();
+    emitVisionChange();
+    return JSON.parse(JSON.stringify(sanitized));
+  }
+
+  function updateVisionFinding(inferenceId, findingId, patch) {
+    ensureVisionStore();
+    if (!inferenceId || !findingId || !patch) {
+      return null;
+    }
+    for (var i = 0; i < state.tools.visionHistory.length; i += 1) {
+      var inference = state.tools.visionHistory[i];
+      if (inference.id !== inferenceId) {
+        continue;
+      }
+      if (!Array.isArray(inference.findings)) {
+        continue;
+      }
+      for (var j = 0; j < inference.findings.length; j += 1) {
+        var finding = inference.findings[j];
+        if (finding.id !== findingId) {
+          continue;
+        }
+        for (var key in patch) {
+          if (patch.hasOwnProperty(key)) {
+            finding[key] = patch[key];
+          }
+        }
+        inference.updatedAt = new Date().toISOString();
+        saveState();
+        emitVisionChange();
+        return JSON.parse(JSON.stringify(finding));
+      }
+    }
+    return null;
+  }
+
+  function recordVisionCorrection(correction) {
+    ensureVisionStore();
+    if (!correction) {
+      return null;
+    }
+    var payload = {
+      id: correction.id || uuid(),
+      inferenceId: correction.inferenceId || "",
+      findingId: correction.findingId || "",
+      previousType: correction.previousType || "",
+      targetType: correction.targetType || "",
+      probability: typeof correction.probability === "number" ? correction.probability : 0,
+      areaRatio: typeof correction.areaRatio === "number" ? correction.areaRatio : 0,
+      heatScore: typeof correction.heatScore === "number" ? correction.heatScore : 0,
+      group: correction.group || null,
+      note: correction.note || "",
+      correctedBy: correction.correctedBy || (currentUser ? currentUser.username : ""),
+      correctedAt: correction.correctedAt || new Date().toISOString()
+    };
+    state.tools.visionCorrections.push(payload);
+    if (state.tools.visionCorrections.length > 200) {
+      state.tools.visionCorrections = state.tools.visionCorrections.slice(-200);
+    }
+    saveState();
+    emitVisionChange();
+    return JSON.parse(JSON.stringify(payload));
   }
 
   function renderBankList() {
@@ -5018,6 +5277,166 @@
     showToast("分组已更新");
   }
 
+  function renderContaminationGroupList() {
+    var list = document.getElementById("contamList");
+    if (!list) {
+      return;
+    }
+    var groups = getContaminationGroups();
+    list.innerHTML = "";
+    if (groups.length === 0) {
+      list.innerHTML = '<div class="panel-hint">暂无分组</div>';
+      return;
+    }
+    var usage = {};
+    ensureVisionStore();
+    for (var i = 0; i < state.tools.visionHistory.length; i += 1) {
+      var inference = state.tools.visionHistory[i];
+      if (!inference.findings) {
+        continue;
+      }
+      for (var j = 0; j < inference.findings.length; j += 1) {
+        var finding = inference.findings[j];
+        var groupName = finding.group || "";
+        if (!groupName) {
+          continue;
+        }
+        if (!usage[groupName]) {
+          usage[groupName] = 0;
+        }
+        usage[groupName] += 1;
+      }
+    }
+    for (var g = 0; g < groups.length; g += 1) {
+      (function (groupName) {
+        var card = document.createElement("div");
+        card.className = "group-card";
+        var info = document.createElement("div");
+        info.className = "group-info";
+        var title = document.createElement("div");
+        title.className = "group-name";
+        title.textContent = groupName;
+        var meta = document.createElement("div");
+        meta.className = "group-meta";
+        var count = usage[groupName] || 0;
+        meta.textContent = "已关联识别 " + count + " 项";
+        info.appendChild(title);
+        info.appendChild(meta);
+        var actions = document.createElement("div");
+        actions.className = "group-actions";
+        var renameBtn = document.createElement("button");
+        renameBtn.className = "text-button";
+        renameBtn.type = "button";
+        renameBtn.textContent = "重命名";
+        renameBtn.addEventListener("click", function () {
+          promptRenameContaminationGroup(groupName);
+        });
+        var deleteBtn = document.createElement("button");
+        deleteBtn.className = "text-button danger";
+        deleteBtn.type = "button";
+        deleteBtn.textContent = "删除";
+        deleteBtn.addEventListener("click", function () {
+          if (window.confirm("确定删除该分组？相关识别记录将转为未分组")) {
+            removeContaminationGroup(groupName);
+          }
+        });
+        actions.appendChild(renameBtn);
+        actions.appendChild(deleteBtn);
+        card.appendChild(info);
+        card.appendChild(actions);
+        list.appendChild(card);
+      })(groups[g]);
+    }
+  }
+
+  function addContaminationGroup(value) {
+    var name = (value || "").trim();
+    if (!name) {
+      showToast("名称不能为空");
+      return false;
+    }
+    var groups = getContaminationGroups();
+    if (groups.indexOf(name) !== -1) {
+      showToast("分组已存在");
+      return false;
+    }
+    groups.push(name);
+    state.settings.contaminationGroups = groups;
+    saveState();
+    renderContaminationGroupList();
+    emitVisionChange();
+    showToast("分组已新增");
+    return true;
+  }
+
+  function removeContaminationGroup(groupName) {
+    var groups = getContaminationGroups();
+    var index = groups.indexOf(groupName);
+    if (index === -1) {
+      return;
+    }
+    groups.splice(index, 1);
+    if (groups.length === 0) {
+      groups = DEFAULT_CONTAM_GROUPS.slice();
+    }
+    state.settings.contaminationGroups = groups;
+    ensureVisionStore();
+    for (var i = 0; i < state.tools.visionHistory.length; i += 1) {
+      var inference = state.tools.visionHistory[i];
+      if (!inference.findings) {
+        continue;
+      }
+      for (var j = 0; j < inference.findings.length; j += 1) {
+        if (inference.findings[j].group === groupName) {
+          inference.findings[j].group = null;
+        }
+      }
+    }
+    saveState();
+    renderContaminationGroupList();
+    emitVisionChange();
+    showToast("分组已删除");
+  }
+
+  function promptRenameContaminationGroup(groupName) {
+    var groups = getContaminationGroups();
+    var index = groups.indexOf(groupName);
+    if (index === -1) {
+      return;
+    }
+    var name = window.prompt("新的分组名称", groupName);
+    if (name === null) {
+      return;
+    }
+    var trimmed = name.trim();
+    if (!trimmed) {
+      showToast("名称不能为空");
+      return;
+    }
+    if (trimmed !== groupName && groups.indexOf(trimmed) !== -1) {
+      showToast("分组已存在");
+      return;
+    }
+    groups[index] = trimmed;
+    state.settings.contaminationGroups = groups;
+    ensureVisionStore();
+    for (var i = 0; i < state.tools.visionHistory.length; i += 1) {
+      var inference = state.tools.visionHistory[i];
+      if (!inference.findings) {
+        continue;
+      }
+      for (var j = 0; j < inference.findings.length; j += 1) {
+        if (inference.findings[j].group === groupName) {
+          inference.findings[j].group = trimmed;
+        }
+      }
+    }
+    saveState();
+    renderContaminationGroupList();
+    emitVisionChange();
+    showToast("分组已更新");
+  }
+
   function removeProjectGroup(groupName) {
     var groups = getProjectGroups();
     var index = groups.indexOf(groupName);
@@ -6242,6 +6661,7 @@
     renderUsers();
     renderCommonList();
     renderProjectGroupList();
+    renderContaminationGroupList();
     renderLogs();
     var reasoningSwitch = document.getElementById("globalReasoning");
     var strength = document.getElementById("reasoningStrength");
@@ -6333,6 +6753,17 @@
         }
       });
     }
+    var contamForm = document.getElementById("contamForm");
+    if (contamForm) {
+      contamForm.addEventListener("submit", function (evt) {
+        evt.preventDefault();
+        var input = document.getElementById("contamInput");
+        var value = input ? input.value : "";
+        if (addContaminationGroup(value) && input) {
+          input.value = "";
+        }
+      });
+    }
     var createBankBtn = document.getElementById("createBank");
     if (createBankBtn) {
       createBankBtn.addEventListener("click", createBank);
@@ -6349,6 +6780,42 @@
     ensureActiveBank();
     renderBankList();
     updateBankBadge();
+    if (window.AIToolsVision && typeof window.AIToolsVision.mount === "function") {
+      window.AIToolsVision.mount({
+        getGroups: function () {
+          return getContaminationGroups();
+        },
+        getCorrections: function () {
+          return getVisionCorrections();
+        },
+        recordInference: recordVisionInference,
+        updateFinding: updateVisionFinding,
+        recordCorrection: recordVisionCorrection,
+        subscribe: subscribeVision,
+        getSnapshot: getVisionSnapshot,
+        getUser: function () {
+          if (!currentUser) {
+            return null;
+          }
+          return {
+            id: currentUser.id,
+            username: currentUser.username,
+            role: currentUser.role
+          };
+        },
+        getActiveBank: function () {
+          var bank = getActiveBank();
+          if (!bank) {
+            return null;
+          }
+          return {
+            id: bank.id,
+            name: bank.name
+          };
+        },
+        toast: showToast
+      });
+    }
     var createBankBtn = document.getElementById("createBank");
     if (createBankBtn) {
       createBankBtn.addEventListener("click", createBank);

@@ -66,6 +66,15 @@
       <div id="groupList" class="group-list"></div>
     </section>
     <section class="panel">
+      <h2>热脏污识别分组</h2>
+      <p class="panel-sub">用于 AI 图像识别分组标注，控制工具中的分组选项。</p>
+      <form id="contamForm" class="form-inline">
+        <input type="text" id="contamInput" placeholder="新增分组名称" required>
+        <button type="submit" class="primary-button">新增</button>
+      </form>
+      <div id="contamList" class="group-list"></div>
+    </section>
+    <section class="panel">
       <h2>操作日志</h2>
       <div class="panel-actions">
         <button class="ghost-button" id="clearLogs">清空全部</button>
