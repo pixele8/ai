@@ -15,7 +15,7 @@
       <a class="nav-link" href="kb.html">知识库</a>
       <a class="nav-link" href="faq.html">FAQ</a>
       <a class="nav-link active" href="decision.html">决策链</a>
-      <a class="nav-link" href="decision-history.html">决策历史</a>
+      <a class="nav-link" href="ai-tools.html">AI 工具箱</a>
       <a class="nav-link" href="admin.html">系统</a>
     </div>
     <div class="sidebar-section">
@@ -44,7 +44,9 @@
               <input type="text" id="projectName" required placeholder="请输入项目名称">
             </label>
             <label>项目分组
-              <input type="text" id="projectGroup" placeholder="例如：产品规划/运营/战略">
+              <select id="projectGroup">
+                <option value="">未分组</option>
+              </select>
             </label>
             <label>开始时间
               <input type="datetime-local" id="projectStart" required>

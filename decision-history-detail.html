@@ -15,7 +15,7 @@
       <a class="nav-link" href="kb.html">知识库</a>
       <a class="nav-link" href="faq.html">FAQ</a>
       <a class="nav-link" href="decision.html">决策链</a>
-      <a class="nav-link active" href="decision-history.html">决策历史</a>
+      <a class="nav-link" href="ai-tools.html">AI 工具箱</a>
       <a class="nav-link" href="admin.html">系统</a>
     </div>
     <div class="sidebar-section">
@@ -38,7 +38,37 @@
       <header class="section-header">
         <div>时间轴</div>
       </header>
-      <div id="detailTimeline" class="detail-timeline-body"></div>
+      <div class="detail-timeline-grid">
+        <div id="detailCanvas" class="timeline-canvas readonly">
+          <div class="timeline-placeholder">该决策暂无节点</div>
+        </div>
+        <div class="node-detail readonly hidden" id="detailNodePanel">
+          <div class="node-detail-header">
+            <div>
+              <h3 id="detailNodeTitle">节点详情</h3>
+              <div class="meta" id="detailNodeMeta">请选择节点查看详细信息</div>
+            </div>
+          </div>
+          <div class="node-detail-body">
+            <div class="detail-field">
+              <div class="detail-label">开始时间</div>
+              <div class="detail-value" id="detailNodeStart">--</div>
+            </div>
+            <div class="detail-field">
+              <div class="detail-label">开始原因</div>
+              <div class="detail-value" id="detailNodeReason">--</div>
+            </div>
+            <div class="detail-field">
+              <div class="detail-label">产生后果</div>
+              <div class="detail-value" id="detailNodeImpact">--</div>
+            </div>
+            <div class="detail-field">
+              <div class="detail-label">备注</div>
+              <div class="detail-value" id="detailNodeNote">--</div>
+            </div>
+          </div>
+        </div>
+      </div>
     </section>
     <section class="panel detail-links">
       <header class="section-header">
