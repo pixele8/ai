@@ -14,6 +14,7 @@
       <a class="nav-link" href="index.html">对话</a>
       <a class="nav-link" href="kb.html">知识库</a>
       <a class="nav-link" href="faq.html">FAQ</a>
+      <a class="nav-link" href="favorites.html">收藏夹</a>
       <a class="nav-link" href="decision.html">决策链</a>
       <a class="nav-link" href="ai-tools.html">AI 工具箱</a>
       <a class="nav-link" href="admin.html">系统</a>
@@ -37,14 +38,26 @@
     <section class="panel vision-workbench">
       <div class="vision-workbench-grid">
         <div class="vision-stage">
+          <div class="vision-stage-toolbar" id="visionToolbar">
+            <button type="button" class="ghost-button" data-tool="select" aria-pressed="true">选择</button>
+            <button type="button" class="ghost-button" data-tool="brush">画笔</button>
+            <button type="button" class="ghost-button" data-tool="text">文本</button>
+            <button type="button" class="ghost-button" data-tool="magnify">放大镜</button>
+            <button type="button" class="ghost-button" id="visionUndoBtn" data-tool="undo" disabled aria-disabled="true">撤回</button>
+          </div>
           <div class="vision-upload" id="visionUpload" tabindex="0">
             <div class="vision-placeholder" id="visionPlaceholder">
               <strong>粘贴 (Ctrl+V)</strong> 或拖放玻璃检测图到此处
               <span>支持 PNG / JPG / WEBP，导入后可圈选主体区域并订正分类。</span>
             </div>
             <canvas id="visionCanvas" class="vision-canvas hidden" aria-label="热脏污识别画布"></canvas>
+            <canvas id="visionSketch" class="vision-sketch hidden" aria-hidden="true"></canvas>
             <div id="visionOverlay" class="vision-overlay hidden"></div>
             <div id="visionSelection" class="vision-selection hidden"></div>
+            <div id="visionAnnotations" class="vision-annotations hidden" aria-live="polite"></div>
+            <div id="visionMagnifier" class="vision-magnifier hidden" aria-hidden="true">
+              <canvas id="visionMagnifierCanvas"></canvas>
+            </div>
           </div>
           <div class="vision-stage-footer">
             <div class="vision-stage-actions">
@@ -80,7 +93,6 @@
     </section>
   </main>
 </div>
-<footer class="global-footer">©️吴嘉辉</footer>
 <script src="scripts/app.js"></script>
 <script src="scripts/tools-vision.js"></script>
 </body>

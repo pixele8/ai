@@ -33,10 +33,11 @@
   var detailNoteTimer = null;
   var detailActiveNodeId = null;
   var detailLayoutRaf = null;
-  var qaPreviewTimer = null;
-  var qaPreviewPairs = [];
   var bankMenuBankId = null;
   var visionSubscribers = [];
+  var messageMenuInfo = null;
+  var activeFavoriteId = null;
+  var favoriteSearchTerm = "";
 
   function padNumber(value) {
     var num = parseInt(value, 10);
@@ -44,6 +45,358 @@
       return "00";
     }
     return num < 10 ? "0" + num : String(num);
+  }
+
+  function favoriteTitleFromText(text) {
+    if (!text) {
+      return "收藏对话";
+    }
+    var cleaned = String(text).replace(/\s+/g, " ").trim();
+    if (!cleaned) {
+      return "收藏对话";
+    }
+    return cleaned.length > 18 ? cleaned.slice(0, 18) + "…" : cleaned;
+  }
+
+  function closeMessageMenu() {
+    var menu = document.getElementById("messageMenu");
+    if (!menu) {
+      return;
+    }
+    menu.classList.add("hidden");
+    messageMenuInfo = null;
+  }
+
+  function openMessageMenu(sessionId, messageId, pageX, pageY) {
+    var menu = document.getElementById("messageMenu");
+    if (!menu || !messageId) {
+      return;
+    }
+    messageMenuInfo = { sessionId: sessionId, messageId: messageId };
+    menu.classList.remove("hidden");
+    var rect = menu.getBoundingClientRect();
+    var width = rect.width || 160;
+    var height = rect.height || 80;
+    var left = pageX;
+    var top = pageY;
+    if (left + width > window.innerWidth) {
+      left = window.innerWidth - width - 8;
+    }
+    if (top + height > window.innerHeight) {
+      top = window.innerHeight - height - 8;
+    }
+    if (left < 8) {
+      left = 8;
+    }
+    if (top < 8) {
+      top = 8;
+    }
+    menu.style.left = left + "px";
+    menu.style.top = top + "px";
+  }
+
+  function insertFavoriteIntoComposer(favorite) {
+    if (!favorite) {
+      return;
+    }
+    var input = document.getElementById("chatInput");
+    if (!input) {
+      try {
+        sessionStorage.setItem("aiFavoriteDraft", JSON.stringify({
+          title: favorite.title,
+          content: favorite.content
+        }));
+      } catch (err) {
+        console.warn(err);
+      }
+      window.location.href = "index.html";
+      return;
+    }
+    var snippet = "引用《" + favorite.title + "》\n" + favorite.content;
+    if (input.value && input.value.trim().length > 0) {
+      input.value = input.value + "\n\n" + snippet;
+    } else {
+      input.value = snippet;
+    }
+    input.focus();
+    showToast("已插入收藏内容");
+  }
+
+  function addFavoriteFromMessage(sessionId, messageId) {
+    closeMessageMenu();
+    var bank = getActiveBank();
+    if (!bank) {
+      showToast("请选择记忆库");
+      return;
+    }
+    if (!bank.favorites) {
+      bank.favorites = [];
+    }
+    var session = findSession(bank, sessionId);
+    if (!session) {
+      showToast("未找到会话");
+      return;
+    }
+    var target = null;
+    for (var i = 0; i < session.messages.length; i += 1) {
+      if (session.messages[i].id === messageId) {
+        target = session.messages[i];
+        break;
+      }
+    }
+    if (!target) {
+      showToast("未找到对应消息");
+      return;
+    }
+    for (var j = 0; j < bank.favorites.length; j += 1) {
+      if (bank.favorites[j].messageId === target.id && bank.favorites[j].sessionId === session.id) {
+        activeFavoriteId = bank.favorites[j].id;
+        renderFavoritesList();
+        renderFavoriteChips();
+        showToast("该对话已收藏");
+        return;
+      }
+    }
+    var defaultTitle = favoriteTitleFromText(target.text);
+    var title = window.prompt("收藏标题", defaultTitle);
+    if (title === null) {
+      return;
+    }
+    title = title.trim();
+    if (!title) {
+      title = defaultTitle;
+    }
+    var favorite = {
+      id: uuid(),
+      title: title,
+      content: target.text,
+      role: target.role === "user" ? "user" : "assistant",
+      sessionId: session.id,
+      sessionTitle: session.title || "",
+      messageId: target.id,
+      createdAt: new Date().toISOString(),
+      note: ""
+    };
+    bank.favorites.push(favorite);
+    activeFavoriteId = favorite.id;
+    saveState();
+    renderFavoriteChips();
+    renderFavoritesList();
+    showToast("已加入收藏夹");
+  }
+
+  function removeFavorite(favoriteId) {
+    var bank = getActiveBank();
+    if (!bank || !bank.favorites) {
+      return;
+    }
+    for (var i = 0; i < bank.favorites.length; i += 1) {
+      if (bank.favorites[i].id === favoriteId) {
+        bank.favorites.splice(i, 1);
+        break;
+      }
+    }
+    if (activeFavoriteId === favoriteId) {
+      activeFavoriteId = null;
+    }
+    saveState();
+    renderFavoriteChips();
+    renderFavoritesList();
+    showToast("收藏已删除");
+  }
+
+  function renderFavoriteChips() {
+    var bar = document.getElementById("favoriteChips");
+    if (!bar) {
+      return;
+    }
+    bar.innerHTML = "";
+    var bank = getActiveBank();
+    if (!bank || !bank.favorites || bank.favorites.length === 0) {
+      bar.classList.add("hidden");
+      return;
+    }
+    bar.classList.remove("hidden");
+    var sorted = bank.favorites.slice().sort(function (a, b) {
+      return (b.createdAt || "").localeCompare(a.createdAt || "");
+    }).slice(0, 6);
+    for (var i = 0; i < sorted.length; i += 1) {
+      (function (favorite) {
+        var chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "chip";
+        chip.textContent = favorite.title;
+        chip.addEventListener("click", function () {
+          insertFavoriteIntoComposer(favorite);
+        });
+        bar.appendChild(chip);
+      })(sorted[i]);
+    }
+  }
+
+  function renderFavoritesList() {
+    var list = document.getElementById("favoriteList");
+    if (!list) {
+      return;
+    }
+    list.innerHTML = "";
+    var bank = getActiveBank();
+    if (!bank) {
+      list.innerHTML = '<div class="panel-hint">请选择记忆库</div>';
+      renderFavoriteDetail();
+      return;
+    }
+    if (!bank.favorites || bank.favorites.length === 0) {
+      list.innerHTML = '<div class="panel-hint">暂无收藏对话</div>';
+      activeFavoriteId = null;
+      renderFavoriteDetail();
+      return;
+    }
+    var items = bank.favorites.slice().sort(function (a, b) {
+      return (b.createdAt || "").localeCompare(a.createdAt || "");
+    });
+    if (favoriteSearchTerm) {
+      var term = favoriteSearchTerm.toLowerCase();
+      items = items.filter(function (fav) {
+        var title = (fav.title || "").toLowerCase();
+        var content = (fav.content || "").toLowerCase();
+        return title.indexOf(term) !== -1 || content.indexOf(term) !== -1;
+      });
+    }
+    if (items.length === 0) {
+      list.innerHTML = '<div class="panel-hint">未找到匹配的收藏</div>';
+      activeFavoriteId = null;
+      renderFavoriteDetail();
+      return;
+    }
+    var hasActive = false;
+    for (var i = 0; i < items.length; i += 1) {
+      if (items[i].id === activeFavoriteId) {
+        hasActive = true;
+        break;
+      }
+    }
+    if (!hasActive) {
+      activeFavoriteId = items[0].id;
+    }
+    for (var idx = 0; idx < items.length; idx += 1) {
+      (function (favorite) {
+        var card = document.createElement("div");
+        card.className = "favorite-card" + (favorite.id === activeFavoriteId ? " active" : "");
+        var title = document.createElement("div");
+        title.className = "favorite-card-title";
+        title.textContent = favorite.title;
+        var meta = document.createElement("div");
+        meta.className = "favorite-card-meta";
+        var roleText = favorite.role === "user" ? "用户" : "助理";
+        var timeText = favorite.createdAt ? formatDateTime(favorite.createdAt) : "";
+        var sessionName = favorite.sessionTitle ? " · " + favorite.sessionTitle : "";
+        meta.textContent = roleText + sessionName + (timeText ? " · " + timeText : "");
+        card.appendChild(title);
+        card.appendChild(meta);
+        card.addEventListener("click", function () {
+          activeFavoriteId = favorite.id;
+          renderFavoritesList();
+        });
+        list.appendChild(card);
+      })(items[idx]);
+    }
+    renderFavoriteDetail();
+  }
+
+  function renderFavoriteDetail() {
+    var panel = document.getElementById("favoriteDetail");
+    if (!panel) {
+      return;
+    }
+    panel.innerHTML = "";
+    var bank = getActiveBank();
+    if (!bank) {
+      panel.innerHTML = '<div class="panel-hint">请选择记忆库</div>';
+      return;
+    }
+    if (!bank.favorites || bank.favorites.length === 0 || !activeFavoriteId) {
+      panel.innerHTML = '<div class="panel-hint">从左侧选择收藏查看详情</div>';
+      return;
+    }
+    var favorite = null;
+    for (var i = 0; i < bank.favorites.length; i += 1) {
+      if (bank.favorites[i].id === activeFavoriteId) {
+        favorite = bank.favorites[i];
+        break;
+      }
+    }
+    if (!favorite) {
+      panel.innerHTML = '<div class="panel-hint">从左侧选择收藏查看详情</div>';
+      return;
+    }
+    var titleLabel = document.createElement("label");
+    titleLabel.textContent = "标题";
+    var titleInput = document.createElement("input");
+    titleInput.type = "text";
+    titleInput.className = "favorite-title-input";
+    titleInput.value = favorite.title;
+    titleInput.addEventListener("change", function () {
+      var next = titleInput.value.trim();
+      if (!next) {
+        next = favoriteTitleFromText(favorite.content);
+        titleInput.value = next;
+      }
+      favorite.title = next;
+      saveState();
+      renderFavoriteChips();
+      renderFavoritesList();
+    });
+    titleLabel.appendChild(titleInput);
+
+    var meta = document.createElement("div");
+    meta.className = "favorite-detail-meta";
+    var roleText = favorite.role === "user" ? "用户" : "助理";
+    var sessionName = favorite.sessionTitle ? " · " + favorite.sessionTitle : "";
+    var timeText = favorite.createdAt ? " · " + formatDateTime(favorite.createdAt) : "";
+    meta.textContent = roleText + sessionName + timeText;
+
+    var contentBox = document.createElement("div");
+    contentBox.className = "favorite-content";
+    contentBox.textContent = favorite.content;
+
+    var noteLabel = document.createElement("label");
+    noteLabel.textContent = "备注";
+    var noteArea = document.createElement("textarea");
+    noteArea.className = "favorite-note";
+    noteArea.value = favorite.note || "";
+    noteArea.addEventListener("change", function () {
+      favorite.note = noteArea.value.trim();
+      saveState();
+    });
+    noteLabel.appendChild(noteArea);
+
+    var actions = document.createElement("div");
+    actions.className = "favorite-actions";
+    var useBtn = document.createElement("button");
+    useBtn.type = "button";
+    useBtn.className = "ghost-button";
+    useBtn.textContent = "引用到对话";
+    useBtn.addEventListener("click", function () {
+      insertFavoriteIntoComposer(favorite);
+    });
+    var removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "ghost-button danger";
+    removeBtn.textContent = "删除收藏";
+    removeBtn.addEventListener("click", function () {
+      if (window.confirm("确定删除该收藏？")) {
+        removeFavorite(favorite.id);
+      }
+    });
+    actions.appendChild(useBtn);
+    actions.appendChild(removeBtn);
+
+    panel.appendChild(titleLabel);
+    panel.appendChild(meta);
+    panel.appendChild(contentBox);
+    panel.appendChild(noteLabel);
+    panel.appendChild(actions);
   }
 
   function deleteKnowledgeFile(fileId) {
@@ -107,30 +460,7 @@
     showToast("文件已重命名");
   }
 
-  function prepareQaPreviewFromFile(fileId) {
-    var bank = getActiveBank();
-    if (!bank) {
-      showToast("请选择记忆库");
-      return;
-    }
-    var collected = [];
-    for (var i = 0; i < bank.chunks.length; i += 1) {
-      if (bank.chunks[i].fileId === fileId) {
-        collected.push(bank.chunks[i].text || "");
-      }
-    }
-    if (collected.length === 0) {
-      showToast("该文件暂无可拆分内容");
-      return;
-    }
-    var sourceInput = document.getElementById("qaSource");
-    var merged = collected.join("\n");
-    if (sourceInput) {
-      sourceInput.value = merged;
-    }
-    updateQaPreview(merged);
-    showToast("已载入文本，生成问答预览");
-  }
+
 
   function deleteChunk(chunkId) {
     var bank = getActiveBank();
@@ -629,6 +959,9 @@
       if (!bank.common) {
         bank.common = [];
       }
+      if (!bank.favorites) {
+        bank.favorites = [];
+      }
       if (!bank.logs) {
         bank.logs = [];
       }
@@ -648,6 +981,21 @@
         }
         if (typeof sess.manualTitle !== "boolean") {
           sess.manualTitle = false;
+        }
+        for (var msgIndex = 0; msgIndex < sess.messages.length; msgIndex += 1) {
+          var msg = sess.messages[msgIndex];
+          if (!msg.id) {
+            msg.id = uuid();
+          }
+          if (!msg.ts) {
+            msg.ts = new Date().toISOString();
+          }
+          if (msg.role !== "assistant" && msg.role !== "user") {
+            msg.role = msg.role === "assistant" ? "assistant" : "user";
+          }
+          if (typeof msg.text !== "string") {
+            msg.text = String(msg.text || "");
+          }
         }
       }
       var fileMap = {};
@@ -729,6 +1077,43 @@
         }
         if (!log.time) {
           log.time = new Date().toISOString();
+        }
+      }
+      for (var favIndex = 0; favIndex < bank.favorites.length; favIndex += 1) {
+        var fav = bank.favorites[favIndex];
+        if (!fav || typeof fav !== "object") {
+          bank.favorites.splice(favIndex, 1);
+          favIndex -= 1;
+          continue;
+        }
+        if (!fav.id) {
+          fav.id = uuid();
+        }
+        if (!fav.createdAt) {
+          fav.createdAt = new Date().toISOString();
+        }
+        if (!fav.title) {
+          fav.title = snippetText(fav.content || "", 18) || "收藏对话";
+        }
+        if (typeof fav.content !== "string") {
+          fav.content = String(fav.content || "");
+        }
+        if (fav.role !== "assistant" && fav.role !== "user") {
+          fav.role = "assistant";
+        }
+        if (!fav.sessionTitle || typeof fav.sessionTitle !== "string") {
+          fav.sessionTitle = "";
+        }
+        if ((!fav.sessionTitle || fav.sessionTitle.length === 0) && fav.sessionId) {
+          for (var sx = 0; sx < bank.sessions.length; sx += 1) {
+            if (bank.sessions[sx].id === fav.sessionId) {
+              fav.sessionTitle = bank.sessions[sx].title || "";
+              break;
+            }
+          }
+        }
+        if (typeof fav.note !== "string") {
+          fav.note = "";
         }
       }
       for (var m = 0; m < bank.common.length; m += 1) {
@@ -1266,6 +1651,8 @@
       exports: [],
       lastExportedAt: entry.lastExportedAt || null,
       lastExportFile: typeof entry.lastExportFile === "string" ? entry.lastExportFile : "",
+      annotations: [],
+      strokes: [],
       createdAt: createdAt,
       updatedAt: updatedAt
     };
@@ -1299,6 +1686,49 @@
           probabilities: finding.probabilities || null,
           notes: typeof finding.notes === "string" ? finding.notes : "",
           createdAt: safeDateString(finding.createdAt, runAt)
+        });
+      }
+    }
+    if (entry.strokes && Array.isArray(entry.strokes)) {
+      for (var st = 0; st < entry.strokes.length; st += 1) {
+        var stroke = entry.strokes[st];
+        if (!stroke || !Array.isArray(stroke.points)) {
+          continue;
+        }
+        var points = [];
+        for (var sp = 0; sp < stroke.points.length; sp += 1) {
+          var point = stroke.points[sp];
+          if (!point) {
+            continue;
+          }
+          var px = typeof point.x === "number" ? point.x : parseFloat(point.x || "0");
+          var py = typeof point.y === "number" ? point.y : parseFloat(point.y || "0");
+          points.push({ x: px, y: py });
+        }
+        if (points.length === 0) {
+          continue;
+        }
+        sanitized.strokes.push({
+          id: stroke.id || uuid(),
+          width: typeof stroke.width === "number" ? stroke.width : 3,
+          color: typeof stroke.color === "string" ? stroke.color : "rgba(250,84,28,0.92)",
+          points: points
+        });
+      }
+    }
+    if (entry.annotations && Array.isArray(entry.annotations)) {
+      for (var an = 0; an < entry.annotations.length; an += 1) {
+        var annotation = entry.annotations[an];
+        if (!annotation || typeof annotation !== "object") {
+          continue;
+        }
+        var ax = typeof annotation.x === "number" ? annotation.x : parseFloat(annotation.x || "0");
+        var ay = typeof annotation.y === "number" ? annotation.y : parseFloat(annotation.y || "0");
+        sanitized.annotations.push({
+          id: annotation.id || uuid(),
+          x: ax,
+          y: ay,
+          text: typeof annotation.text === "string" ? annotation.text : ""
         });
       }
     }
@@ -1459,6 +1889,55 @@
             inference.exports = newExports;
             continue;
           }
+          if (key === "strokes" && Array.isArray(patch[key])) {
+            var sanitizedStrokes = [];
+            for (var st = 0; st < patch[key].length; st += 1) {
+              var stroke = patch[key][st];
+              if (!stroke || !Array.isArray(stroke.points)) {
+                continue;
+              }
+              var strokePoints = [];
+              for (var sp = 0; sp < stroke.points.length; sp += 1) {
+                var point = stroke.points[sp];
+                if (!point) {
+                  continue;
+                }
+                var px = typeof point.x === "number" ? point.x : parseFloat(point.x || "0");
+                var py = typeof point.y === "number" ? point.y : parseFloat(point.y || "0");
+                strokePoints.push({ x: px, y: py });
+              }
+              if (strokePoints.length === 0) {
+                continue;
+              }
+              sanitizedStrokes.push({
+                id: stroke.id || uuid(),
+                width: typeof stroke.width === "number" ? stroke.width : 3,
+                color: typeof stroke.color === "string" ? stroke.color : "rgba(250,84,28,0.92)",
+                points: strokePoints
+              });
+            }
+            inference.strokes = sanitizedStrokes;
+            continue;
+          }
+          if (key === "annotations" && Array.isArray(patch[key])) {
+            var sanitizedAnnotations = [];
+            for (var an = 0; an < patch[key].length; an += 1) {
+              var annotation = patch[key][an];
+              if (!annotation || typeof annotation !== "object") {
+                continue;
+              }
+              var ax = typeof annotation.x === "number" ? annotation.x : parseFloat(annotation.x || "0");
+              var ay = typeof annotation.y === "number" ? annotation.y : parseFloat(annotation.y || "0");
+              sanitizedAnnotations.push({
+                id: annotation.id || uuid(),
+                x: ax,
+                y: ay,
+                text: typeof annotation.text === "string" ? annotation.text : ""
+              });
+            }
+            inference.annotations = sanitizedAnnotations;
+            continue;
+          }
           if (key === "notes") {
             inference.notes = typeof patch[key] === "string" ? patch[key] : "";
             continue;
@@ -1583,6 +2062,13 @@
           renderKnowledge();
           renderFaqList();
           renderCommonList();
+          favoriteSearchTerm = "";
+          var searchInput = document.getElementById("favoriteSearch");
+          if (searchInput) {
+            searchInput.value = "";
+          }
+          renderFavoritesList();
+          renderFavoriteChips();
           renderLogs();
         });
         badge.addEventListener("contextmenu", function (evt) {
@@ -1610,6 +2096,7 @@
       name: name,
       logo: bankLogoText(name),
       faqs: [],
+      favorites: [],
       files: [],
       chunks: [],
       index: { df: {}, postings: {}, docLengths: {}, avgdl: 0, totalDocs: 0 },
@@ -1627,6 +2114,8 @@
     renderKnowledge();
     renderFaqList();
     renderCommonChips();
+    renderFavoriteChips();
+    renderFavoritesList();
   }
 
   function renameBank(bankId) {
@@ -1697,6 +2186,8 @@
     renderSessionList();
     renderCommonChips();
     renderCommonList();
+    renderFavoriteChips();
+    renderFavoritesList();
     renderChat();
     renderKnowledge();
     renderFaqList();
@@ -2012,6 +2503,7 @@
     if (!area) {
       return;
     }
+    closeMessageMenu();
     area.innerHTML = "";
     var bank = getActiveBank();
     if (!bank) {
@@ -2019,6 +2511,7 @@
       area.innerHTML = '<div class="message"><div class="message-bubble"><div class="content">请先创建记忆库</div></div></div>';
       return;
     }
+    renderFavoriteChips();
     var session = findSession(bank, state.activeSessionId);
     if (!session) {
       renderEvidence([], []);
@@ -2030,11 +2523,23 @@
       var role = message.role === "user" ? "user" : "assistant";
       var wrapper = document.createElement("div");
       wrapper.className = "message " + role;
+      wrapper.dataset.messageId = message.id || "";
+      wrapper.dataset.sessionId = session.id;
       var avatar = document.createElement("div");
       avatar.className = "message-avatar " + role;
       avatar.textContent = role === "user" ? "我" : "虹";
       var bubble = document.createElement("div");
       bubble.className = "message-bubble";
+      bubble.addEventListener("contextmenu", function (evt) {
+        evt.preventDefault();
+        var container = evt.currentTarget.parentElement;
+        if (!container) {
+          return;
+        }
+        var msgId = container.dataset.messageId;
+        var sessId = container.dataset.sessionId;
+        openMessageMenu(sessId, msgId, evt.pageX, evt.pageY);
+      });
       var meta = document.createElement("div");
       meta.className = "meta";
       meta.textContent = role === "user" ? "用户" : "助理";
@@ -2285,153 +2790,7 @@
     return chunks;
   }
 
-  function looksLikeQuestion(line) {
-    if (!line) {
-      return false;
-    }
-    var text = String(line).trim();
-    if (!text) {
-      return false;
-    }
-    if (/[？?]$/.test(text)) {
-      return true;
-    }
-    var starters = ["什么", "为何", "为什么", "如何", "怎样", "是否", "谁", "哪", "怎么", "能否", "可否", "可以"];
-    for (var i = 0; i < starters.length; i += 1) {
-      if (text.indexOf(starters[i]) === 0) {
-        return true;
-      }
-    }
-    return false;
-  }
 
-  function extractQaPairsFromText(text) {
-    if (!text) {
-      return [];
-    }
-    var lines = String(text).split(/\r?\n+/);
-    var cleaned = [];
-    for (var i = 0; i < lines.length; i += 1) {
-      var line = lines[i].trim();
-      if (line.length > 0) {
-        cleaned.push(line);
-      }
-    }
-    var pairs = [];
-    var idx = 0;
-    while (idx < cleaned.length) {
-      var current = cleaned[idx];
-      if (looksLikeQuestion(current)) {
-        var answerParts = [];
-        idx += 1;
-        while (idx < cleaned.length && !looksLikeQuestion(cleaned[idx])) {
-          answerParts.push(cleaned[idx]);
-          idx += 1;
-        }
-        var answer = answerParts.join("\n").trim();
-        if (!answer) {
-          answer = "原文未给出直接答案，请结合上下文理解：\n" + current;
-        }
-        pairs.push({ question: current, answer: answer });
-        if (pairs.length >= 10) {
-          break;
-        }
-      } else {
-        idx += 1;
-      }
-    }
-    if (pairs.length === 0 && cleaned.length > 0) {
-      var limit = Math.min(cleaned.length, 3);
-      for (var j = 0; j < limit; j += 1) {
-        pairs.push({
-          question: "第" + (j + 1) + "段的要点是什么？",
-          answer: cleaned[j]
-        });
-      }
-      if (pairs.length === 0) {
-        pairs.push({
-          question: "该资料的核心内容是什么？",
-          answer: cleaned.join("\n").slice(0, 400)
-        });
-      }
-    }
-    return pairs;
-  }
-
-  function ingestQaPairs(bank, pairs, origin) {
-    if (!bank || !pairs || pairs.length === 0) {
-      return 0;
-    }
-    var created = 0;
-    for (var i = 0; i < pairs.length; i += 1) {
-      var item = pairs[i];
-      if (!item || !item.question || !item.answer) {
-        continue;
-      }
-      var meta = {
-        createdBy: currentUser ? currentUser.username : "解析",
-        source: "knowledge",
-        origin: origin || "知识库",
-        auto: true
-      };
-      var result = upsertFaq(bank, item.question, item.answer, meta);
-      if (result && result.item) {
-        result.item.source = "knowledge";
-        result.item.auto = true;
-        if (origin) {
-          result.item.origin = origin;
-        }
-      }
-      if (result && result.created) {
-        created += 1;
-      }
-    }
-    return created;
-  }
-
-  function renderQaPreview(pairs) {
-    var list = document.getElementById("qaPreviewList");
-    if (!list) {
-      return;
-    }
-    list.innerHTML = "";
-    if (!pairs || pairs.length === 0) {
-      var empty = document.createElement("div");
-      empty.className = "qa-preview-empty";
-      empty.textContent = "粘贴内容后自动生成问答";
-      list.appendChild(empty);
-      return;
-    }
-    for (var i = 0; i < pairs.length; i += 1) {
-      var pair = pairs[i];
-      var card = document.createElement("div");
-      card.className = "qa-preview-card";
-      var header = document.createElement("header");
-      var title = document.createElement("h4");
-      title.textContent = pair.question;
-      var indexBadge = document.createElement("span");
-      indexBadge.className = "qa-index";
-      indexBadge.textContent = String(i + 1);
-      header.appendChild(title);
-      header.appendChild(indexBadge);
-      var answer = document.createElement("p");
-      answer.textContent = pair.answer;
-      card.appendChild(header);
-      card.appendChild(answer);
-      list.appendChild(card);
-    }
-  }
-
-  function updateQaPreview(text) {
-    var content = text ? String(text).trim() : "";
-    if (!content) {
-      qaPreviewPairs = [];
-      renderQaPreview([]);
-      return;
-    }
-    qaPreviewPairs = extractQaPairsFromText(content);
-    renderQaPreview(qaPreviewPairs);
-  }
 
   function rebuildIndex(bank) {
     if (!bank) {
@@ -2649,13 +3008,6 @@
             renameBtn.addEventListener("click", function () {
               renameKnowledgeFile(file.id);
             });
-            var qaBtn = document.createElement("button");
-            qaBtn.className = "text-button";
-            qaBtn.type = "button";
-            qaBtn.textContent = "拆分问答";
-            qaBtn.addEventListener("click", function () {
-              prepareQaPreviewFromFile(file.id);
-            });
             var delBtn = document.createElement("button");
             delBtn.className = "text-button danger";
             delBtn.type = "button";
@@ -2668,7 +3020,6 @@
             });
             actions.appendChild(focusBtn);
             actions.appendChild(renameBtn);
-            actions.appendChild(qaBtn);
             actions.appendChild(delBtn);
             header.appendChild(title);
             header.appendChild(actions);
@@ -2686,12 +3037,10 @@
       preview.innerHTML = "";
       if (!bank) {
         preview.innerHTML = '<div class="panel-hint">请选择记忆库</div>';
-        renderQaPreview(qaPreviewPairs);
         return;
       }
       if (!bank.chunks || bank.chunks.length === 0) {
         preview.innerHTML = '<div class="panel-hint">暂无分段内容</div>';
-        renderQaPreview(qaPreviewPairs);
         return;
       }
       var displayed = 0;
@@ -2767,7 +3116,6 @@
         preview.innerHTML = '<div class="panel-hint">所选文件暂无分段</div>';
       }
     }
-    renderQaPreview(qaPreviewPairs);
   }
 
   function ensureSession() {
@@ -2804,6 +3152,7 @@
       session = ensureSession();
     }
     var message = {
+      id: uuid(),
       role: "user",
       text: text,
       ts: new Date().toISOString(),
@@ -3184,6 +3533,7 @@
       renderEvidence(evidence, highlightTokens);
     }
     var reply = {
+      id: uuid(),
       role: "assistant",
       text: replyText,
       ts: new Date().toISOString(),
@@ -3338,25 +3688,7 @@
         editBtn.addEventListener("click", function () {
           startFaqEdit(faq);
         });
-        var delBtn = document.createElement("button");
-        delBtn.className = "text-button danger";
-        delBtn.textContent = "删除";
-        delBtn.addEventListener("click", function () {
-          if (!window.confirm("确定删除该 FAQ？")) {
-            return;
-          }
-          var idx = bank.faqs.indexOf(faq);
-          if (idx >= 0) {
-            bank.faqs.splice(idx, 1);
-          }
-          if (faqEditingId === faq.id) {
-            resetFaqForm();
-          }
-          saveState();
-          renderFaqList();
-        });
         tools.appendChild(editBtn);
-        tools.appendChild(delBtn);
         header.appendChild(title);
         header.appendChild(tools);
         var body = document.createElement("div");
@@ -3411,77 +3743,7 @@
     }
   }
 
-  function renderKbFaqPreview(items) {
-    var box = document.getElementById("kbFaqPreview");
-    if (!box) {
-      return;
-    }
-    box.innerHTML = "";
-    if (!items) {
-      return;
-    }
-    for (var i = 0; i < items.length; i += 1) {
-      (function (item) {
-        var card = document.createElement("div");
-        card.className = "faq-card";
-        card.innerHTML = '<header><div><span class="badge-strong">Q</span> ' + item.question + '</div></header><div><span class="badge-strong">A</span> ' + item.answer + '</div>';
-        card.addEventListener("click", function () {
-          var bank = getActiveBank();
-          if (!bank) {
-            return;
-          }
-          var inserted = upsertFaq(bank, item.question, item.answer, {
-            createdBy: currentUser ? currentUser.username : ""
-          });
-          if (inserted) {
-            saveState();
-            renderFaqList();
-            showToast(inserted.created ? "已导入 FAQ" : "FAQ 已更新");
-          }
-        });
-        box.appendChild(card);
-      })(items[i]);
-    }
-  }
 
-  function extractFaqCandidates(bank) {
-    var candidates = [];
-    if (!bank) {
-      return candidates;
-    }
-    var seen = {};
-    for (var i = 0; i < bank.chunks.length; i += 1) {
-      var text = bank.chunks[i].text;
-      var sentences = text.split(/[。！？\?\!]/);
-      for (var j = 0; j < sentences.length; j += 1) {
-        var sentence = sentences[j].trim();
-        if (sentence.length === 0) {
-          continue;
-        }
-        if (sentence.charAt(sentence.length - 1) === "?" || sentence.indexOf("什么") === 0 || sentence.indexOf("如何") === 0 || sentence.indexOf("怎样") === 0) {
-          var normalized = normalizeQuestionText(sentence);
-          if (normalized.length === 0 || seen[normalized]) {
-            continue;
-          }
-          var answerParts = [];
-          var next1 = sentences[j + 1] ? sentences[j + 1].trim() : "";
-          var next2 = sentences[j + 2] ? sentences[j + 2].trim() : "";
-          if (next1.length > 0) {
-            answerParts.push(next1);
-          }
-          if (next2.length > 0) {
-            answerParts.push(next2);
-          }
-          if (answerParts.length === 0) {
-            continue;
-          }
-          seen[normalized] = true;
-          candidates.push({ question: sentence, answer: answerParts.join("。") });
-        }
-      }
-    }
-    return candidates.slice(0, 50);
-  }
 
   function renderUsers() {
     var list = document.getElementById("userList");
@@ -4983,15 +5245,26 @@
     var groupLabel = document.createElement("div");
     groupLabel.className = "meta-label";
     groupLabel.textContent = "分组";
-    var groupInput = document.createElement("input");
-    groupInput.value = project.group || "未分组";
-    groupInput.addEventListener("change", function () {
-      project.group = groupInput.value.trim() || "未分组";
+    var groupSelect = document.createElement("select");
+    var availableGroups = ["未分组"].concat(getProjectGroups());
+    if (project.group && availableGroups.indexOf(project.group) === -1) {
+      availableGroups.push(project.group);
+    }
+    for (var g = 0; g < availableGroups.length; g += 1) {
+      var option = document.createElement("option");
+      option.value = availableGroups[g];
+      option.textContent = availableGroups[g];
+      groupSelect.appendChild(option);
+    }
+    var currentGroup = project.group && availableGroups.indexOf(project.group) !== -1 ? project.group : "未分组";
+    groupSelect.value = currentGroup;
+    groupSelect.addEventListener("change", function () {
+      project.group = groupSelect.value || "未分组";
       saveState();
       showToast("分组已更新");
     });
     groupItem.appendChild(groupLabel);
-    groupItem.appendChild(groupInput);
+    groupItem.appendChild(groupSelect);
     container.appendChild(groupItem);
 
     var startItem = document.createElement("div");
@@ -5899,13 +6172,10 @@
     var chunkSize = chunkSizeInput && chunkSizeInput.value ? parseInt(chunkSizeInput.value, 10) : state.settings.chunkSize;
     var chunkOverlap = chunkOverlapInput && chunkOverlapInput.value ? parseInt(chunkOverlapInput.value, 10) : state.settings.chunkOverlap;
     var tasks = [];
-    var autoFaqCount = 0;
     for (var i = 0; i < files.length; i += 1) {
       (function (file) {
         tasks.push(readFileContent(file).then(function (content) {
           var text = parseFileContent(file.name, content);
-          var qaPairs = extractQaPairsFromText(text);
-          autoFaqCount += ingestQaPairs(bank, qaPairs, file.name);
           var chunks = chunkText(text, chunkSize, chunkOverlap);
           var fileId = uuid();
           var entry = { id: fileId, name: file.name, chunks: 0, size: file.size };
@@ -5925,11 +6195,7 @@
       if (info) {
         info.textContent = "未选择文件";
       }
-      if (autoFaqCount > 0) {
-        showToast("文件已摄取，并生成 " + autoFaqCount + " 条问答");
-      } else {
-        showToast("文件已摄取");
-      }
+      showToast("文件已摄取");
     });
   }
 
@@ -5997,6 +6263,20 @@
     renderLogs();
     var sendBtn = document.getElementById("sendMessage");
     var input = document.getElementById("chatInput");
+    try {
+      var pending = sessionStorage.getItem("aiFavoriteDraft");
+      if (pending && input) {
+        var draft = JSON.parse(pending);
+        if (draft && draft.content) {
+          var snippet = "引用《" + (draft.title || "收藏对话") + "》\n" + draft.content;
+          input.value = snippet;
+          showToast("已载入收藏内容");
+        }
+      }
+      sessionStorage.removeItem("aiFavoriteDraft");
+    } catch (err) {
+      console.warn(err);
+    }
     if (sendBtn) {
       sendBtn.addEventListener("click", handleSendMessage);
     }
@@ -6019,6 +6299,25 @@
     var logoutBtn = document.getElementById("logoutButton");
     if (logoutBtn) {
       logoutBtn.addEventListener("click", logout);
+    }
+    var messageMenu = document.getElementById("messageMenu");
+    if (messageMenu) {
+      messageMenu.addEventListener("click", function (evt) {
+        evt.stopPropagation();
+        var target = evt.target;
+        if (!target || target.tagName !== "BUTTON") {
+          return;
+        }
+        var action = target.getAttribute("data-action");
+        if (action === "favorite" && messageMenuInfo) {
+          addFavoriteFromMessage(messageMenuInfo.sessionId, messageMenuInfo.messageId);
+        }
+      });
+    }
+    document.addEventListener("click", closeMessageMenu);
+    var chatArea = document.getElementById("chatArea");
+    if (chatArea) {
+      chatArea.addEventListener("scroll", closeMessageMenu);
     }
     var toggle = document.getElementById("settingsToggle");
     var drawer = document.getElementById("settingsDrawer");
@@ -6135,7 +6434,6 @@
       pendingChunkHighlightId = chunkParam;
     }
     renderKnowledge();
-    renderQaPreview([]);
     var uploader = document.getElementById("kbUploader");
     var processBtn = document.getElementById("processFiles");
     if (uploader) {
@@ -6182,72 +6480,15 @@
           return;
         }
         var content = title + "\n" + body;
-        var qaPairs = extractQaPairsFromText(content);
         var chunks = chunkText(content, state.settings.chunkSize, state.settings.chunkOverlap);
         var fileId = uuid();
         var entry = { id: fileId, name: title, chunks: 0, size: body.length };
         bank.files.push(entry);
         entry.chunks = addChunksToIndex(bank, title, chunks, fileId);
-        var autoFaq = ingestQaPairs(bank, qaPairs, title);
         saveState();
         renderKnowledge();
-        if (autoFaq > 0) {
-          showToast("已保存到记忆库，并生成 " + autoFaq + " 条问答");
-        } else {
-          showToast("已保存到记忆库");
-        }
+        showToast("已保存到记忆库");
         manualForm.reset();
-      });
-    }
-    var qaSource = document.getElementById("qaSource");
-    if (qaSource) {
-      qaSource.addEventListener("input", function () {
-        if (qaPreviewTimer) {
-          window.clearTimeout(qaPreviewTimer);
-        }
-        qaPreviewTimer = window.setTimeout(function () {
-          updateQaPreview(qaSource.value);
-        }, 250);
-      });
-    }
-    var qaPreviewBtn = document.getElementById("qaPreview");
-    if (qaPreviewBtn) {
-      qaPreviewBtn.addEventListener("click", function () {
-        var source = qaSource ? qaSource.value : "";
-        updateQaPreview(source);
-      });
-    }
-    var qaClearBtn = document.getElementById("qaClear");
-    if (qaClearBtn) {
-      qaClearBtn.addEventListener("click", function () {
-        if (qaSource) {
-          qaSource.value = "";
-        }
-        if (qaPreviewTimer) {
-          window.clearTimeout(qaPreviewTimer);
-          qaPreviewTimer = null;
-        }
-        updateQaPreview("");
-      });
-    }
-    var qaSaveBtn = document.getElementById("qaSave");
-    if (qaSaveBtn) {
-      qaSaveBtn.addEventListener("click", function () {
-        if (!qaPreviewPairs || qaPreviewPairs.length === 0) {
-          showToast("请先生成问答");
-          return;
-        }
-        var bank = getActiveBank();
-        if (!bank) {
-          showToast("请选择记忆库");
-          return;
-        }
-        var created = ingestQaPairs(bank, qaPreviewPairs, "即时拆分");
-        saveState();
-        renderKnowledge();
-        renderFaqList();
-        renderQaPreview(qaPreviewPairs);
-        showToast(created > 0 ? "已保存 " + created + " 条 FAQ" : "问答已整理");
       });
     }
     var chunkForm = document.getElementById("chunkForm");
@@ -6321,10 +6562,7 @@
     updateBankBadge();
     renderFaqList();
     resetFaqForm();
-    var bank = getActiveBank();
-    if (bank) {
-      renderKbFaqPreview(extractFaqCandidates(bank));
-    }
+    getActiveBank();
     var faqForm = document.getElementById("faqForm");
     if (faqForm) {
       faqForm.addEventListener("submit", function (evt) {
@@ -6472,14 +6710,30 @@
         renderFaqMatch(result);
       });
     }
-    var extractBtn = document.getElementById("extractFromKb");
-    if (extractBtn) {
-      extractBtn.addEventListener("click", function () {
-        var bank = getActiveBank();
-        if (!bank) {
-          return;
-        }
-        renderKbFaqPreview(extractFaqCandidates(bank));
+    var createBankBtn = document.getElementById("createBank");
+    if (createBankBtn) {
+      createBankBtn.addEventListener("click", createBank);
+    }
+    var logoutBtn = document.getElementById("logoutButton");
+    if (logoutBtn) {
+      logoutBtn.addEventListener("click", logout);
+    }
+  }
+
+  function initFavoritesPage() {
+    requireAuth();
+    setNavUserInfo();
+    ensureActiveBank();
+    renderBankList();
+    updateBankBadge();
+    favoriteSearchTerm = "";
+    renderFavoritesList();
+    var search = document.getElementById("favoriteSearch");
+    if (search) {
+      search.value = "";
+      search.addEventListener("input", function () {
+        favoriteSearchTerm = search.value.trim();
+        renderFavoritesList();
       });
     }
     var createBankBtn = document.getElementById("createBank");
@@ -7177,6 +7431,8 @@
         initKbPage();
       } else if (page === "faq") {
         initFaqPage();
+      } else if (page === "favorites") {
+        initFavoritesPage();
       } else if (page === "decision") {
         initDecisionPage();
       } else if (page === "decision-history") {

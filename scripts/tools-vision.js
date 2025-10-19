@@ -9,6 +9,12 @@
   var ctx = null;
   var overlay = null;
   var selectionLayer = null;
+  var sketchCanvas = null;
+  var sketchCtx = null;
+  var annotationsLayer = null;
+  var magnifier = null;
+  var magnifierCanvas = null;
+  var magnifierCtx = null;
   var resultsContainer = null;
   var summaryContainer = null;
   var historyPanel = null;
@@ -21,6 +27,9 @@
   var noteForm = null;
   var noteInput = null;
   var historySearch = null;
+  var toolbar = null;
+  var toolButtons = [];
+  var undoButton = null;
   var draggingTimer = null;
   var selectionBox = null;
   var selectionMode = null;
@@ -30,6 +39,19 @@
   var activeInference = null;
   var canvasMetrics = null;
   var resizeTimer = null;
+  var activeTool = "select";
+  var strokes = [];
+  var annotations = [];
+  var undoStack = [];
+  var isDrawingStroke = false;
+  var currentStroke = null;
+  var draggingAnnotation = null;
+  var draggingAnnotationElement = null;
+  var annotationDragStart = null;
+  var annotationStartPosition = null;
+  var magnifierSize = 180;
+  var magnifierZoom = 2.4;
+  var maxUndo = 60;
 
   function makeId(prefix) {
     var base = Date.now().toString(36) + Math.random().toString(36).substr(2, 6);
@@ -95,6 +117,10 @@
     canvas = document.getElementById("visionCanvas");
     overlay = document.getElementById("visionOverlay");
     selectionLayer = document.getElementById("visionSelection");
+    sketchCanvas = document.getElementById("visionSketch");
+    annotationsLayer = document.getElementById("visionAnnotations");
+    magnifier = document.getElementById("visionMagnifier");
+    magnifierCanvas = document.getElementById("visionMagnifierCanvas");
     resultsContainer = document.getElementById("visionFindings");
     summaryContainer = document.getElementById("visionSummary");
     historyPanel = document.getElementById("visionHistory");
@@ -107,14 +133,31 @@
     noteForm = document.getElementById("visionNoteForm");
     noteInput = document.getElementById("visionNoteInput");
     historySearch = document.getElementById("visionHistorySearch");
+    toolbar = document.getElementById("visionToolbar");
+    undoButton = document.getElementById("visionUndoBtn");
+
+    if (toolbar) {
+      toolButtons = toolbar.querySelectorAll('[data-tool]');
+    } else {
+      toolButtons = [];
+    }
 
     if (!dropzone || !canvas || !overlay || !resultsContainer) {
       return;
     }
     ctx = canvas.getContext("2d");
+    if (sketchCanvas) {
+      sketchCtx = sketchCanvas.getContext("2d");
+    }
+    if (magnifierCanvas) {
+      magnifierCtx = magnifierCanvas.getContext("2d");
+    }
     if (selectionLayer) {
       selectionLayer.innerHTML = "";
       selectionLayer.classList.add("hidden");
+    }
+    if (magnifier) {
+      magnifier.classList.add("hidden");
     }
     try {
       var params = new URLSearchParams(window.location.search);
@@ -124,6 +167,7 @@
       }
     } catch (err) {}
     bindEvents();
+    setActiveTool("select");
     window.addEventListener("resize", handleResize);
     renderEmptyState();
     if (typeof api.subscribe === "function") {
@@ -131,6 +175,7 @@
     } else if (typeof api.getSnapshot === "function") {
       handleSnapshot(api.getSnapshot());
     }
+    refreshPointerLayers();
   }
 
   function bindEvents() {
@@ -140,7 +185,27 @@
         evt.preventDefault();
         return;
       }
+      var target = evt.target || evt.srcElement;
+      if (!target) {
+        return;
+      }
+      if (target === canvas || target === overlay || target === selectionLayer || target === sketchCanvas) {
+        evt.preventDefault();
+        return;
+      }
+      if (annotationsLayer && annotationsLayer.contains(target)) {
+        evt.preventDefault();
+        return;
+      }
+      if (magnifier && magnifier.contains(target)) {
+        evt.preventDefault();
+        return;
+      }
+      if (target !== dropzone && !(placeholder && placeholder.contains(target))) {
+        return;
+      }
       if (fileInput) {
+        evt.preventDefault();
         fileInput.click();
       }
     });
@@ -160,6 +225,39 @@
     });
     dropzone.addEventListener("drop", handleDrop);
     document.addEventListener("paste", handleGlobalPaste);
+    if (canvas) {
+      canvas.addEventListener("mousedown", handleCanvasMouseDown);
+      canvas.addEventListener("click", function (evt) {
+        evt.stopPropagation();
+      });
+    }
+    if (sketchCanvas) {
+      sketchCanvas.addEventListener("mousedown", handleSketchPointerDown);
+      sketchCanvas.addEventListener("mousemove", handleSketchPointerMove);
+      sketchCanvas.addEventListener("mouseup", handleSketchPointerUp);
+      sketchCanvas.addEventListener("mouseleave", handleSketchPointerLeave);
+      sketchCanvas.addEventListener("click", function (evt) {
+        evt.stopPropagation();
+      });
+    }
+    if (annotationsLayer) {
+      annotationsLayer.addEventListener("click", function (evt) {
+        evt.stopPropagation();
+      });
+    }
+    if (toolButtons && toolButtons.length) {
+      for (var i = 0; i < toolButtons.length; i += 1) {
+        toolButtons[i].addEventListener("click", function (evt) {
+          evt.preventDefault();
+          var tool = this.getAttribute("data-tool");
+          if (tool === "undo") {
+            handleUndo();
+            return;
+          }
+          setActiveTool(tool || "select");
+        });
+      }
+    }
     if (fileInput) {
       fileInput.addEventListener("change", function (evt) {
         evt.preventDefault();
@@ -215,9 +313,6 @@
         historyFilter = (historySearch.value || "").trim();
         renderHistory();
       });
-    }
-    if (canvas) {
-      canvas.addEventListener("mousedown", handleCanvasMouseDown);
     }
     document.addEventListener("mousemove", handleCanvasMouseMove);
     document.addEventListener("mouseup", handleCanvasMouseUp);
@@ -278,8 +373,21 @@
       selectionLayer.style.height = canvasMetrics.height + "px";
       selectionLayer.style.pointerEvents = "none";
     }
+    if (sketchCanvas) {
+      sketchCanvas.style.left = canvasMetrics.offsetX + "px";
+      sketchCanvas.style.top = canvasMetrics.offsetY + "px";
+      sketchCanvas.style.width = canvasMetrics.width + "px";
+      sketchCanvas.style.height = canvasMetrics.height + "px";
+    }
+    if (annotationsLayer) {
+      annotationsLayer.style.left = canvasMetrics.offsetX + "px";
+      annotationsLayer.style.top = canvasMetrics.offsetY + "px";
+      annotationsLayer.style.width = canvasMetrics.width + "px";
+      annotationsLayer.style.height = canvasMetrics.height + "px";
+    }
     realignOverlayBoxes();
     realignSelectionBox();
+    realignAnnotations();
   }
 
   function realignOverlayBoxes() {
@@ -312,6 +420,23 @@
     selectionBox.style.top = rawY * canvasMetrics.scaleY + "px";
     selectionBox.style.width = rawWidth * canvasMetrics.scaleX + "px";
     selectionBox.style.height = rawHeight * canvasMetrics.scaleY + "px";
+  }
+
+  function realignAnnotations() {
+    if (!annotationsLayer || !canvasMetrics) {
+      return;
+    }
+    var nodes = annotationsLayer.querySelectorAll(".vision-annotation");
+    for (var i = 0; i < nodes.length; i += 1) {
+      var node = nodes[i];
+      var annotationId = node.getAttribute("data-id");
+      var annotation = findAnnotation(annotationId);
+      if (!annotation) {
+        continue;
+      }
+      node.style.left = annotation.x * canvasMetrics.scaleX + "px";
+      node.style.top = annotation.y * canvasMetrics.scaleY + "px";
+    }
   }
 
   function scheduleDragReset() {
@@ -348,6 +473,7 @@
     if (dropzone) {
       dropzone.classList.remove("selecting");
     }
+    refreshPointerLayers();
   }
 
   function handleCanvasMouseDown(evt) {
@@ -373,6 +499,13 @@
   }
 
   function handleCanvasMouseMove(evt) {
+    if (!selectionMode) {
+      if (isDrawingStroke || draggingAnnotation || activeTool === "magnify") {
+        applyToolPointerMove(evt);
+      }
+    } else if (activeTool === "magnify") {
+      hideMagnifier();
+    }
     if (!isSelecting || !selectionStart || !canvas || !selectionBox) {
       return;
     }
@@ -388,6 +521,15 @@
   }
 
   function handleCanvasMouseUp(evt) {
+    if (!selectionMode) {
+      if (isDrawingStroke) {
+        finishStroke();
+      }
+      finalizeAnnotationDrag();
+      if (activeTool === "magnify") {
+        hideMagnifier();
+      }
+    }
     if (!isSelecting || !selectionStart || !canvas) {
       return;
     }
@@ -398,6 +540,531 @@
   function handleKeyDown(evt) {
     if (evt.key === "Escape" && selectionMode) {
       exitSelectionMode();
+    }
+  }
+
+  function refreshPointerLayers() {
+    if (sketchCanvas) {
+      if (selectionMode) {
+        sketchCanvas.style.pointerEvents = "none";
+      } else {
+        var interactive = activeTool === "brush" || activeTool === "text" || activeTool === "magnify";
+        sketchCanvas.style.pointerEvents = interactive ? "auto" : "none";
+      }
+    }
+    if (annotationsLayer) {
+      if (selectionMode || annotations.length === 0) {
+        annotationsLayer.style.pointerEvents = "none";
+      } else {
+        annotationsLayer.style.pointerEvents = "auto";
+      }
+    }
+  }
+
+  function updateToolButtons() {
+    if (!toolButtons || typeof toolButtons.length === "undefined") {
+      return;
+    }
+    for (var i = 0; i < toolButtons.length; i += 1) {
+      var button = toolButtons[i];
+      var tool = button.getAttribute("data-tool") || "";
+      if (tool === activeTool) {
+        button.classList.add("active");
+        button.setAttribute("aria-pressed", "true");
+      } else {
+        button.classList.remove("active");
+        button.setAttribute("aria-pressed", "false");
+      }
+    }
+  }
+
+  function setActiveTool(tool) {
+    if (!tool) {
+      tool = "select";
+    }
+    if (tool === "undo") {
+      handleUndo();
+      return;
+    }
+    if (tool === activeTool) {
+      if (tool !== "magnify") {
+        hideMagnifier();
+      }
+      refreshPointerLayers();
+      updateToolButtons();
+      return;
+    }
+    activeTool = tool;
+    if (activeTool !== "magnify") {
+      hideMagnifier();
+    }
+    refreshPointerLayers();
+    updateToolButtons();
+  }
+
+  function recordUndo(action) {
+    if (!action) {
+      return;
+    }
+    undoStack.push(action);
+    if (undoStack.length > maxUndo) {
+      undoStack = undoStack.slice(undoStack.length - maxUndo);
+    }
+    updateUndoState();
+  }
+
+  function updateUndoState() {
+    var disabled = undoStack.length === 0;
+    if (undoButton) {
+      undoButton.disabled = disabled;
+      undoButton.setAttribute("aria-disabled", disabled ? "true" : "false");
+    }
+  }
+
+  function handleUndo() {
+    if (undoStack.length === 0) {
+      return;
+    }
+    var action = undoStack.pop();
+    if (!action) {
+      updateUndoState();
+      return;
+    }
+    if (action.type === "add-stroke") {
+      removeStroke(action.id);
+    } else if (action.type === "add-annotation") {
+      removeAnnotation(action.id, { silent: true });
+    } else if (action.type === "remove-annotation" && action.annotation) {
+      annotations.push(cloneAnnotation(action.annotation));
+      renderAnnotationsLayer();
+    } else if (action.type === "move-annotation" && action.id && action.from) {
+      var target = findAnnotation(action.id);
+      if (target) {
+        target.x = action.from.x;
+        target.y = action.from.y;
+        renderAnnotationsLayer();
+      }
+    }
+    persistCanvasArtifacts();
+    updateUndoState();
+  }
+
+  function handleSketchPointerDown(evt) {
+    if (!canvas || selectionMode) {
+      return;
+    }
+    var point = getCanvasCoordinates(evt);
+    if (!point) {
+      return;
+    }
+    if (activeTool === "brush") {
+      evt.preventDefault();
+      evt.stopPropagation();
+      startStroke(point);
+    } else if (activeTool === "text") {
+      evt.preventDefault();
+      evt.stopPropagation();
+      createAnnotationAt(point);
+    } else if (activeTool === "magnify") {
+      evt.preventDefault();
+      evt.stopPropagation();
+      updateMagnifier(point, evt);
+    }
+  }
+
+  function handleSketchPointerMove(evt) {
+    if (!canvas) {
+      return;
+    }
+    if (selectionMode) {
+      return;
+    }
+    applyToolPointerMove(evt);
+  }
+
+  function handleSketchPointerUp() {
+    if (!isDrawingStroke && activeTool === "magnify") {
+      hideMagnifier();
+    }
+  }
+
+  function handleSketchPointerLeave() {
+    if (!isDrawingStroke && activeTool === "magnify") {
+      hideMagnifier();
+    }
+  }
+
+  function getCanvasCoordinates(evt) {
+    if (!canvas) {
+      return null;
+    }
+    var rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) {
+      return null;
+    }
+    var scaleX = canvas.width / rect.width;
+    var scaleY = canvas.height / rect.height;
+    var x = clamp((evt.clientX - rect.left) * scaleX, 0, canvas.width);
+    var y = clamp((evt.clientY - rect.top) * scaleY, 0, canvas.height);
+    return { x: x, y: y };
+  }
+
+  function startStroke(point) {
+    if (!sketchCanvas || !sketchCtx) {
+      return;
+    }
+    isDrawingStroke = true;
+    currentStroke = {
+      id: makeId("stroke"),
+      width: 3,
+      color: "rgba(250,84,28,0.92)",
+      points: [point]
+    };
+    redrawSketchLayer();
+  }
+
+  function extendStroke(point) {
+    if (!isDrawingStroke || !currentStroke) {
+      return;
+    }
+    currentStroke.points.push(point);
+    redrawSketchLayer();
+  }
+
+  function finishStroke() {
+    if (!isDrawingStroke || !currentStroke) {
+      isDrawingStroke = false;
+      currentStroke = null;
+      return;
+    }
+    if (currentStroke.points.length < 2) {
+      currentStroke.points.push({ x: currentStroke.points[0].x + 0.1, y: currentStroke.points[0].y + 0.1 });
+    }
+    strokes.push({
+      id: currentStroke.id,
+      width: currentStroke.width,
+      color: currentStroke.color,
+      points: currentStroke.points.slice()
+    });
+    recordUndo({ type: "add-stroke", id: currentStroke.id });
+    isDrawingStroke = false;
+    currentStroke = null;
+    redrawSketchLayer();
+    persistCanvasArtifacts();
+  }
+
+  function removeStroke(id) {
+    if (!id || strokes.length === 0) {
+      redrawSketchLayer();
+      updateUndoState();
+      return;
+    }
+    for (var i = strokes.length - 1; i >= 0; i -= 1) {
+      if (strokes[i].id === id) {
+        strokes.splice(i, 1);
+        break;
+      }
+    }
+    redrawSketchLayer();
+  }
+
+  function redrawSketchLayer() {
+    if (!sketchCanvas || !sketchCtx) {
+      return;
+    }
+    if (sketchCanvas.width !== canvas.width || sketchCanvas.height !== canvas.height) {
+      sketchCanvas.width = canvas.width;
+      sketchCanvas.height = canvas.height;
+    }
+    sketchCtx.clearRect(0, 0, sketchCanvas.width, sketchCanvas.height);
+    var renderQueue = [];
+    for (var i = 0; i < strokes.length; i += 1) {
+      renderQueue.push(strokes[i]);
+    }
+    if (currentStroke) {
+      renderQueue.push(currentStroke);
+    }
+    for (var j = 0; j < renderQueue.length; j += 1) {
+      var stroke = renderQueue[j];
+      if (!stroke.points || stroke.points.length === 0) {
+        continue;
+      }
+      sketchCtx.beginPath();
+      sketchCtx.lineJoin = "round";
+      sketchCtx.lineCap = "round";
+      sketchCtx.lineWidth = stroke.width;
+      sketchCtx.strokeStyle = stroke.color || "rgba(250,84,28,0.92)";
+      sketchCtx.moveTo(stroke.points[0].x, stroke.points[0].y);
+      for (var p = 1; p < stroke.points.length; p += 1) {
+        var pt = stroke.points[p];
+        sketchCtx.lineTo(pt.x, pt.y);
+      }
+      sketchCtx.stroke();
+    }
+  }
+
+  function applyToolPointerMove(evt) {
+    var point = getCanvasCoordinates(evt);
+    if (!point) {
+      return;
+    }
+    if (isDrawingStroke) {
+      evt.preventDefault();
+      extendStroke(point);
+    }
+    if (draggingAnnotation && draggingAnnotationElement && annotationDragStart && annotationStartPosition) {
+      evt.preventDefault();
+      var deltaX = point.x - annotationDragStart.x;
+      var deltaY = point.y - annotationDragStart.y;
+      var maxX = Math.max(0, canvas.width - 40);
+      var maxY = Math.max(0, canvas.height - 40);
+      var newX = clamp(annotationStartPosition.x + deltaX, 0, maxX);
+      var newY = clamp(annotationStartPosition.y + deltaY, 0, maxY);
+      draggingAnnotation.x = newX;
+      draggingAnnotation.y = newY;
+      applyAnnotationPosition(draggingAnnotationElement, draggingAnnotation);
+    }
+    if (activeTool === "magnify") {
+      updateMagnifier(point, evt);
+    }
+  }
+
+  function createAnnotationAt(point) {
+    if (!annotationsLayer) {
+      return;
+    }
+    var annotation = { id: makeId("annotation"), x: point.x, y: point.y, text: "" };
+    annotations.push(annotation);
+    recordUndo({ type: "add-annotation", id: annotation.id });
+    renderAnnotationsLayer();
+    persistCanvasArtifacts();
+    focusAnnotation(annotation.id);
+  }
+
+  function renderAnnotationsLayer() {
+    if (!annotationsLayer) {
+      return;
+    }
+    annotationsLayer.innerHTML = "";
+    if (!annotations || annotations.length === 0) {
+      annotationsLayer.classList.add("hidden");
+      refreshPointerLayers();
+      return;
+    }
+    annotationsLayer.classList.remove("hidden");
+    for (var i = 0; i < annotations.length; i += 1) {
+      annotationsLayer.appendChild(buildAnnotationElement(annotations[i]));
+    }
+    realignAnnotations();
+    refreshPointerLayers();
+  }
+
+  function buildAnnotationElement(annotation) {
+    var wrapper = document.createElement("div");
+    wrapper.className = "vision-annotation";
+    wrapper.setAttribute("data-id", annotation.id);
+    var header = document.createElement("div");
+    header.className = "vision-annotation-handle";
+    header.textContent = "文本标注";
+    header.addEventListener("mousedown", function (evt) {
+      evt.preventDefault();
+      evt.stopPropagation();
+      beginAnnotationDrag(annotation, wrapper, evt);
+    });
+    var removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "vision-annotation-delete";
+    removeBtn.textContent = "删除";
+    removeBtn.addEventListener("click", function (evt) {
+      evt.preventDefault();
+      evt.stopPropagation();
+      removeAnnotation(annotation.id);
+    });
+    header.appendChild(removeBtn);
+    var body = document.createElement("div");
+    body.className = "vision-annotation-body";
+    body.contentEditable = "true";
+    body.setAttribute("role", "textbox");
+    body.setAttribute("aria-label", "输入标注文本");
+    body.textContent = annotation.text || "";
+    body.addEventListener("focus", function () {
+      wrapper.classList.add("editing");
+    });
+    body.addEventListener("blur", function () {
+      wrapper.classList.remove("editing");
+      annotation.text = sanitizeAnnotationText(body.textContent || "");
+      persistCanvasArtifacts();
+    });
+    body.addEventListener("input", function () {
+      annotation.text = sanitizeAnnotationText(body.textContent || "");
+    });
+    wrapper.appendChild(header);
+    wrapper.appendChild(body);
+    applyAnnotationPosition(wrapper, annotation);
+    return wrapper;
+  }
+
+  function sanitizeAnnotationText(value) {
+    if (!value) {
+      return "";
+    }
+    return value.replace(/\s+/g, function (segment) {
+      return segment && segment.length > 1 ? " " : segment;
+    }).trim();
+  }
+
+  function applyAnnotationPosition(element, annotation) {
+    if (!element || !annotation) {
+      return;
+    }
+    if (!canvasMetrics) {
+      canvasMetrics = computeCanvasMetrics();
+    }
+    if (canvasMetrics) {
+      element.style.left = annotation.x * canvasMetrics.scaleX + "px";
+      element.style.top = annotation.y * canvasMetrics.scaleY + "px";
+    } else {
+      element.style.left = annotation.x + "px";
+      element.style.top = annotation.y + "px";
+    }
+  }
+
+  function beginAnnotationDrag(annotation, element, evt) {
+    if (!annotation || !element) {
+      return;
+    }
+    if (selectionMode) {
+      return;
+    }
+    var point = getCanvasCoordinates(evt);
+    if (!point) {
+      return;
+    }
+    draggingAnnotation = annotation;
+    draggingAnnotationElement = element;
+    annotationDragStart = point;
+    annotationStartPosition = { x: annotation.x, y: annotation.y };
+    element.classList.add("dragging");
+  }
+
+  function finalizeAnnotationDrag() {
+    if (!draggingAnnotation || !annotationStartPosition || !annotationDragStart) {
+      draggingAnnotation = null;
+      draggingAnnotationElement = null;
+      annotationDragStart = null;
+      annotationStartPosition = null;
+      return;
+    }
+    if (draggingAnnotationElement) {
+      draggingAnnotationElement.classList.remove("dragging");
+    }
+    var moved = Math.abs(draggingAnnotation.x - annotationStartPosition.x) > 0.5 || Math.abs(draggingAnnotation.y - annotationStartPosition.y) > 0.5;
+    if (moved) {
+      recordUndo({
+        type: "move-annotation",
+        id: draggingAnnotation.id,
+        from: { x: annotationStartPosition.x, y: annotationStartPosition.y },
+        to: { x: draggingAnnotation.x, y: draggingAnnotation.y }
+      });
+      persistCanvasArtifacts();
+    }
+    draggingAnnotation = null;
+    draggingAnnotationElement = null;
+    annotationDragStart = null;
+    annotationStartPosition = null;
+  }
+
+  function removeAnnotation(id, options) {
+    if (!id) {
+      return;
+    }
+    options = options || {};
+    for (var i = 0; i < annotations.length; i += 1) {
+      if (annotations[i].id === id) {
+        if (!options.silent) {
+          recordUndo({ type: "remove-annotation", annotation: cloneAnnotation(annotations[i]) });
+        }
+        annotations.splice(i, 1);
+        break;
+      }
+    }
+    renderAnnotationsLayer();
+    if (!options.silent) {
+      persistCanvasArtifacts();
+    }
+  }
+
+  function cloneAnnotation(annotation) {
+    if (!annotation) {
+      return null;
+    }
+    return { id: annotation.id, x: annotation.x, y: annotation.y, text: annotation.text || "" };
+  }
+
+  function focusAnnotation(id) {
+    if (!annotationsLayer) {
+      return;
+    }
+    var node = annotationsLayer.querySelector('[data-id="' + id + '"] .vision-annotation-body');
+    if (node) {
+      window.requestAnimationFrame(function () {
+        node.focus();
+        var range = document.createRange();
+        range.selectNodeContents(node);
+        range.collapse(false);
+        var selection = window.getSelection ? window.getSelection() : null;
+        if (selection) {
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+      });
+    }
+  }
+
+  function findAnnotation(id) {
+    if (!id) {
+      return null;
+    }
+    for (var i = 0; i < annotations.length; i += 1) {
+      if (annotations[i].id === id) {
+        return annotations[i];
+      }
+    }
+    return null;
+  }
+
+  function updateMagnifier(point, evt) {
+    if (!magnifier || !magnifierCanvas || !magnifierCtx || !canvas || !dropzone) {
+      return;
+    }
+    if (magnifier.classList.contains("hidden")) {
+      magnifier.classList.remove("hidden");
+    }
+    var rect = dropzone.getBoundingClientRect();
+    var left = evt.clientX - rect.left + 18;
+    var top = evt.clientY - rect.top - magnifierSize - 18;
+    if (top < 0) {
+      top = evt.clientY - rect.top + 18;
+    }
+    magnifier.style.left = left + "px";
+    magnifier.style.top = top + "px";
+    magnifierCanvas.width = magnifierSize;
+    magnifierCanvas.height = magnifierSize;
+    var sampleSize = magnifierSize / magnifierZoom;
+    var sx = clamp(point.x - sampleSize / 2, 0, canvas.width - sampleSize);
+    var sy = clamp(point.y - sampleSize / 2, 0, canvas.height - sampleSize);
+    magnifierCtx.clearRect(0, 0, magnifierSize, magnifierSize);
+    magnifierCtx.drawImage(canvas, sx, sy, sampleSize, sampleSize, 0, 0, magnifierSize, magnifierSize);
+    magnifierCtx.strokeStyle = "rgba(15,23,42,0.4)";
+    magnifierCtx.lineWidth = 2;
+    magnifierCtx.beginPath();
+    magnifierCtx.arc(magnifierSize / 2, magnifierSize / 2, 14, 0, Math.PI * 2, true);
+    magnifierCtx.stroke();
+  }
+
+  function hideMagnifier() {
+    if (magnifier) {
+      magnifier.classList.add("hidden");
     }
   }
 
@@ -498,6 +1165,7 @@
       selectionLayer.innerHTML = "";
       selectionLayer.classList.remove("hidden");
     }
+    refreshPointerLayers();
     dropzone.classList.add("selecting");
     notify("请在图像上拖动框选目标区域，按 Esc 取消");
   }
@@ -702,7 +1370,7 @@
 
   function renderEmptyState() {
     if (resultsContainer) {
-      resultsContainer.innerHTML = '<div class="vision-empty">尚未识别任何热脏污区域。请粘贴或上传图像开始分析。</div>';
+    resultsContainer.innerHTML = '<div class="vision-empty">尚未识别任何热脏污区域。请粘贴或上传图像开始分析。</div>';
     }
     if (summaryContainer) {
       summaryContainer.innerHTML = '<div class="vision-summary-status">待命</div><div class="vision-summary-meta">等待图像输入</div>';
@@ -711,6 +1379,7 @@
     updateExportState(null);
     updateAddButtonState(null);
     updateNoteForm(null);
+    clearCanvasArtifacts();
     focusOverlay(null);
   }
 
@@ -866,7 +1535,9 @@
           name: name || "clipboard"
         },
         findings: analysis.findings,
-        summary: analysis.summary
+        summary: analysis.summary,
+        annotations: [],
+        strokes: []
       };
       var stored = inference;
       if (api && typeof api.recordInference === "function") {
@@ -879,6 +1550,7 @@
         handleSnapshot(api.getSnapshot());
       } else {
         drawInference(stored);
+        loadCanvasArtifacts(stored);
         renderFindings(stored);
         updateSummary(stored, analysis.summary);
         updateExportState(stored);
@@ -1249,6 +1921,7 @@
           renderOverlayBox(inference.findings[i]);
         }
       }
+      loadCanvasArtifacts(inference);
     };
     image.src = inference.image.dataUrl;
   }
@@ -1258,6 +1931,148 @@
       return;
     }
     overlay.innerHTML = "";
+    clearCanvasArtifacts();
+  }
+
+  function clearCanvasArtifacts() {
+    strokes = [];
+    annotations = [];
+    undoStack = [];
+    if (sketchCanvas) {
+      sketchCanvas.classList.add("hidden");
+      if (sketchCtx && sketchCanvas.width && sketchCanvas.height) {
+        sketchCtx.clearRect(0, 0, sketchCanvas.width, sketchCanvas.height);
+      }
+    }
+    if (annotationsLayer) {
+      annotationsLayer.classList.add("hidden");
+      annotationsLayer.innerHTML = "";
+    }
+    hideMagnifier();
+    updateUndoState();
+    refreshPointerLayers();
+  }
+
+  function loadCanvasArtifacts(inference) {
+    if (!canvas) {
+      return;
+    }
+    if (sketchCanvas) {
+      sketchCanvas.width = canvas.width;
+      sketchCanvas.height = canvas.height;
+      sketchCanvas.classList.remove("hidden");
+    }
+    if (annotationsLayer) {
+      annotationsLayer.classList.remove("hidden");
+    }
+    strokes = [];
+    annotations = [];
+    undoStack = [];
+    if (inference) {
+      if (Array.isArray(inference.strokes)) {
+        for (var s = 0; s < inference.strokes.length; s += 1) {
+          var stroke = inference.strokes[s];
+          if (!stroke || !Array.isArray(stroke.points)) {
+            continue;
+          }
+          var normalizedPoints = [];
+          for (var p = 0; p < stroke.points.length; p += 1) {
+            var pt = stroke.points[p];
+            if (!pt) {
+              continue;
+            }
+            var px = typeof pt.x === "number" ? pt.x : parseFloat(pt.x || "0");
+            var py = typeof pt.y === "number" ? pt.y : parseFloat(pt.y || "0");
+            normalizedPoints.push({ x: px, y: py });
+          }
+          if (normalizedPoints.length === 0) {
+            continue;
+          }
+          strokes.push({
+            id: stroke.id || makeId("stroke"),
+            width: typeof stroke.width === "number" ? stroke.width : 3,
+            color: stroke.color || "rgba(250,84,28,0.92)",
+            points: normalizedPoints
+          });
+        }
+      }
+      if (Array.isArray(inference.annotations)) {
+        for (var a = 0; a < inference.annotations.length; a += 1) {
+          var anno = inference.annotations[a];
+          if (!anno) {
+            continue;
+          }
+          var ax = typeof anno.x === "number" ? anno.x : parseFloat(anno.x || "0");
+          var ay = typeof anno.y === "number" ? anno.y : parseFloat(anno.y || "0");
+          annotations.push({ id: anno.id || makeId("annotation"), x: ax, y: ay, text: anno.text || "" });
+        }
+      }
+    }
+    redrawSketchLayer();
+    renderAnnotationsLayer();
+    updateUndoState();
+    refreshPointerLayers();
+  }
+
+  function persistCanvasArtifacts() {
+    if (!activeInference || !activeInference.id) {
+      return;
+    }
+    var payload = {
+      strokes: serializeStrokes(strokes),
+      annotations: serializeAnnotations(annotations)
+    };
+    activeInference.strokes = payload.strokes;
+    activeInference.annotations = payload.annotations;
+    if (api && typeof api.updateInference === "function") {
+      api.updateInference(activeInference.id, payload);
+    }
+  }
+
+  function serializeStrokes(list) {
+    var result = [];
+    if (!list) {
+      return result;
+    }
+    for (var i = 0; i < list.length; i += 1) {
+      var stroke = list[i];
+      if (!stroke || !Array.isArray(stroke.points)) {
+        continue;
+      }
+      var points = [];
+      for (var j = 0; j < stroke.points.length; j += 1) {
+        var pt = stroke.points[j];
+        if (!pt) {
+          continue;
+        }
+        points.push({ x: pt.x, y: pt.y });
+      }
+      if (points.length === 0) {
+        continue;
+      }
+      result.push({
+        id: stroke.id || makeId("stroke"),
+        width: typeof stroke.width === "number" ? stroke.width : 3,
+        color: stroke.color || "rgba(250,84,28,0.92)",
+        points: points
+      });
+    }
+    return result;
+  }
+
+  function serializeAnnotations(list) {
+    var result = [];
+    if (!list) {
+      return result;
+    }
+    for (var i = 0; i < list.length; i += 1) {
+      var item = list[i];
+      if (!item) {
+        continue;
+      }
+      result.push({ id: item.id || makeId("annotation"), x: item.x, y: item.y, text: item.text || "" });
+    }
+    return result;
   }
 
   function renderOverlayBox(finding) {
