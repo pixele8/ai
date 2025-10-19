@@ -6,7 +6,6 @@
   var currentUser = null;
   var toastTimer = null;
   var textEncoder = new TextEncoder();
-  var faqEditingId = null;
   var pendingLinkFromId = null;
   var DEFAULT_DECISION_PRESETS = [
     { id: "init", label: "立项评估" },
@@ -38,6 +37,9 @@
   var messageMenuInfo = null;
   var activeFavoriteId = null;
   var favoriteSearchTerm = "";
+  var floatingFavoriteId = null;
+  var floatingFavoriteMinimized = false;
+  var floatingFavoriteExpanded = false;
 
   function padNumber(value) {
     var num = parseInt(value, 10);
@@ -49,50 +51,86 @@
 
   function favoriteTitleFromText(text) {
     if (!text) {
-      return "收藏对话";
+      return "收藏会话";
     }
     var cleaned = String(text).replace(/\s+/g, " ").trim();
     if (!cleaned) {
-      return "收藏对话";
+      return "收藏会话";
     }
     return cleaned.length > 18 ? cleaned.slice(0, 18) + "…" : cleaned;
   }
 
-  function closeMessageMenu() {
-    var menu = document.getElementById("messageMenu");
-    if (!menu) {
-      return;
+  function favoriteTitleFromSession(session) {
+    if (!session) {
+      return "收藏会话";
     }
-    menu.classList.add("hidden");
-    messageMenuInfo = null;
+    if (session.manualTitle && session.title) {
+      return session.title;
+    }
+    if (session.title && session.title !== "新会话") {
+      return session.title;
+    }
+    return favoriteTitleFromText(favoriteSummaryFromSession(session));
   }
 
-  function openMessageMenu(sessionId, messageId, pageX, pageY) {
-    var menu = document.getElementById("messageMenu");
-    if (!menu || !messageId) {
-      return;
+  function favoriteSummaryFromSession(session) {
+    if (!session || !session.messages || session.messages.length === 0) {
+      return session && session.title ? session.title : "";
     }
-    messageMenuInfo = { sessionId: sessionId, messageId: messageId };
-    menu.classList.remove("hidden");
-    var rect = menu.getBoundingClientRect();
-    var width = rect.width || 160;
-    var height = rect.height || 80;
-    var left = pageX;
-    var top = pageY;
-    if (left + width > window.innerWidth) {
-      left = window.innerWidth - width - 8;
+    var start = Math.max(0, session.messages.length - 4);
+    var lines = [];
+    for (var i = start; i < session.messages.length; i += 1) {
+      var msg = session.messages[i];
+      if (!msg || !msg.text) {
+        continue;
+      }
+      var role = msg.role === "user" ? "用户" : "助理";
+      var cleaned = String(msg.text).replace(/\s+/g, " ").trim();
+      if (!cleaned) {
+        continue;
+      }
+      lines.push("[" + role + "] " + cleaned);
     }
-    if (top + height > window.innerHeight) {
-      top = window.innerHeight - height - 8;
+    return lines.join("\n");
+  }
+
+  function cloneTranscript(messages) {
+    var transcript = [];
+    if (!messages) {
+      return transcript;
     }
-    if (left < 8) {
-      left = 8;
+    for (var i = 0; i < messages.length; i += 1) {
+      var msg = messages[i];
+      if (!msg) {
+        continue;
+      }
+      transcript.push({
+        id: msg.id || uuid(),
+        role: msg.role === "user" ? "user" : "assistant",
+        text: msg.text ? String(msg.text) : "",
+        ts: msg.ts || msg.time || ""
+      });
     }
-    if (top < 8) {
-      top = 8;
+    return transcript;
+  }
+
+  function ensureBankFavorites(bank) {
+    if (!bank.favorites) {
+      bank.favorites = [];
     }
-    menu.style.left = left + "px";
-    menu.style.top = top + "px";
+    return bank.favorites;
+  }
+
+  function findFavoriteById(bank, favoriteId) {
+    if (!bank || !bank.favorites) {
+      return null;
+    }
+    for (var i = 0; i < bank.favorites.length; i += 1) {
+      if (bank.favorites[i].id === favoriteId) {
+        return bank.favorites[i];
+      }
+    }
+    return null;
   }
 
   function insertFavoriteIntoComposer(favorite) {
@@ -112,14 +150,251 @@
       window.location.href = "index.html";
       return;
     }
-    var snippet = "引用《" + favorite.title + "》\n" + favorite.content;
+    var snippet = "引用《" + (favorite.title || "收藏对话") + "》
+" + (favorite.content || "");
     if (input.value && input.value.trim().length > 0) {
-      input.value = input.value + "\n\n" + snippet;
+      input.value = input.value + "
+
+" + snippet;
     } else {
       input.value = snippet;
     }
     input.focus();
     showToast("已插入收藏内容");
+  }
+
+  function openFavoriteViewerWindow(favorite) {
+    if (!favorite) {
+      return;
+    }
+    var bank = getActiveBank();
+    if (!bank) {
+      showToast("请选择记忆库");
+      return;
+    }
+    var url = "favorite-viewer.html?bank=" + encodeURIComponent(bank.id) + "&favorite=" + encodeURIComponent(favorite.id);
+    window.open(url, "favorite-viewer-" + favorite.id, "width=560,height=720,resizable=yes,scrollbars=yes");
+  }
+
+  function closeFloatingFavorite() {
+    floatingFavoriteId = null;
+    floatingFavoriteMinimized = false;
+    floatingFavoriteExpanded = false;
+    renderFloatingFavorite();
+  }
+
+  function toggleFloatingFavoriteMinimize() {
+    floatingFavoriteMinimized = !floatingFavoriteMinimized;
+    renderFloatingFavorite();
+  }
+
+  function toggleFloatingFavoriteExpand() {
+    floatingFavoriteExpanded = !floatingFavoriteExpanded;
+    renderFloatingFavorite();
+  }
+
+  function showFloatingFavorite(favorite) {
+    if (!favorite) {
+      return;
+    }
+    floatingFavoriteId = favorite.id;
+    floatingFavoriteMinimized = false;
+    floatingFavoriteExpanded = false;
+    renderFloatingFavorite();
+  }
+
+  function renderFloatingFavorite() {
+    var overlay = document.getElementById("favoriteOverlay");
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.id = "favoriteOverlay";
+      overlay.className = "favorite-overlay hidden";
+      document.body.appendChild(overlay);
+    }
+    if (!floatingFavoriteId) {
+      overlay.className = "favorite-overlay hidden";
+      overlay.innerHTML = "";
+      return;
+    }
+    var bank = getActiveBank();
+    if (!bank) {
+      overlay.className = "favorite-overlay hidden";
+      overlay.innerHTML = "";
+      return;
+    }
+    var favorite = findFavoriteById(bank, floatingFavoriteId);
+    if (!favorite) {
+      overlay.className = "favorite-overlay hidden";
+      overlay.innerHTML = "";
+      return;
+    }
+    var classes = ["favorite-overlay"];
+    if (floatingFavoriteMinimized) {
+      classes.push("minimized");
+    }
+    if (floatingFavoriteExpanded) {
+      classes.push("expanded");
+    }
+    overlay.className = classes.join(" ");
+    overlay.innerHTML = "";
+
+    var header = document.createElement("div");
+    header.className = "favorite-overlay-header";
+    var title = document.createElement("div");
+    title.className = "favorite-overlay-title";
+    title.textContent = favorite.title || "收藏会话";
+    header.appendChild(title);
+
+    var tools = document.createElement("div");
+    tools.className = "favorite-overlay-tools";
+    var expandBtn = document.createElement("button");
+    expandBtn.type = "button";
+    expandBtn.textContent = floatingFavoriteExpanded ? "还原" : "放大";
+    expandBtn.addEventListener("click", function (evt) {
+      evt.stopPropagation();
+      toggleFloatingFavoriteExpand();
+    });
+    var minimizeBtn = document.createElement("button");
+    minimizeBtn.type = "button";
+    minimizeBtn.textContent = floatingFavoriteMinimized ? "展开" : "缩为标签";
+    minimizeBtn.addEventListener("click", function (evt) {
+      evt.stopPropagation();
+      toggleFloatingFavoriteMinimize();
+    });
+    var closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.textContent = "关闭";
+    closeBtn.addEventListener("click", function (evt) {
+      evt.stopPropagation();
+      closeFloatingFavorite();
+    });
+    tools.appendChild(expandBtn);
+    tools.appendChild(minimizeBtn);
+    tools.appendChild(closeBtn);
+    header.appendChild(tools);
+    overlay.appendChild(header);
+
+    if (floatingFavoriteMinimized) {
+      var tag = document.createElement("div");
+      tag.className = "favorite-overlay-tag";
+      tag.textContent = favorite.sessionTitle ? favorite.sessionTitle : favorite.title || "收藏";
+      overlay.appendChild(tag);
+      return;
+    }
+
+    var meta = document.createElement("div");
+    meta.className = "favorite-overlay-meta";
+    var parts = [];
+    if (favorite.sessionTitle) {
+      parts.push("会话：" + favorite.sessionTitle);
+    }
+    if (favorite.createdAt) {
+      parts.push("收藏于 " + formatDateTime(favorite.createdAt));
+    }
+    meta.textContent = parts.join(" · ");
+    overlay.appendChild(meta);
+
+    var body = document.createElement("div");
+    body.className = "favorite-overlay-body";
+    var transcript = favorite.transcript || [];
+    if (transcript.length === 0) {
+      var empty = document.createElement("div");
+      empty.className = "favorite-overlay-empty";
+      empty.textContent = "暂无消息记录";
+      body.appendChild(empty);
+    } else {
+      for (var i = 0; i < transcript.length; i += 1) {
+        var msg = transcript[i];
+        var row = document.createElement("div");
+        row.className = "favorite-overlay-message" + (msg.id && favorite.highlightId === msg.id ? " highlight" : "");
+        var role = document.createElement("span");
+        role.className = "favorite-overlay-role";
+        role.textContent = msg.role === "user" ? "用户" : "助理";
+        var textNode = document.createElement("div");
+        textNode.className = "favorite-overlay-text";
+        textNode.textContent = msg.text;
+        row.appendChild(role);
+        row.appendChild(textNode);
+        body.appendChild(row);
+      }
+    }
+    overlay.appendChild(body);
+  }
+
+  function createSessionFavorite(bank, session, options) {
+    if (!bank || !session) {
+      return null;
+    }
+    var favorites = ensureBankFavorites(bank);
+    var summary = favoriteSummaryFromSession(session);
+    var existing = null;
+    for (var i = 0; i < favorites.length; i += 1) {
+      var fav = favorites[i];
+      if (fav.scope === "session" && fav.sessionId === session.id) {
+        existing = fav;
+        break;
+      }
+    }
+    var title = options && options.title ? options.title : favoriteTitleFromSession(session);
+    if (existing) {
+      existing.title = title;
+      existing.sessionTitle = session.title || existing.sessionTitle;
+      existing.content = summary || existing.content;
+      existing.transcript = cloneTranscript(session.messages || []);
+      existing.updatedAt = new Date().toISOString();
+      if (options && options.message) {
+        existing.highlightId = options.message.id;
+      }
+      return { favorite: existing, created: false };
+    }
+    var favorite = {
+      id: uuid(),
+      scope: "session",
+      sessionId: session.id,
+      sessionTitle: session.title || "未命名会话",
+      bankId: bank.id,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      title: title,
+      content: summary,
+      transcript: cloneTranscript(session.messages || []),
+      note: ""
+    };
+    if (options && options.message) {
+      favorite.highlightId = options.message.id;
+    }
+    favorites.unshift(favorite);
+    return { favorite: favorite, created: true };
+  }
+
+  function addFavoriteFromSession(sessionId) {
+    var bank = getActiveBank();
+    if (!bank) {
+      showToast("请选择记忆库");
+      return;
+    }
+    var session = findSession(bank, sessionId);
+    if (!session) {
+      showToast("未找到会话");
+      return;
+    }
+    var defaultTitle = favoriteTitleFromSession(session);
+    var title = window.prompt("收藏标题", defaultTitle);
+    if (title === null) {
+      return;
+    }
+    title = title.trim() || defaultTitle;
+    var result = createSessionFavorite(bank, session, { title: title });
+    if (!result) {
+      return;
+    }
+    activeFavoriteId = result.favorite.id;
+    saveState();
+    renderFavoriteChips();
+    renderFavoritesList();
+    showToast(result.created ? "会话已加入收藏夹" : "收藏内容已更新");
+    openFavoriteViewerWindow(result.favorite);
+    showFloatingFavorite(result.favorite);
   }
 
   function addFavoriteFromMessage(sessionId, messageId) {
@@ -128,9 +403,6 @@
     if (!bank) {
       showToast("请选择记忆库");
       return;
-    }
-    if (!bank.favorites) {
-      bank.favorites = [];
     }
     var session = findSession(bank, sessionId);
     if (!session) {
@@ -144,45 +416,16 @@
         break;
       }
     }
-    if (!target) {
-      showToast("未找到对应消息");
+    var result = createSessionFavorite(bank, session, { title: null, message: target });
+    if (!result) {
       return;
     }
-    for (var j = 0; j < bank.favorites.length; j += 1) {
-      if (bank.favorites[j].messageId === target.id && bank.favorites[j].sessionId === session.id) {
-        activeFavoriteId = bank.favorites[j].id;
-        renderFavoritesList();
-        renderFavoriteChips();
-        showToast("该对话已收藏");
-        return;
-      }
-    }
-    var defaultTitle = favoriteTitleFromText(target.text);
-    var title = window.prompt("收藏标题", defaultTitle);
-    if (title === null) {
-      return;
-    }
-    title = title.trim();
-    if (!title) {
-      title = defaultTitle;
-    }
-    var favorite = {
-      id: uuid(),
-      title: title,
-      content: target.text,
-      role: target.role === "user" ? "user" : "assistant",
-      sessionId: session.id,
-      sessionTitle: session.title || "",
-      messageId: target.id,
-      createdAt: new Date().toISOString(),
-      note: ""
-    };
-    bank.favorites.push(favorite);
-    activeFavoriteId = favorite.id;
+    activeFavoriteId = result.favorite.id;
     saveState();
     renderFavoriteChips();
     renderFavoritesList();
-    showToast("已加入收藏夹");
+    showToast(result.created ? "会话已加入收藏夹" : "收藏内容已刷新");
+    showFloatingFavorite(result.favorite);
   }
 
   function removeFavorite(favoriteId) {
@@ -198,6 +441,9 @@
     }
     if (activeFavoriteId === favoriteId) {
       activeFavoriteId = null;
+    }
+    if (floatingFavoriteId === favoriteId) {
+      closeFloatingFavorite();
     }
     saveState();
     renderFavoriteChips();
@@ -216,11 +462,18 @@
       bar.classList.add("hidden");
       return;
     }
+    var sessions = bank.favorites.filter(function (fav) {
+      return fav.scope === "session";
+    });
+    if (sessions.length === 0) {
+      bar.classList.add("hidden");
+      return;
+    }
     bar.classList.remove("hidden");
-    var sorted = bank.favorites.slice().sort(function (a, b) {
-      return (b.createdAt || "").localeCompare(a.createdAt || "");
-    }).slice(0, 6);
-    for (var i = 0; i < sorted.length; i += 1) {
+    sessions.sort(function (a, b) {
+      return (b.updatedAt || b.createdAt || "").localeCompare(a.updatedAt || a.createdAt || "");
+    });
+    for (var i = 0; i < sessions.length && i < 6; i += 1) {
       (function (favorite) {
         var chip = document.createElement("button");
         chip.type = "button";
@@ -230,7 +483,7 @@
           insertFavoriteIntoComposer(favorite);
         });
         bar.appendChild(chip);
-      })(sorted[i]);
+      })(sessions[i]);
     }
   }
 
@@ -243,43 +496,34 @@
     var bank = getActiveBank();
     if (!bank) {
       list.innerHTML = '<div class="panel-hint">请选择记忆库</div>';
-      renderFavoriteDetail();
-      return;
-    }
-    if (!bank.favorites || bank.favorites.length === 0) {
-      list.innerHTML = '<div class="panel-hint">暂无收藏对话</div>';
       activeFavoriteId = null;
       renderFavoriteDetail();
+      renderFloatingFavorite();
       return;
     }
-    var items = bank.favorites.slice().sort(function (a, b) {
-      return (b.createdAt || "").localeCompare(a.createdAt || "");
+    var favorites = ensureBankFavorites(bank).filter(function (fav) {
+      return fav.scope === "session";
     });
     if (favoriteSearchTerm) {
       var term = favoriteSearchTerm.toLowerCase();
-      items = items.filter(function (fav) {
-        var title = (fav.title || "").toLowerCase();
-        var content = (fav.content || "").toLowerCase();
-        return title.indexOf(term) !== -1 || content.indexOf(term) !== -1;
+      favorites = favorites.filter(function (fav) {
+        return (fav.title || "").toLowerCase().indexOf(term) !== -1 || (fav.content || "").toLowerCase().indexOf(term) !== -1;
       });
     }
-    if (items.length === 0) {
-      list.innerHTML = '<div class="panel-hint">未找到匹配的收藏</div>';
+    if (favorites.length === 0) {
+      list.innerHTML = '<div class="panel-hint">暂无收藏会话</div>';
       activeFavoriteId = null;
       renderFavoriteDetail();
+      renderFloatingFavorite();
       return;
     }
-    var hasActive = false;
-    for (var i = 0; i < items.length; i += 1) {
-      if (items[i].id === activeFavoriteId) {
-        hasActive = true;
-        break;
-      }
+    favorites.sort(function (a, b) {
+      return (b.updatedAt || b.createdAt || "").localeCompare(a.updatedAt || a.createdAt || "");
+    });
+    if (!activeFavoriteId) {
+      activeFavoriteId = favorites[0].id;
     }
-    if (!hasActive) {
-      activeFavoriteId = items[0].id;
-    }
-    for (var idx = 0; idx < items.length; idx += 1) {
+    for (var i = 0; i < favorites.length; i += 1) {
       (function (favorite) {
         var card = document.createElement("div");
         card.className = "favorite-card" + (favorite.id === activeFavoriteId ? " active" : "");
@@ -288,20 +532,31 @@
         title.textContent = favorite.title;
         var meta = document.createElement("div");
         meta.className = "favorite-card-meta";
-        var roleText = favorite.role === "user" ? "用户" : "助理";
-        var timeText = favorite.createdAt ? formatDateTime(favorite.createdAt) : "";
-        var sessionName = favorite.sessionTitle ? " · " + favorite.sessionTitle : "";
-        meta.textContent = roleText + sessionName + (timeText ? " · " + timeText : "");
+        var parts = [];
+        if (favorite.sessionTitle) {
+          parts.push(favorite.sessionTitle);
+        }
+        if (favorite.updatedAt) {
+          parts.push(formatDateTime(favorite.updatedAt));
+        }
+        meta.textContent = parts.join(" · ");
+        var preview = document.createElement("div");
+        preview.className = "favorite-card-preview";
+        preview.textContent = snippetText(favorite.content || "", 80);
         card.appendChild(title);
         card.appendChild(meta);
+        card.appendChild(preview);
         card.addEventListener("click", function () {
           activeFavoriteId = favorite.id;
           renderFavoritesList();
+          openFavoriteViewerWindow(favorite);
+          showFloatingFavorite(favorite);
         });
         list.appendChild(card);
-      })(items[idx]);
+      })(favorites[i]);
     }
     renderFavoriteDetail();
+    renderFloatingFavorite();
   }
 
   function renderFavoriteDetail() {
@@ -315,21 +570,13 @@
       panel.innerHTML = '<div class="panel-hint">请选择记忆库</div>';
       return;
     }
-    if (!bank.favorites || bank.favorites.length === 0 || !activeFavoriteId) {
+    var favorite = findFavoriteById(bank, activeFavoriteId);
+    if (!favorite || favorite.scope !== "session") {
       panel.innerHTML = '<div class="panel-hint">从左侧选择收藏查看详情</div>';
       return;
     }
-    var favorite = null;
-    for (var i = 0; i < bank.favorites.length; i += 1) {
-      if (bank.favorites[i].id === activeFavoriteId) {
-        favorite = bank.favorites[i];
-        break;
-      }
-    }
-    if (!favorite) {
-      panel.innerHTML = '<div class="panel-hint">从左侧选择收藏查看详情</div>';
-      return;
-    }
+    var header = document.createElement("div");
+    header.className = "favorite-detail-header";
     var titleLabel = document.createElement("label");
     titleLabel.textContent = "标题";
     var titleInput = document.createElement("input");
@@ -337,28 +584,55 @@
     titleInput.className = "favorite-title-input";
     titleInput.value = favorite.title;
     titleInput.addEventListener("change", function () {
-      var next = titleInput.value.trim();
-      if (!next) {
-        next = favoriteTitleFromText(favorite.content);
-        titleInput.value = next;
-      }
+      var next = titleInput.value.trim() || favoriteTitleFromText(favorite.content);
       favorite.title = next;
       saveState();
       renderFavoriteChips();
       renderFavoritesList();
     });
     titleLabel.appendChild(titleInput);
+    header.appendChild(titleLabel);
 
     var meta = document.createElement("div");
     meta.className = "favorite-detail-meta";
-    var roleText = favorite.role === "user" ? "用户" : "助理";
-    var sessionName = favorite.sessionTitle ? " · " + favorite.sessionTitle : "";
-    var timeText = favorite.createdAt ? " · " + formatDateTime(favorite.createdAt) : "";
-    meta.textContent = roleText + sessionName + timeText;
+    var metaParts = [];
+    if (favorite.sessionTitle) {
+      metaParts.push("会话：" + favorite.sessionTitle);
+    }
+    if (favorite.updatedAt) {
+      metaParts.push("更新：" + formatDateTime(favorite.updatedAt));
+    }
+    meta.textContent = metaParts.join(" · ");
+    header.appendChild(meta);
+    panel.appendChild(header);
 
-    var contentBox = document.createElement("div");
-    contentBox.className = "favorite-content";
-    contentBox.textContent = favorite.content;
+    var summaryBox = document.createElement("div");
+    summaryBox.className = "favorite-content";
+    summaryBox.textContent = favorite.content || "";
+    panel.appendChild(summaryBox);
+
+    var transcriptBox = document.createElement("div");
+    transcriptBox.className = "favorite-transcript";
+    var transcript = favorite.transcript || [];
+    if (transcript.length === 0) {
+      transcriptBox.innerHTML = '<div class="panel-hint">暂无消息记录</div>';
+    } else {
+      for (var i = 0; i < transcript.length; i += 1) {
+        var msg = transcript[i];
+        var row = document.createElement("div");
+        row.className = "favorite-message" + (msg.id && favorite.highlightId === msg.id ? " highlight" : "");
+        var role = document.createElement("span");
+        role.className = "favorite-message-role";
+        role.textContent = msg.role === "user" ? "用户" : "助理";
+        var text = document.createElement("div");
+        text.className = "favorite-message-text";
+        text.textContent = msg.text;
+        row.appendChild(role);
+        row.appendChild(text);
+        transcriptBox.appendChild(row);
+      }
+    }
+    panel.appendChild(transcriptBox);
 
     var noteLabel = document.createElement("label");
     noteLabel.textContent = "备注";
@@ -370,9 +644,24 @@
       saveState();
     });
     noteLabel.appendChild(noteArea);
+    panel.appendChild(noteLabel);
 
     var actions = document.createElement("div");
     actions.className = "favorite-actions";
+    var floatBtn = document.createElement("button");
+    floatBtn.type = "button";
+    floatBtn.className = "ghost-button";
+    floatBtn.textContent = "悬浮显示";
+    floatBtn.addEventListener("click", function () {
+      showFloatingFavorite(favorite);
+    });
+    var openBtn = document.createElement("button");
+    openBtn.type = "button";
+    openBtn.className = "ghost-button";
+    openBtn.textContent = "打开窗口";
+    openBtn.addEventListener("click", function () {
+      openFavoriteViewerWindow(favorite);
+    });
     var useBtn = document.createElement("button");
     useBtn.type = "button";
     useBtn.className = "ghost-button";
@@ -389,13 +678,10 @@
         removeFavorite(favorite.id);
       }
     });
+    actions.appendChild(floatBtn);
+    actions.appendChild(openBtn);
     actions.appendChild(useBtn);
     actions.appendChild(removeBtn);
-
-    panel.appendChild(titleLabel);
-    panel.appendChild(meta);
-    panel.appendChild(contentBox);
-    panel.appendChild(noteLabel);
     panel.appendChild(actions);
   }
 
@@ -746,9 +1032,7 @@
         settings: {
           topN: 5,
           chunkSize: 400,
-          chunkOverlap: 80,
-          faqLow: 40,
-          faqHigh: 75
+          chunkOverlap: 80
         }
       };
     }
@@ -759,9 +1043,7 @@
       state.settings = {
         topN: 5,
         chunkSize: 400,
-        chunkOverlap: 80,
-        faqLow: 40,
-        faqHigh: 75
+        chunkOverlap: 80
       };
     }
     if (!state.decisions) {
@@ -938,9 +1220,6 @@
       if (!bank.logo) {
         bank.logo = bankLogoText(bank.name);
       }
-      if (!bank.faqs) {
-        bank.faqs = [];
-      }
       if (!bank.files) {
         bank.files = [];
       }
@@ -964,6 +1243,9 @@
       }
       if (!bank.logs) {
         bank.logs = [];
+      }
+      if (bank.faqs) {
+        delete bank.faqs;
       }
       for (var sessionIndex = 0; sessionIndex < bank.sessions.length; sessionIndex += 1) {
         var sess = bank.sessions[sessionIndex];
@@ -1048,28 +1330,6 @@
         }
       }
       rebuildIndex(bank);
-      for (var j = 0; j < bank.faqs.length; j += 1) {
-        var faq = bank.faqs[j];
-        if (!faq.id) {
-          faq.id = uuid();
-        }
-        if (!faq.createdAt) {
-          faq.createdAt = new Date().toISOString();
-        }
-        if (!faq.createdBy) {
-          faq.createdBy = "";
-        }
-        if (!faq.source) {
-          faq.source = "manual";
-        }
-        if (typeof faq.auto !== "boolean") {
-          faq.auto = false;
-        }
-        if (!faq.origin) {
-          faq.origin = "";
-        }
-        faq.norm = normalizeQuestionText(faq.question);
-      }
       for (var k = 0; k < bank.logs.length; k += 1) {
         var log = bank.logs[k];
         if (!log.id) {
@@ -1089,26 +1349,48 @@
         if (!fav.id) {
           fav.id = uuid();
         }
+        fav.bankId = bank.id;
         if (!fav.createdAt) {
           fav.createdAt = new Date().toISOString();
         }
-        if (!fav.title) {
-          fav.title = snippetText(fav.content || "", 18) || "收藏对话";
+        if (!fav.updatedAt) {
+          fav.updatedAt = fav.createdAt;
+        }
+        if (typeof fav.scope !== "string") {
+          fav.scope = "session";
+        }
+        if (typeof fav.title !== "string" || fav.title.trim().length === 0) {
+          fav.title = favoriteTitleFromText(fav.content || "");
         }
         if (typeof fav.content !== "string") {
-          fav.content = String(fav.content || "");
+          fav.content = fav.content ? String(fav.content) : "";
         }
-        if (fav.role !== "assistant" && fav.role !== "user") {
-          fav.role = "assistant";
+        if (!Array.isArray(fav.transcript)) {
+          fav.transcript = [];
         }
-        if (!fav.sessionTitle || typeof fav.sessionTitle !== "string") {
-          fav.sessionTitle = "";
+        if (fav.scope !== "session") {
+          var relatedSession = fav.sessionId ? findSession(bank, fav.sessionId) : null;
+          if (relatedSession) {
+            fav.scope = "session";
+            fav.sessionId = relatedSession.id;
+            fav.sessionTitle = relatedSession.title || fav.sessionTitle || "";
+            fav.content = favoriteSummaryFromSession(relatedSession);
+            fav.transcript = cloneTranscript(relatedSession.messages || []);
+          } else {
+            fav.scope = "session";
+          }
         }
-        if ((!fav.sessionTitle || fav.sessionTitle.length === 0) && fav.sessionId) {
-          for (var sx = 0; sx < bank.sessions.length; sx += 1) {
-            if (bank.sessions[sx].id === fav.sessionId) {
-              fav.sessionTitle = bank.sessions[sx].title || "";
-              break;
+        if (fav.sessionId) {
+          var matching = findSession(bank, fav.sessionId);
+          if (matching) {
+            if (!fav.sessionTitle || typeof fav.sessionTitle !== "string") {
+              fav.sessionTitle = matching.title || "";
+            }
+            if (!fav.transcript || fav.transcript.length === 0) {
+              fav.transcript = cloneTranscript(matching.messages || []);
+            }
+            if (!fav.content) {
+              fav.content = favoriteSummaryFromSession(matching);
             }
           }
         }
@@ -1224,63 +1506,6 @@
     } else if (!hasActive) {
       state.activeDecisionId = state.decisions[0].id;
     }
-  }
-
-  function upsertFaq(bank, question, answer, meta) {
-    if (!bank || !question || !answer) {
-      return null;
-    }
-    var normalized = normalizeQuestionText(question);
-    var existing = null;
-    for (var i = 0; i < bank.faqs.length; i += 1) {
-      var candidate = bank.faqs[i];
-      var currentNorm = candidate.norm || normalizeQuestionText(candidate.question);
-      if (currentNorm === normalized) {
-        existing = candidate;
-        break;
-      }
-    }
-    if (existing) {
-      existing.question = question;
-      existing.answer = answer;
-      existing.norm = normalized;
-      existing.updatedAt = meta && meta.updatedAt ? meta.updatedAt : new Date().toISOString();
-      existing.updatedBy = meta && meta.updatedBy ? meta.updatedBy : (currentUser ? currentUser.username : "");
-      if (meta && meta.createdBy && !existing.createdBy) {
-        existing.createdBy = meta.createdBy;
-      }
-      if (meta && meta.source) {
-        existing.source = meta.source;
-      }
-      if (meta && typeof meta.auto === "boolean") {
-        existing.auto = meta.auto;
-      }
-      if (meta && meta.origin) {
-        existing.origin = meta.origin;
-      }
-      return { item: existing, created: false };
-    }
-    var now = meta && meta.createdAt ? meta.createdAt : new Date().toISOString();
-    var createdBy = meta && meta.createdBy ? meta.createdBy : (currentUser ? currentUser.username : "");
-    var faq = {
-      id: uuid(),
-      question: question,
-      answer: answer,
-      createdAt: now,
-      createdBy: createdBy,
-      norm: normalized,
-      source: meta && meta.source ? meta.source : "manual",
-      auto: meta && typeof meta.auto === "boolean" ? meta.auto : false,
-      origin: meta && meta.origin ? meta.origin : ""
-    };
-    if (meta && meta.updatedAt) {
-      faq.updatedAt = meta.updatedAt;
-    }
-    if (meta && meta.updatedBy) {
-      faq.updatedBy = meta.updatedBy;
-    }
-    bank.faqs.push(faq);
-    return { item: faq, created: true };
   }
 
   function arrayBufferToBase64(buffer) {
@@ -2060,7 +2285,6 @@
           renderCommonChips();
           renderChat();
           renderKnowledge();
-          renderFaqList();
           renderCommonList();
           favoriteSearchTerm = "";
           var searchInput = document.getElementById("favoriteSearch");
@@ -2069,6 +2293,7 @@
           }
           renderFavoritesList();
           renderFavoriteChips();
+          renderFloatingFavorite();
           renderLogs();
         });
         badge.addEventListener("contextmenu", function (evt) {
@@ -2095,7 +2320,6 @@
       id: uuid(),
       name: name,
       logo: bankLogoText(name),
-      faqs: [],
       favorites: [],
       files: [],
       chunks: [],
@@ -2112,10 +2336,10 @@
     updateBankBadge();
     renderSessionList();
     renderKnowledge();
-    renderFaqList();
     renderCommonChips();
     renderFavoriteChips();
     renderFavoritesList();
+    renderFloatingFavorite();
   }
 
   function renameBank(bankId) {
@@ -2190,7 +2414,7 @@
     renderFavoritesList();
     renderChat();
     renderKnowledge();
-    renderFaqList();
+    renderFloatingFavorite();
     renderLogs();
     renderDecisionHistory();
     showToast("记忆库已删除");
@@ -2386,10 +2610,24 @@
           note.textContent = snippetText(session.note, 48);
           info.appendChild(note);
         }
+        var actions = document.createElement("div");
+        actions.className = "session-actions";
+
+        var favoriteBtn = document.createElement("button");
+        favoriteBtn.className = "session-favorite";
+        favoriteBtn.type = "button";
+        favoriteBtn.textContent = "收藏";
+        favoriteBtn.title = "收藏当前会话";
+        favoriteBtn.addEventListener("click", function (evt) {
+          evt.stopPropagation();
+          addFavoriteFromSession(session.id);
+        });
+        actions.appendChild(favoriteBtn);
+
         var remove = document.createElement("button");
         remove.className = "session-remove";
         remove.type = "button";
-        remove.textContent = "×";
+        remove.textContent = "删除";
         remove.addEventListener("click", function (evt) {
           evt.stopPropagation();
           if (window.confirm("确定删除该会话吗？")) {
@@ -2398,8 +2636,10 @@
             renderChat();
           }
         });
+        actions.appendChild(remove);
+
         card.appendChild(info);
-        card.appendChild(remove);
+        card.appendChild(actions);
         card.addEventListener("click", function () {
           state.activeSessionId = session.id;
           saveState();
@@ -2645,19 +2885,17 @@
     if (keywords && keywords.length > 0) {
       highlightKeys = uniqueKeywords(keywords);
     }
-    var grouped = { faq: [], decision: [], knowledge: [] };
+    var grouped = { decision: [], knowledge: [] };
     for (var i = 0; i < evidence.length; i += 1) {
       var item = evidence[i];
-      if (item.type === "faq") {
-        grouped.faq.push(item);
-      } else if (item.type === "decision") {
+      if (item.type === "decision") {
         grouped.decision.push(item);
       } else {
         grouped.knowledge.push(item);
       }
     }
-    var order = ["faq", "decision", "knowledge"];
-    var titles = { faq: "FAQ 依据", decision: "决策链依据", knowledge: "知识库依据" };
+    var order = ["decision", "knowledge"];
+    var titles = { decision: "决策链依据", knowledge: "知识库依据" };
     var appended = false;
     for (var g = 0; g < order.length; g += 1) {
       var type = order[g];
@@ -2685,9 +2923,7 @@
           source.target = "_blank";
           source.rel = "noopener";
         }
-        if (type === "faq") {
-          source.textContent = "FAQ · " + info.source;
-        } else if (type === "decision") {
+        if (type === "decision") {
           source.textContent = info.source;
         } else {
           source.textContent = info.source + " · 段 " + info.chunk;
@@ -3234,7 +3470,7 @@
       { regex: /(谢谢|感谢)/, reply: "感谢您的反馈，如需更多帮助请随时告诉我。" },
       { regex: /(再见|拜拜|下次见)/, reply: "期待再次为您服务，祝您工作顺利。" },
       { regex: /(你是谁|你是誰|身份|介绍)/, reply: "我是部署在本地的知识对话助手，负责检索知识库并给出专业建议。" },
-      { regex: /(帮助|怎么用|说明)/, reply: "您可以输入问题，我会从知识库和FAQ中检索答案；管理员可在知识库与FAQ页面维护数据。" }
+      { regex: /(帮助|怎么用|说明)/, reply: "您可以输入问题，我会从知识库与决策链中检索依据；管理员可在知识库与系统页面维护数据。" }
     ];
     for (var i = 0; i < patterns.length; i += 1) {
       if (patterns[i].regex.test(text)) {
@@ -3419,25 +3655,6 @@
     if (!replyText) {
       var expanded = expandTerms(tokens);
       var knowledgeScores = computeBM25(bank, expanded);
-      var faqResult = matchFaq(bank, text);
-      var bestFaq = faqResult.best;
-      var faqEvidence = [];
-      var bestFaqEvidence = null;
-      var matches = faqResult.matches || [];
-      for (var f = 0; f < matches.length && f < 3; f += 1) {
-        var match = matches[f];
-        var faqEntry = {
-          type: "faq",
-          source: match.item.question,
-          chunk: "FAQ",
-          text: match.item.answer,
-          score: match.score
-        };
-        if (bestFaq && bestFaq.item && match.item && bestFaq.item.id === match.item.id) {
-          bestFaqEvidence = faqEntry;
-        }
-        faqEvidence.push(faqEntry);
-      }
       var knowledgeEvidence = [];
       var bestKnowledgeEvidence = null;
       var topScore = knowledgeScores.length > 0 ? knowledgeScores[0].score : 0;
@@ -3471,35 +3688,21 @@
       }
       var decisionEvidence = collectDecisionEvidence(tokens);
       var bestDecisionEvidence = decisionEvidence.length > 0 ? decisionEvidence[0] : null;
-      evidence = faqEvidence.concat(decisionEvidence, knowledgeEvidence);
+      evidence = decisionEvidence.concat(knowledgeEvidence);
       for (var idx = 0; idx < evidence.length; idx += 1) {
         evidence[idx].ref = idx + 1;
       }
       var summaryLines = [];
-      if (bestFaq && bestFaq.score >= state.settings.faqHigh && bestFaqEvidence) {
-        summaryLines.push("优先参考FAQ答案：" + bestFaqEvidence.text + "（资料" + bestFaqEvidence.ref + "）");
-      } else {
-        if (bestFaqEvidence) {
-          summaryLines.push("FAQ建议：" + snippetText(bestFaqEvidence.text, 80) + "（资料" + bestFaqEvidence.ref + "）");
-        }
-        if (bestKnowledgeEvidence) {
-          summaryLines.push("知识库提示：" + snippetText(bestKnowledgeEvidence.text, 80) + "（资料" + bestKnowledgeEvidence.ref + "）");
-        }
-        if (bestDecisionEvidence) {
-          summaryLines.push("决策链洞察：" + snippetText(bestDecisionEvidence.text, 80) + "（资料" + bestDecisionEvidence.ref + "）");
-        }
+      if (bestKnowledgeEvidence) {
+        summaryLines.push("知识库提示：" + snippetText(bestKnowledgeEvidence.text, 80) + "（资料" + bestKnowledgeEvidence.ref + "）");
+      }
+      if (bestDecisionEvidence) {
+        summaryLines.push("决策链洞察：" + snippetText(bestDecisionEvidence.text, 80) + "（资料" + bestDecisionEvidence.ref + "）");
       }
       if (summaryLines.length === 0) {
         summaryLines.push("当前资料中未找到高相关答案，请补充更多上下文信息。");
       }
       var sections = [];
-      if (faqEvidence.length > 0) {
-        var faqLines = [];
-        for (var fe = 0; fe < faqEvidence.length; fe += 1) {
-          faqLines.push("- （资料" + faqEvidence[fe].ref + "）" + snippetText(faqEvidence[fe].text, 100) + " —— " + faqEvidence[fe].source);
-        }
-        sections.push("FAQ 依据：\n" + faqLines.join("\n"));
-      }
       if (decisionEvidence.length > 0) {
         var decisionLines = [];
         for (var de = 0; de < decisionEvidence.length; de += 1) {
@@ -3546,204 +3749,6 @@
     renderChat();
     renderLogs();
   }
-
-  function matchFaq(bank, query) {
-    var result = { best: null, matches: [] };
-    if (!bank || !query) {
-      return result;
-    }
-    for (var i = 0; i < bank.faqs.length; i += 1) {
-      var faq = bank.faqs[i];
-      var scoreValue = jaccard(query, faq.question);
-      var percent = Math.round(scoreValue * 100);
-      if (!result.best || percent > result.best.score) {
-        result.best = { item: faq, score: percent };
-      }
-      if (percent >= state.settings.faqLow) {
-        result.matches.push({ item: faq, score: percent });
-      }
-    }
-    result.matches.sort(function (a, b) {
-      return b.score - a.score;
-    });
-    if (!result.best || result.best.score < state.settings.faqLow) {
-      result.best = null;
-    }
-    return result;
-  }
-
-  function jaccard(a, b) {
-    var setA = {};
-    var tokensA = tokenize(a);
-    for (var i = 0; i < tokensA.length; i += 1) {
-      setA[tokensA[i]] = true;
-    }
-    var setB = {};
-    var tokensB = tokenize(b);
-    for (var j = 0; j < tokensB.length; j += 1) {
-      setB[tokensB[j]] = true;
-    }
-    var inter = 0;
-    var union = 0;
-    for (var keyA in setA) {
-      if (setA.hasOwnProperty(keyA)) {
-        union += 1;
-        if (setB[keyA]) {
-          inter += 1;
-        }
-      }
-    }
-    for (var keyB in setB) {
-      if (setB.hasOwnProperty(keyB) && !setA[keyB]) {
-        union += 1;
-      }
-    }
-    if (union === 0) {
-      return 0;
-    }
-    return inter / union;
-  }
-
-  function resetFaqForm() {
-    var form = document.getElementById("faqForm");
-    if (!form) {
-      return;
-    }
-    form.reset();
-    faqEditingId = null;
-    form.removeAttribute("data-editing");
-    var mode = document.getElementById("faqFormMode");
-    if (mode) {
-      mode.textContent = "新增";
-    }
-  }
-
-  function startFaqEdit(faq) {
-    var form = document.getElementById("faqForm");
-    if (!form || !faq) {
-      return;
-    }
-    var questionInput = document.getElementById("faqQuestion");
-    var answerInput = document.getElementById("faqAnswer");
-    if (questionInput) {
-      questionInput.value = faq.question || "";
-      questionInput.focus();
-      questionInput.setSelectionRange(questionInput.value.length, questionInput.value.length);
-    }
-    if (answerInput) {
-      answerInput.value = faq.answer || "";
-    }
-    faqEditingId = faq.id;
-    form.setAttribute("data-editing", faq.id);
-    var mode = document.getElementById("faqFormMode");
-    if (mode) {
-      mode.textContent = "编辑";
-    }
-  }
-
-  function renderFaqList() {
-    var list = document.getElementById("faqList");
-    if (!list) {
-      return;
-    }
-    list.innerHTML = "";
-    var bank = getActiveBank();
-    if (!bank) {
-      return;
-    }
-    if (bank.faqs.length === 0) {
-      list.innerHTML = '<div class="panel-hint">当前记忆库暂无 FAQ</div>';
-      return;
-    }
-    var ordered = bank.faqs.slice().sort(function (a, b) {
-      var ta = a.updatedAt || a.createdAt || "";
-      var tb = b.updatedAt || b.createdAt || "";
-      return tb.localeCompare(ta);
-    });
-    for (var i = 0; i < ordered.length; i += 1) {
-      (function (faq) {
-        var card = document.createElement("div");
-        card.className = "faq-card";
-        if (faqEditingId && faqEditingId === faq.id) {
-          card.className += " active";
-        }
-        var header = document.createElement("header");
-        var title = document.createElement("div");
-        var qBadge = document.createElement("span");
-        qBadge.className = "badge-strong";
-        qBadge.textContent = "Q";
-        title.appendChild(qBadge);
-        title.appendChild(document.createTextNode(" " + faq.question));
-        if (faq.source === "knowledge") {
-          var autoBadge = document.createElement("span");
-          autoBadge.className = "faq-source";
-          autoBadge.textContent = "知识库解析";
-          title.appendChild(autoBadge);
-        }
-        var tools = document.createElement("div");
-        tools.className = "card-actions";
-        var editBtn = document.createElement("button");
-        editBtn.className = "text-button";
-        editBtn.textContent = "编辑";
-        editBtn.addEventListener("click", function () {
-          startFaqEdit(faq);
-        });
-        tools.appendChild(editBtn);
-        header.appendChild(title);
-        header.appendChild(tools);
-        var body = document.createElement("div");
-        var aBadge = document.createElement("span");
-        aBadge.className = "badge-strong";
-        aBadge.textContent = "A";
-        body.appendChild(aBadge);
-        body.appendChild(document.createTextNode(" " + faq.answer));
-        var meta = document.createElement("div");
-        meta.className = "meta";
-        var metaText = "创建人:" + (faq.createdBy || "") + " · 更新时间:" + formatDateTime(faq.updatedAt || faq.createdAt || "");
-        if (faq.updatedBy) {
-          metaText += " · 更新人:" + faq.updatedBy;
-        }
-        if (faq.origin) {
-          metaText += " · 来源:" + faq.origin;
-        }
-        meta.textContent = metaText;
-        card.appendChild(header);
-        card.appendChild(body);
-        card.appendChild(meta);
-        list.appendChild(card);
-      })(ordered[i]);
-    }
-  }
-
-  function renderFaqMatch(result) {
-    var box = document.getElementById("faqMatchResult");
-    if (!box) {
-      return;
-    }
-    box.innerHTML = "";
-    if (!result || !result.matches || result.matches.length === 0) {
-      box.textContent = "暂无≥" + state.settings.faqLow + "%的候选";
-      return;
-    }
-    for (var i = 0; i < result.matches.length; i += 1) {
-      var match = result.matches[i];
-      var card = document.createElement("div");
-      card.className = "match-card" + (i === 0 ? " best" : "");
-      var score = document.createElement("div");
-      score.className = "match-score";
-      score.textContent = match.score + "%";
-      var question = document.createElement("div");
-      question.innerHTML = '<strong>问题：</strong>' + match.item.question;
-      var answer = document.createElement("div");
-      answer.innerHTML = '<strong>答案：</strong>' + match.item.answer;
-      card.appendChild(score);
-      card.appendChild(question);
-      card.appendChild(answer);
-      box.appendChild(card);
-    }
-  }
-
-
 
   function renderUsers() {
     var list = document.getElementById("userList");
@@ -3822,7 +3827,7 @@
     for (var i = 0; i < bank.common.length; i += 1) {
       (function (item) {
         var card = document.createElement("div");
-        card.className = "faq-card";
+        card.className = "common-card";
         var header = document.createElement("header");
         var title = document.createElement("div");
         title.textContent = item.text;
@@ -6259,7 +6264,8 @@
     renderChat();
     renderCommonChips();
     renderKnowledge();
-    renderFaqList();
+    renderFavoriteChips();
+    renderFloatingFavorite();
     renderLogs();
     var sendBtn = document.getElementById("sendMessage");
     var input = document.getElementById("chatInput");
@@ -6341,8 +6347,6 @@
             document.getElementById("settingChunkSize").value = state.settings.chunkSize;
             document.getElementById("settingChunkOverlap").value = state.settings.chunkOverlap;
             document.getElementById("settingReasonLevel").value = state.adminFlags.reasoningLevel || 1;
-            document.getElementById("settingFaqLow").value = state.settings.faqLow;
-            document.getElementById("settingFaqHigh").value = state.settings.faqHigh;
           }
         });
       }
@@ -6358,8 +6362,6 @@
           state.settings.chunkSize = parseInt(document.getElementById("settingChunkSize").value, 10);
           state.settings.chunkOverlap = parseInt(document.getElementById("settingChunkOverlap").value, 10);
           state.adminFlags.reasoningLevel = parseInt(document.getElementById("settingReasonLevel").value, 10);
-          state.settings.faqLow = parseInt(document.getElementById("settingFaqLow").value, 10);
-          state.settings.faqHigh = parseInt(document.getElementById("settingFaqHigh").value, 10);
           saveState();
           showToast("设置已保存");
         });
@@ -6383,6 +6385,8 @@
           promptRenameSession(session);
         } else if (action === "note") {
           promptSessionNote(session);
+        } else if (action === "favorite") {
+          addFavoriteFromSession(session.id);
         }
       });
     }
@@ -6403,6 +6407,26 @@
     document.addEventListener("scroll", function () {
       closeBankMenu();
     }, true);
+    window.addEventListener("message", function (evt) {
+      if (!evt || !evt.data || typeof evt.data !== "object") {
+        return;
+      }
+      if (evt.data.type === "favorite-focus" && evt.data.favoriteId) {
+        var bank = getActiveBank();
+        if (!bank) {
+          return;
+        }
+        var favorite = findFavoriteById(bank, evt.data.favoriteId);
+        if (!favorite) {
+          return;
+        }
+        activeFavoriteId = favorite.id;
+        saveState();
+        renderFavoriteChips();
+        renderFavoritesList();
+        showFloatingFavorite(favorite);
+      }
+    });
     document.addEventListener("scroll", closeSessionMenu, true);
     document.addEventListener("keydown", function (evt) {
       if (evt.key === "Escape") {
@@ -6554,172 +6578,6 @@
     });
   }
 
-  function initFaqPage() {
-    requireAuth();
-    setNavUserInfo();
-    ensureActiveBank();
-    renderBankList();
-    updateBankBadge();
-    renderFaqList();
-    resetFaqForm();
-    getActiveBank();
-    var faqForm = document.getElementById("faqForm");
-    if (faqForm) {
-      faqForm.addEventListener("submit", function (evt) {
-        evt.preventDefault();
-        var bank = getActiveBank();
-        if (!bank) {
-          showToast("请选择记忆库");
-          return;
-        }
-        var question = document.getElementById("faqQuestion").value.trim();
-        var answer = document.getElementById("faqAnswer").value.trim();
-        if (!question || !answer) {
-          showToast("请填写完整的问题和答案");
-          return;
-        }
-        if (faqEditingId) {
-          var target = null;
-          for (var i = 0; i < bank.faqs.length; i += 1) {
-            if (bank.faqs[i].id === faqEditingId) {
-              target = bank.faqs[i];
-              break;
-            }
-          }
-          if (!target) {
-            showToast("未找到要编辑的 FAQ");
-            resetFaqForm();
-            renderFaqList();
-            return;
-          }
-          var normalized = normalizeQuestionText(question);
-          for (var j = 0; j < bank.faqs.length; j += 1) {
-            if (bank.faqs[j].id !== target.id) {
-              var existingNorm = bank.faqs[j].norm || normalizeQuestionText(bank.faqs[j].question);
-              if (existingNorm === normalized) {
-                showToast("已存在相同的问题");
-                return;
-              }
-            }
-          }
-          target.question = question;
-          target.answer = answer;
-          target.norm = normalized;
-          target.updatedAt = new Date().toISOString();
-          target.updatedBy = currentUser ? currentUser.username : "";
-          saveState();
-          renderFaqList();
-          resetFaqForm();
-          showToast("FAQ 已更新");
-          return;
-        }
-        var inserted = upsertFaq(bank, question, answer, {
-          createdAt: new Date().toISOString(),
-          createdBy: currentUser ? currentUser.username : ""
-        });
-        if (inserted) {
-          saveState();
-          renderFaqList();
-          showToast(inserted.created ? "FAQ 已新增" : "FAQ 已更新");
-          resetFaqForm();
-        }
-      });
-    }
-    var resetFaqBtn = document.getElementById("resetFaqForm");
-    if (resetFaqBtn) {
-      resetFaqBtn.addEventListener("click", function () {
-        resetFaqForm();
-      });
-    }
-    var exportBtn = document.getElementById("exportFaq");
-    if (exportBtn) {
-      exportBtn.addEventListener("click", function () {
-        var bank = getActiveBank();
-        if (!bank) {
-          return;
-        }
-        var data = JSON.stringify(bank.faqs, null, 2);
-        var blob = new Blob([data], { type: "application/json" });
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement("a");
-        a.href = url;
-        a.download = "faq.json";
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      });
-    }
-    var importInput = document.getElementById("importFaq");
-    if (importInput) {
-      importInput.addEventListener("change", function (evt) {
-        var files = evt.target.files;
-        if (!files || files.length === 0) {
-          return;
-        }
-        readFileContent(files[0]).then(function (content) {
-          try {
-            var arr = JSON.parse(content);
-            if (Array.isArray(arr)) {
-              var bank = getActiveBank();
-              if (bank) {
-                var createdCount = 0;
-                var updatedCount = 0;
-                for (var i = 0; i < arr.length; i += 1) {
-                  var item = arr[i];
-                  if (!item || !item.question || !item.answer) {
-                    continue;
-                  }
-                  var inserted = upsertFaq(bank, item.question, item.answer, {
-                    createdAt: item.createdAt,
-                    createdBy: item.createdBy || (currentUser ? currentUser.username : ""),
-                    updatedAt: item.updatedAt,
-                    updatedBy: item.updatedBy
-                  });
-                  if (inserted) {
-                    if (inserted.created) {
-                      createdCount += 1;
-                    } else {
-                      updatedCount += 1;
-                    }
-                  }
-                }
-                saveState();
-                renderFaqList();
-                showToast("导入完成 新增" + createdCount + "条 · 更新" + updatedCount + "条");
-              }
-            }
-          } catch (err) {
-            showToast("导入失败");
-          }
-        });
-      });
-    }
-    var queryBtn = document.getElementById("matchFaq");
-    if (queryBtn) {
-      queryBtn.addEventListener("click", function () {
-        var bank = getActiveBank();
-        if (!bank) {
-          return;
-        }
-        var query = document.getElementById("faqQuery").value;
-        if (!query) {
-          return;
-        }
-        var result = matchFaq(bank, query);
-        renderFaqMatch(result);
-      });
-    }
-    var createBankBtn = document.getElementById("createBank");
-    if (createBankBtn) {
-      createBankBtn.addEventListener("click", createBank);
-    }
-    var logoutBtn = document.getElementById("logoutButton");
-    if (logoutBtn) {
-      logoutBtn.addEventListener("click", logout);
-    }
-  }
-
   function initFavoritesPage() {
     requireAuth();
     setNavUserInfo();
@@ -6743,6 +6601,129 @@
     var logoutBtn = document.getElementById("logoutButton");
     if (logoutBtn) {
       logoutBtn.addEventListener("click", logout);
+    }
+  }
+
+  function initFavoriteViewerPage() {
+    requireAuth();
+    ensureActiveBank();
+    var params = new URLSearchParams(window.location.search || "");
+    var bankId = params.get("bank");
+    var favoriteId = params.get("favorite");
+    var titleEl = document.getElementById("viewerTitle");
+    var metaEl = document.getElementById("viewerMeta");
+    var summaryEl = document.getElementById("viewerSummary");
+    var transcriptEl = document.getElementById("viewerTranscript");
+    var focusBtn = document.getElementById("viewerFocus");
+    var closeBtn = document.getElementById("viewerClose");
+    var bank = null;
+    if (bankId) {
+      bank = findBankById(bankId);
+      if (bank) {
+        state.activeBankId = bank.id;
+        saveState();
+      }
+    }
+    if (!bank) {
+      bank = getActiveBank();
+    }
+    if (!bank || !favoriteId) {
+      if (titleEl) {
+        titleEl.textContent = "未找到收藏";
+      }
+      if (summaryEl) {
+        summaryEl.textContent = "缺少收藏参数或当前记忆库不可用。";
+      }
+      if (metaEl) {
+        metaEl.textContent = "";
+      }
+      if (closeBtn) {
+        closeBtn.addEventListener("click", function () {
+          window.close();
+        });
+      }
+      return;
+    }
+    var favorite = findFavoriteById(bank, favoriteId);
+    if (!favorite) {
+      if (titleEl) {
+        titleEl.textContent = "未找到收藏";
+      }
+      if (summaryEl) {
+        summaryEl.textContent = "该收藏已被删除或不属于当前记忆库。";
+      }
+      if (metaEl) {
+        metaEl.textContent = "";
+      }
+      if (closeBtn) {
+        closeBtn.addEventListener("click", function () {
+          window.close();
+        });
+      }
+      return;
+    }
+    document.title = (favorite.title || "收藏会话") + " · 虹小聊";
+    if (titleEl) {
+      titleEl.textContent = favorite.title || "收藏会话";
+    }
+    if (metaEl) {
+      var metaParts = [];
+      if (favorite.sessionTitle) {
+        metaParts.push("会话：" + favorite.sessionTitle);
+      }
+      if (favorite.updatedAt || favorite.createdAt) {
+        metaParts.push("更新：" + formatDateTime(favorite.updatedAt || favorite.createdAt));
+      }
+      metaEl.textContent = metaParts.join(" · ");
+    }
+    if (summaryEl) {
+      summaryEl.textContent = favorite.content || "";
+    }
+    if (transcriptEl) {
+      transcriptEl.innerHTML = "";
+      var transcript = Array.isArray(favorite.transcript) ? favorite.transcript : [];
+      if (transcript.length === 0) {
+        var empty = document.createElement("div");
+        empty.className = "panel-hint";
+        empty.textContent = "暂无消息记录";
+        transcriptEl.appendChild(empty);
+      } else {
+        for (var i = 0; i < transcript.length; i += 1) {
+          var msg = transcript[i];
+          var row = document.createElement("div");
+          row.className = "viewer-message" + (msg.id && favorite.highlightId === msg.id ? " highlight" : "");
+          var role = document.createElement("span");
+          role.className = "viewer-message-role";
+          role.textContent = msg.role === "user" ? "用户" : "助理";
+          var text = document.createElement("div");
+          text.className = "viewer-message-text";
+          text.textContent = msg.text || "";
+          row.appendChild(role);
+          row.appendChild(text);
+          transcriptEl.appendChild(row);
+        }
+      }
+    }
+    if (focusBtn) {
+      if (!window.opener || window.opener.closed) {
+        focusBtn.disabled = true;
+      } else {
+        focusBtn.addEventListener("click", function () {
+          if (window.opener && !window.opener.closed) {
+            try {
+              window.opener.postMessage({ type: "favorite-focus", favoriteId: favorite.id }, "*");
+              window.opener.focus();
+            } catch (err) {
+              console.warn(err);
+            }
+          }
+        });
+      }
+    }
+    if (closeBtn) {
+      closeBtn.addEventListener("click", function () {
+        window.close();
+      });
     }
   }
 
@@ -7429,10 +7410,10 @@
         initChatPage();
       } else if (page === "kb") {
         initKbPage();
-      } else if (page === "faq") {
-        initFaqPage();
       } else if (page === "favorites") {
         initFavoritesPage();
+      } else if (page === "favorite-viewer") {
+        initFavoriteViewerPage();
       } else if (page === "decision") {
         initDecisionPage();
       } else if (page === "decision-history") {
