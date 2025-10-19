@@ -37,90 +37,54 @@
       <h2>快速入口</h2>
       <div class="tool-grid">
         <a class="tool-card" href="kb.html">
-          <div class="tool-icon">📚</div>
+          <div class="tool-icon" aria-hidden="true">KB</div>
           <div class="tool-body">
             <h3>知识拆分工作台</h3>
             <p>上传/复制文本并自动抽取问答，优化检索效果。</p>
           </div>
         </a>
         <a class="tool-card" href="faq.html">
-          <div class="tool-icon">❓</div>
+          <div class="tool-icon" aria-hidden="true">FAQ</div>
           <div class="tool-body">
             <h3>FAQ 智能管理</h3>
             <p>维护问答条目，执行去重、阈值策略与导入导出。</p>
           </div>
         </a>
         <a class="tool-card" href="decision.html">
-          <div class="tool-icon">🧭</div>
+          <div class="tool-icon" aria-hidden="true">决策</div>
           <div class="tool-body">
             <h3>决策链画布</h3>
             <p>使用类思维导图界面记录节点、关联与评估信息。</p>
           </div>
         </a>
         <a class="tool-card" href="decision-history.html">
-          <div class="tool-icon">🗂️</div>
+          <div class="tool-icon" aria-hidden="true">档案</div>
           <div class="tool-body">
             <h3>决策历史档案</h3>
             <p>按分组与年份浏览归档项目，支持检索、评论与导出。</p>
           </div>
         </a>
-      </div>
-    </section>
-    <section class="panel vision-panel">
-      <div class="panel-header">
-        <div>
-          <h2>基板热脏污识别</h2>
-          <p class="panel-sub">粘贴或拖放检测图，系统即时定位热脏污区域并给出类型概率，人工订正会持续强化模型。</p>
-        </div>
-        <div class="vision-summary" id="visionSummary">
-          <div class="vision-summary-status">待命</div>
-          <div class="vision-summary-meta">等待图像输入</div>
-        </div>
-      </div>
-      <div class="vision-layout">
-        <div class="vision-stage">
-          <div class="vision-upload" id="visionUpload" tabindex="0">
-            <div class="vision-placeholder" id="visionPlaceholder">
-              <strong>粘贴 (Ctrl+V)</strong> 或拖放玻璃检测图到此处
-              <span>支持 PNG / JPG / WEBP，自动启动识别</span>
-            </div>
-            <canvas id="visionCanvas" class="vision-canvas hidden"></canvas>
-            <div id="visionOverlay" class="vision-overlay hidden"></div>
+        <a class="tool-card" href="ai-vision.html">
+          <div class="tool-icon" aria-hidden="true">视觉</div>
+          <div class="tool-body">
+            <h3>基板热脏污识别</h3>
+            <p>进入专用工作台，执行热脏污检测、订正与强化学习。</p>
           </div>
-          <div class="vision-stage-footer">
-            <button type="button" class="ghost-button" id="visionUploadBtn">选择文件</button>
-            <input type="file" id="visionFileInput" accept="image/png,image/jpeg,image/jpg,image/webp" class="hidden">
-            <div class="vision-hint">输出仅保留识别时间与类型，所有订正均纳入强化学习。</div>
-          </div>
-        </div>
-        <div class="vision-side">
-          <div class="vision-side-header">
-            <div class="vision-side-title">识别结果</div>
-            <button type="button" class="ghost-button" id="visionHistoryToggle">历史</button>
-          </div>
-          <div id="visionFindings" class="vision-findings"></div>
-        </div>
-      </div>
-      <div class="vision-history hidden" id="visionHistory">
-        <div class="vision-history-header">
-          <div class="vision-side-title">识别历史</div>
-          <div class="vision-history-meta">自动记录最近 20 次检测</div>
-        </div>
-        <div id="visionHistoryList" class="vision-history-list"></div>
+        </a>
       </div>
     </section>
     <section class="panel">
       <h2>实验性工具</h2>
       <div class="tool-grid compact">
         <div class="tool-card ghost">
-          <div class="tool-icon">⚙️</div>
+          <div class="tool-icon" aria-hidden="true">配置</div>
           <div class="tool-body">
             <h3>术语扩展配置</h3>
             <p>自定义领域术语及同义词，增强本地推理（敬请期待）。</p>
           </div>
         </div>
         <div class="tool-card ghost">
-          <div class="tool-icon">🧾</div>
+          <div class="tool-icon" aria-hidden="true">日志</div>
           <div class="tool-body">
             <h3>日志智能摘要</h3>
             <p>自动总结对话与推理日志，生成结构化报告（规划中）。</p>
@@ -132,6 +96,5 @@
 </div>
 <footer class="global-footer">©️吴嘉辉</footer>
 <script src="scripts/app.js"></script>
-<script src="scripts/tools-vision.js"></script>
 </body>
 </html>

@@ -8,6 +8,7 @@
   var canvas = null;
   var ctx = null;
   var overlay = null;
+  var selectionLayer = null;
   var resultsContainer = null;
   var summaryContainer = null;
   var historyPanel = null;
@@ -15,7 +16,17 @@
   var historyToggle = null;
   var fileInput = null;
   var uploadButton = null;
+  var exportButton = null;
+  var noteForm = null;
+  var noteInput = null;
+  var historySearch = null;
   var draggingTimer = null;
+  var selectionBox = null;
+  var selectionMode = null;
+  var selectionStart = null;
+  var isSelecting = false;
+  var historyFilter = "";
+  var activeInference = null;
 
   function makeId(prefix) {
     var base = Date.now().toString(36) + Math.random().toString(36).substr(2, 6);
@@ -80,6 +91,7 @@
     placeholder = document.getElementById("visionPlaceholder");
     canvas = document.getElementById("visionCanvas");
     overlay = document.getElementById("visionOverlay");
+    selectionLayer = document.getElementById("visionSelection");
     resultsContainer = document.getElementById("visionFindings");
     summaryContainer = document.getElementById("visionSummary");
     historyPanel = document.getElementById("visionHistory");
@@ -87,11 +99,19 @@
     historyToggle = document.getElementById("visionHistoryToggle");
     fileInput = document.getElementById("visionFileInput");
     uploadButton = document.getElementById("visionUploadBtn");
+    exportButton = document.getElementById("visionExportBtn");
+    noteForm = document.getElementById("visionNoteForm");
+    noteInput = document.getElementById("visionNoteInput");
+    historySearch = document.getElementById("visionHistorySearch");
 
     if (!dropzone || !canvas || !overlay || !resultsContainer) {
       return;
     }
     ctx = canvas.getContext("2d");
+    if (selectionLayer) {
+      selectionLayer.innerHTML = "";
+      selectionLayer.classList.add("hidden");
+    }
     bindEvents();
     renderEmptyState();
     if (typeof api.subscribe === "function") {
@@ -103,7 +123,11 @@
 
   function bindEvents() {
     dropzone.addEventListener("paste", handlePaste);
-    dropzone.addEventListener("click", function () {
+    dropzone.addEventListener("click", function (evt) {
+      if (selectionMode) {
+        evt.preventDefault();
+        return;
+      }
       if (fileInput) {
         fileInput.click();
       }
@@ -137,6 +161,9 @@
     if (uploadButton) {
       uploadButton.addEventListener("click", function (evt) {
         evt.preventDefault();
+        if (selectionMode) {
+          exitSelectionMode();
+        }
         if (fileInput) {
           fileInput.click();
         }
@@ -153,6 +180,30 @@
         }
       });
     }
+    if (exportButton) {
+      exportButton.addEventListener("click", function (evt) {
+        evt.preventDefault();
+        handleExport();
+      });
+    }
+    if (noteForm) {
+      noteForm.addEventListener("submit", function (evt) {
+        evt.preventDefault();
+        handleNoteSubmit();
+      });
+    }
+    if (historySearch) {
+      historySearch.addEventListener("input", function () {
+        historyFilter = (historySearch.value || "").trim();
+        renderHistory();
+      });
+    }
+    if (canvas) {
+      canvas.addEventListener("mousedown", handleCanvasMouseDown);
+    }
+    document.addEventListener("mousemove", handleCanvasMouseMove);
+    document.addEventListener("mouseup", handleCanvasMouseUp);
+    document.addEventListener("keydown", handleKeyDown);
   }
 
   function scheduleDragReset() {
@@ -165,7 +216,262 @@
     }, 160);
   }
 
+  function ensureSelectionBox() {
+    if (!selectionLayer) {
+      return null;
+    }
+    if (!selectionBox) {
+      selectionBox = document.createElement("div");
+      selectionBox.className = "vision-selection-box";
+      selectionLayer.appendChild(selectionBox);
+    }
+    return selectionBox;
+  }
+
+  function exitSelectionMode() {
+    selectionMode = null;
+    selectionStart = null;
+    isSelecting = false;
+    if (selectionLayer) {
+      selectionLayer.classList.add("hidden");
+      selectionLayer.innerHTML = "";
+      selectionBox = null;
+    }
+    if (dropzone) {
+      dropzone.classList.remove("selecting");
+    }
+  }
+
+  function handleCanvasMouseDown(evt) {
+    if (!selectionMode || !canvas) {
+      return;
+    }
+    evt.preventDefault();
+    var rect = canvas.getBoundingClientRect();
+    var x = clamp(evt.clientX - rect.left, 0, canvas.width);
+    var y = clamp(evt.clientY - rect.top, 0, canvas.height);
+    selectionStart = { x: x, y: y };
+    isSelecting = true;
+    if (selectionLayer) {
+      selectionLayer.classList.remove("hidden");
+    }
+    ensureSelectionBox();
+    updateSelectionBox(x, y, x, y);
+  }
+
+  function handleCanvasMouseMove(evt) {
+    if (!isSelecting || !selectionStart || !canvas || !selectionBox) {
+      return;
+    }
+    var rect = canvas.getBoundingClientRect();
+    var x = clamp(evt.clientX - rect.left, 0, canvas.width);
+    var y = clamp(evt.clientY - rect.top, 0, canvas.height);
+    updateSelectionBox(selectionStart.x, selectionStart.y, x, y);
+  }
+
+  function handleCanvasMouseUp(evt) {
+    if (!isSelecting || !selectionStart || !canvas) {
+      return;
+    }
+    handleCanvasMouseMove(evt);
+    finalizeSelection();
+  }
+
+  function handleKeyDown(evt) {
+    if (evt.key === "Escape" && selectionMode) {
+      exitSelectionMode();
+    }
+  }
+
+  function updateSelectionBox(x1, y1, x2, y2) {
+    if (!selectionBox) {
+      return;
+    }
+    var left = Math.min(x1, x2);
+    var top = Math.min(y1, y2);
+    var width = Math.abs(x2 - x1);
+    var height = Math.abs(y2 - y1);
+    selectionBox.style.left = left + "px";
+    selectionBox.style.top = top + "px";
+    selectionBox.style.width = width + "px";
+    selectionBox.style.height = height + "px";
+    selectionBox.setAttribute("data-x", left);
+    selectionBox.setAttribute("data-y", top);
+    selectionBox.setAttribute("data-width", width);
+    selectionBox.setAttribute("data-height", height);
+  }
+
+  function finalizeSelection() {
+    if (!selectionBox || !selectionMode) {
+      exitSelectionMode();
+      return;
+    }
+    var width = parseFloat(selectionBox.getAttribute("data-width") || "0");
+    var height = parseFloat(selectionBox.getAttribute("data-height") || "0");
+    if (width < 12 || height < 12) {
+      notify("圈选区域过小，请重新尝试");
+      exitSelectionMode();
+      return;
+    }
+    var bounds = {
+      x: Math.round(parseFloat(selectionBox.getAttribute("data-x") || "0")),
+      y: Math.round(parseFloat(selectionBox.getAttribute("data-y") || "0")),
+      width: Math.round(width),
+      height: Math.round(height)
+    };
+    var patch = {
+      bounds: bounds,
+      status: "corrected",
+      correctedBy: getCurrentUser(),
+      correctedAt: new Date().toISOString()
+    };
+    if (api && typeof api.updateFinding === "function") {
+      api.updateFinding(selectionMode.inferenceId, selectionMode.findingId, patch);
+    }
+    if (api && typeof api.recordCorrection === "function") {
+      var base = selectionMode.finding || {};
+      var totalArea = canvas.width * canvas.height || 1;
+      var ratio = totalArea > 0 ? bounds.width * bounds.height / totalArea : 0;
+      api.recordCorrection({
+        inferenceId: selectionMode.inferenceId,
+        findingId: selectionMode.findingId,
+        previousType: base.type || "",
+        targetType: base.type || "",
+        probability: base.probability || 0,
+        areaRatio: ratio,
+        heatScore: base.metrics && base.metrics.heatScore ? base.metrics.heatScore : 0,
+        group: base.group || null,
+        note: "圈选主体调整",
+        correctedBy: getCurrentUser(),
+        correctedAt: new Date().toISOString()
+      });
+    }
+    notify("主体区域已更新");
+    exitSelectionMode();
+  }
+
+  function enterSelectionMode(inferenceId, findingId, finding) {
+    if (!dropzone || !canvas) {
+      return;
+    }
+    var snapshot = null;
+    if (finding) {
+      try {
+        snapshot = JSON.parse(JSON.stringify(finding));
+      } catch (err) {
+        snapshot = finding;
+      }
+    }
+    selectionMode = { inferenceId: inferenceId, findingId: findingId, finding: snapshot };
+    isSelecting = false;
+    selectionStart = null;
+    if (selectionLayer) {
+      selectionLayer.innerHTML = "";
+      selectionLayer.classList.remove("hidden");
+    }
+    dropzone.classList.add("selecting");
+    notify("请在图像上拖动框选目标区域，按 Esc 取消");
+  }
+
+  function handleExport() {
+    if (!activeInference || !canvas || canvas.width === 0 || canvas.height === 0) {
+      notify("暂无识别结果可导出");
+      return;
+    }
+    try {
+      var exportCanvas = document.createElement("canvas");
+      exportCanvas.width = canvas.width;
+      exportCanvas.height = canvas.height;
+      var exportCtx = exportCanvas.getContext("2d");
+      exportCtx.drawImage(canvas, 0, 0);
+      if (activeInference.findings && activeInference.findings.length > 0) {
+        exportCtx.lineWidth = 2;
+        exportCtx.font = "bold 14px 'Microsoft YaHei',sans-serif";
+        for (var i = 0; i < activeInference.findings.length; i += 1) {
+          var item = activeInference.findings[i];
+          if (!item.bounds) {
+            continue;
+          }
+          exportCtx.strokeStyle = "rgba(79,111,217,0.9)";
+          exportCtx.fillStyle = "rgba(79,111,217,0.2)";
+          exportCtx.beginPath();
+          exportCtx.rect(item.bounds.x, item.bounds.y, item.bounds.width, item.bounds.height);
+          exportCtx.fill();
+          exportCtx.stroke();
+          exportCtx.fillStyle = "rgba(15,23,42,0.9)";
+          exportCtx.fillText(item.type + " " + percent(item.probability), item.bounds.x + 8, item.bounds.y + 20);
+        }
+      }
+      var iso = new Date().toISOString();
+      var fileName = "ThermoClean-" + iso.replace(/[-:TZ.]/g, "").slice(0, 14) + ".png";
+      var link = document.createElement("a");
+      link.href = exportCanvas.toDataURL("image/png");
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      if (api && typeof api.updateInference === "function") {
+        var exports = activeInference.exports ? activeInference.exports.slice() : [];
+        exports.unshift({
+          id: makeId("export"),
+          createdAt: iso,
+          fileName: fileName,
+          createdBy: getCurrentUser()
+        });
+        if (exports.length > 10) {
+          exports = exports.slice(0, 10);
+        }
+        api.updateInference(activeInference.id, {
+          lastExportedAt: iso,
+          lastExportFile: fileName,
+          exports: exports
+        });
+      }
+      notify("标注图已导出");
+    } catch (err) {
+      console.error("export failed", err);
+      notify("导出失败，请重试");
+    }
+  }
+
+  function handleNoteSubmit() {
+    if (!noteInput || !activeInference) {
+      return;
+    }
+    var note = noteInput.value || "";
+    if (api && typeof api.updateInference === "function") {
+      api.updateInference(activeInference.id, { notes: note });
+    }
+    notify("识别备注已保存");
+  }
+
+  function updateExportState(inference) {
+    if (!exportButton) {
+      return;
+    }
+    if (!inference) {
+      exportButton.disabled = true;
+      return;
+    }
+    exportButton.disabled = false;
+  }
+
+  function updateNoteForm(inference) {
+    if (!noteForm) {
+      return;
+    }
+    if (!inference) {
+      noteForm.classList.add("hidden");
+      return;
+    }
+    noteForm.classList.remove("hidden");
+    if (noteInput) {
+      noteInput.value = inference.notes || "";
+    }
+  }
+
   function handleSnapshot(snapshot) {
+    exitSelectionMode();
     if (!snapshot) {
       currentSnapshot = { history: [], groups: [], corrections: [] };
     } else {
@@ -207,6 +513,10 @@
     if (summaryContainer) {
       summaryContainer.innerHTML = '<div class="vision-summary-status">待命</div><div class="vision-summary-meta">等待图像输入</div>';
     }
+    activeInference = null;
+    updateExportState(null);
+    updateNoteForm(null);
+    focusOverlay(null);
   }
 
   function handlePaste(evt) {
@@ -291,6 +601,7 @@
       notify("仅支持 PNG、JPG、WEBP 图像");
       return;
     }
+    exitSelectionMode();
     var reader = new FileReader();
     reader.onload = function () {
       processImage(reader.result, file.name || file.type);
@@ -304,7 +615,16 @@
   function processImage(dataUrl, name) {
     var image = new Image();
     image.onload = function () {
-      var dimensions = fitSize(image.width, image.height, 1024, 640);
+      var bounds = dropzone ? dropzone.getBoundingClientRect() : null;
+      var maxWidth = 1024;
+      if (bounds && bounds.width) {
+        maxWidth = Math.max(320, Math.min(1080, Math.floor(bounds.width) - 48));
+      }
+      var maxHeight = 640;
+      if (window.innerHeight) {
+        maxHeight = Math.max(280, Math.min(620, Math.round(window.innerHeight * 0.6)));
+      }
+      var dimensions = fitSize(image.width, image.height, maxWidth, maxHeight);
       canvas.width = dimensions.width;
       canvas.height = dimensions.height;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -314,6 +634,11 @@
       }
       canvas.classList.remove("hidden");
       overlay.classList.remove("hidden");
+      if (selectionLayer) {
+        selectionLayer.classList.add("hidden");
+        selectionLayer.innerHTML = "";
+        selectionBox = null;
+      }
       clearOverlay();
       var start = now();
       var analysis = analyzeCanvas(dimensions.width, dimensions.height, currentSnapshot.corrections);
@@ -351,12 +676,15 @@
         stored = api.recordInference(inference) || inference;
       }
       activeInferenceId = stored && stored.id ? stored.id : inference.id;
+      activeInference = stored;
       if (api && typeof api.getSnapshot === "function") {
         handleSnapshot(api.getSnapshot());
       } else {
         drawInference(stored);
         renderFindings(stored);
         updateSummary(stored, analysis.summary);
+        updateExportState(stored);
+        updateNoteForm(stored);
       }
       notify("已完成 AI 识别");
     };
@@ -670,6 +998,7 @@
       clearOverlay();
       return;
     }
+    exitSelectionMode();
     var inference = null;
     for (var i = 0; i < currentSnapshot.history.length; i += 1) {
       if (currentSnapshot.history[i].id === activeInferenceId) {
@@ -681,9 +1010,13 @@
       inference = currentSnapshot.history[0];
       activeInferenceId = inference.id;
     }
+    activeInference = inference;
     drawInference(inference);
     renderFindings(inference);
     updateSummary(inference, inference.summary || null);
+    updateExportState(inference);
+    updateNoteForm(inference);
+    highlightHistoryActive();
   }
 
   function drawInference(inference) {
@@ -702,6 +1035,7 @@
         placeholder.classList.add("hidden");
       }
       clearOverlay();
+      focusOverlay(null);
       if (inference.findings) {
         for (var i = 0; i < inference.findings.length; i += 1) {
           renderOverlayBox(inference.findings[i]);
@@ -722,12 +1056,17 @@
     if (!overlay || !finding || !finding.bounds) {
       return;
     }
+    var x = clamp(finding.bounds.x, 0, canvas.width);
+    var y = clamp(finding.bounds.y, 0, canvas.height);
+    var width = clamp(finding.bounds.width, 1, canvas.width - x);
+    var height = clamp(finding.bounds.height, 1, canvas.height - y);
     var box = document.createElement("div");
     box.className = "overlay-box";
-    box.style.left = finding.bounds.x + "px";
-    box.style.top = finding.bounds.y + "px";
-    box.style.width = finding.bounds.width + "px";
-    box.style.height = finding.bounds.height + "px";
+    box.setAttribute("data-id", finding.id);
+    box.style.left = x + "px";
+    box.style.top = y + "px";
+    box.style.width = width + "px";
+    box.style.height = height + "px";
     var label = document.createElement("div");
     label.textContent = finding.type;
     var score = document.createElement("span");
@@ -750,12 +1089,19 @@
     for (var i = 0; i < inference.findings.length; i += 1) {
       resultsContainer.appendChild(buildFindingCard(inference, inference.findings[i], i));
     }
+    focusOverlay(null);
   }
 
   function buildFindingCard(inference, finding, index) {
     var card = document.createElement("div");
     card.className = "vision-card";
     card.setAttribute("data-status", finding.status || "auto");
+    card.addEventListener("mouseenter", function () {
+      focusOverlay(finding.id);
+    });
+    card.addEventListener("mouseleave", function () {
+      focusOverlay(null);
+    });
     var header = document.createElement("div");
     header.className = "vision-card-header";
     var titleWrap = document.createElement("div");
@@ -835,6 +1181,14 @@
 
     var actions = document.createElement("div");
     actions.className = "vision-card-actions";
+    var selectBtn = document.createElement("button");
+    selectBtn.type = "button";
+    selectBtn.className = "ghost-button";
+    selectBtn.textContent = "圈选主体";
+    selectBtn.addEventListener("click", function () {
+      exitSelectionMode();
+      enterSelectionMode(inference.id, finding.id, finding);
+    });
     var confirmBtn = document.createElement("button");
     confirmBtn.type = "button";
     confirmBtn.className = "ghost-button";
@@ -890,6 +1244,7 @@
         });
       }
     });
+    actions.appendChild(selectBtn);
     actions.appendChild(confirmBtn);
     actions.appendChild(correctBtn);
 
@@ -955,7 +1310,8 @@
     }
     var typeText = summary && summary.dominantType ? summary.dominantType : (inference.findings && inference.findings.length > 0 ? inference.findings[0].type : "未检测到异常");
     var runText = formatDateTime(inference.runAt);
-    summaryContainer.innerHTML = '<div class="vision-summary-status">' + typeText + '</div><div class="vision-summary-meta">识别时间 ' + runText + '</div>';
+    var exportText = inference.lastExportedAt ? '<div class="vision-summary-meta">最近导出 ' + formatDateTime(inference.lastExportedAt) + '</div>' : "";
+    summaryContainer.innerHTML = '<div class="vision-summary-status">' + typeText + '</div><div class="vision-summary-meta">识别时间 ' + runText + '</div>' + exportText;
   }
 
   function renderHistory() {
@@ -970,15 +1326,40 @@
       historyList.appendChild(empty);
       return;
     }
-    for (var i = 0; i < currentSnapshot.history.length; i += 1) {
-      var inference = currentSnapshot.history[i];
-      historyList.appendChild(buildHistoryItem(inference));
+    var records = currentSnapshot.history.slice();
+    var filter = historyFilter ? historyFilter.toLowerCase() : "";
+    var hasFilter = filter.length > 0;
+    var matched = [];
+    for (var i = 0; i < records.length; i += 1) {
+      var inference = records[i];
+      if (!hasFilter) {
+        matched.push(inference);
+        continue;
+      }
+      var note = inference.notes ? inference.notes.toLowerCase() : "";
+      var type = inference.summary && inference.summary.dominantType ? inference.summary.dominantType.toLowerCase() : "";
+      var timeText = formatDateTime(inference.runAt).toLowerCase();
+      if (note.indexOf(filter) !== -1 || type.indexOf(filter) !== -1 || timeText.indexOf(filter) !== -1) {
+        matched.push(inference);
+      }
     }
+    if (matched.length === 0) {
+      var none = document.createElement("div");
+      none.className = "vision-empty";
+      none.textContent = "未找到匹配的记录";
+      historyList.appendChild(none);
+      return;
+    }
+    for (var j = 0; j < matched.length; j += 1) {
+      historyList.appendChild(buildHistoryItem(matched[j]));
+    }
+    highlightHistoryActive();
   }
 
   function buildHistoryItem(inference) {
     var item = document.createElement("div");
     item.className = "vision-history-item";
+    item.setAttribute("data-id", inference.id);
     var title = document.createElement("div");
     title.className = "history-title";
     var type = inference.summary && inference.summary.dominantType ? inference.summary.dominantType : (inference.findings && inference.findings.length > 0 ? inference.findings[0].type : "未检测");
@@ -986,6 +1367,18 @@
     var meta = document.createElement("div");
     meta.className = "history-meta";
     meta.textContent = formatDateTime(inference.runAt);
+    var note = null;
+    if (inference.notes) {
+      note = document.createElement("div");
+      note.className = "history-note";
+      note.textContent = inference.notes;
+    }
+    var exportMeta = null;
+    if (inference.lastExportedAt) {
+      exportMeta = document.createElement("div");
+      exportMeta.className = "history-meta";
+      exportMeta.textContent = "最近导出 " + formatDateTime(inference.lastExportedAt);
+    }
     var actions = document.createElement("div");
     actions.className = "history-actions";
     var analyst = document.createElement("span");
@@ -1003,8 +1396,42 @@
     actions.appendChild(view);
     item.appendChild(title);
     item.appendChild(meta);
+    if (note) {
+      item.appendChild(note);
+    }
+    if (exportMeta) {
+      item.appendChild(exportMeta);
+    }
     item.appendChild(actions);
     return item;
+  }
+
+  function highlightHistoryActive() {
+    if (!historyList) {
+      return;
+    }
+    var cards = historyList.querySelectorAll(".vision-history-item");
+    for (var i = 0; i < cards.length; i += 1) {
+      cards[i].classList.remove("active");
+      if (activeInferenceId && cards[i].getAttribute("data-id") === activeInferenceId) {
+        cards[i].classList.add("active");
+      }
+    }
+  }
+
+  function focusOverlay(findingId) {
+    if (!overlay) {
+      return;
+    }
+    var boxes = overlay.querySelectorAll(".overlay-box");
+    for (var i = 0; i < boxes.length; i += 1) {
+      var box = boxes[i];
+      if (findingId && box.getAttribute("data-id") === findingId) {
+        box.classList.add("active");
+      } else {
+        box.classList.remove("active");
+      }
+    }
   }
 
   window.AIToolsVision = {

@@ -520,8 +520,48 @@
       if (!inference.id) {
         inference.id = uuid();
       }
+      if (typeof inference.notes !== "string") {
+        inference.notes = "";
+      }
+      if (!Array.isArray(inference.exports)) {
+        inference.exports = [];
+      }
+      if (inference.lastExportedAt && typeof inference.lastExportedAt !== "string") {
+        inference.lastExportedAt = String(inference.lastExportedAt);
+      }
+      if (inference.lastExportFile && typeof inference.lastExportFile !== "string") {
+        inference.lastExportFile = String(inference.lastExportFile);
+      }
       if (!inference.findings || !Array.isArray(inference.findings)) {
         inference.findings = [];
+      }
+      if (Array.isArray(inference.exports)) {
+        for (var ve = 0; ve < inference.exports.length; ve += 1) {
+          var exportEntry = inference.exports[ve];
+          if (!exportEntry || typeof exportEntry !== "object") {
+            inference.exports[ve] = {
+              id: uuid(),
+              createdAt: new Date().toISOString(),
+              fileName: "",
+              createdBy: currentUser ? currentUser.username : ""
+            };
+            continue;
+          }
+          if (!exportEntry.id) {
+            exportEntry.id = uuid();
+          }
+          if (!exportEntry.createdAt) {
+            exportEntry.createdAt = new Date().toISOString();
+          }
+          if (typeof exportEntry.fileName !== "string") {
+            exportEntry.fileName = "";
+          }
+          if (typeof exportEntry.createdBy !== "string") {
+            exportEntry.createdBy = currentUser ? currentUser.username : "";
+          }
+        }
+      } else {
+        inference.exports = [];
       }
       for (var vf = 0; vf < inference.findings.length; vf += 1) {
         var finding = inference.findings[vf];
@@ -1169,9 +1209,31 @@
       image: entry.image || null,
       findings: [],
       summary: entry.summary || null,
+      notes: typeof entry.notes === "string" ? entry.notes : "",
+      exports: Array.isArray(entry.exports) ? entry.exports.slice() : [],
+      lastExportedAt: entry.lastExportedAt || null,
+      lastExportFile: entry.lastExportFile || "",
       createdAt: now,
       updatedAt: now
     };
+    if (Array.isArray(sanitized.exports)) {
+      var normalizedExports = [];
+      for (var ex = 0; ex < sanitized.exports.length; ex += 1) {
+        var rawExport = sanitized.exports[ex];
+        if (!rawExport || typeof rawExport !== "object") {
+          continue;
+        }
+        normalizedExports.push({
+          id: rawExport.id || uuid(),
+          createdAt: rawExport.createdAt || now,
+          fileName: typeof rawExport.fileName === "string" ? rawExport.fileName : "",
+          createdBy: typeof rawExport.createdBy === "string" ? rawExport.createdBy : (currentUser ? currentUser.username : "")
+        });
+      }
+      sanitized.exports = normalizedExports;
+    } else {
+      sanitized.exports = [];
+    }
     if (entry.findings && Array.isArray(entry.findings)) {
       for (var i = 0; i < entry.findings.length; i += 1) {
         var finding = entry.findings[i];
@@ -1229,6 +1291,58 @@
         emitVisionChange();
         return JSON.parse(JSON.stringify(finding));
       }
+    }
+    return null;
+  }
+
+  function updateVisionInference(inferenceId, patch) {
+    ensureVisionStore();
+    if (!inferenceId || !patch) {
+      return null;
+    }
+    for (var i = 0; i < state.tools.visionHistory.length; i += 1) {
+      var inference = state.tools.visionHistory[i];
+      if (inference.id !== inferenceId) {
+        continue;
+      }
+      for (var key in patch) {
+        if (patch.hasOwnProperty(key)) {
+          if (key === "exports" && Array.isArray(patch[key])) {
+            var newExports = [];
+            for (var e = 0; e < patch[key].length; e += 1) {
+              var item = patch[key][e];
+              if (!item || typeof item !== "object") {
+                continue;
+              }
+              newExports.push({
+                id: item.id || uuid(),
+                createdAt: item.createdAt || new Date().toISOString(),
+                fileName: typeof item.fileName === "string" ? item.fileName : "",
+                createdBy: typeof item.createdBy === "string" ? item.createdBy : (currentUser ? currentUser.username : "")
+              });
+            }
+            inference.exports = newExports;
+            continue;
+          }
+          if (key === "notes") {
+            inference.notes = typeof patch[key] === "string" ? patch[key] : "";
+            continue;
+          }
+          if (key === "lastExportedAt" && patch[key]) {
+            inference.lastExportedAt = String(patch[key]);
+            continue;
+          }
+          if (key === "lastExportFile") {
+            inference.lastExportFile = typeof patch[key] === "string" ? patch[key] : "";
+            continue;
+          }
+          inference[key] = patch[key];
+        }
+      }
+      inference.updatedAt = new Date().toISOString();
+      saveState();
+      emitVisionChange();
+      return JSON.parse(JSON.stringify(inference));
     }
     return null;
   }
@@ -6780,16 +6894,29 @@
     ensureActiveBank();
     renderBankList();
     updateBankBadge();
+    var createBankBtn = document.getElementById("createBank");
+    if (createBankBtn) {
+      createBankBtn.addEventListener("click", createBank);
+    }
+    var logoutBtn = document.getElementById("logoutButton");
+    if (logoutBtn) {
+      logoutBtn.addEventListener("click", logout);
+    }
+  }
+
+  function initVisionPage() {
+    requireAuth();
+    setNavUserInfo();
+    ensureActiveBank();
+    renderBankList();
+    updateBankBadge();
     if (window.AIToolsVision && typeof window.AIToolsVision.mount === "function") {
       window.AIToolsVision.mount({
-        getGroups: function () {
-          return getContaminationGroups();
-        },
-        getCorrections: function () {
-          return getVisionCorrections();
-        },
+        getGroups: getContaminationGroups,
+        getCorrections: getVisionCorrections,
         recordInference: recordVisionInference,
         updateFinding: updateVisionFinding,
+        updateInference: updateVisionInference,
         recordCorrection: recordVisionCorrection,
         subscribe: subscribeVision,
         getSnapshot: getVisionSnapshot,
@@ -6861,6 +6988,8 @@
         initAdminPage();
       } else if (page === "tools") {
         initToolsPage();
+      } else if (page === "vision") {
+        initVisionPage();
       } else {
         initNavigation();
       }

@@ -2309,19 +2309,19 @@ textarea:focus {
   min-width: 86px;
 }
 
-.vision-panel .panel-header {
+
+.vision-workbench {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  flex-direction: column;
   gap: 24px;
-  flex-wrap: wrap;
+  padding: 28px;
 }
 
-.vision-panel .panel-sub {
-  margin-top: 6px;
-  font-size: 13px;
-  color: #64748b;
-  max-width: 520px;
+.vision-workbench-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+  gap: 28px;
+  align-items: start;
 }
 
 .vision-summary {
@@ -2363,6 +2363,7 @@ textarea:focus {
   flex-direction: column;
   gap: 18px;
   box-shadow: 0 22px 40px rgba(15, 23, 42, 0.08);
+  position: relative;
 }
 
 .vision-upload {
@@ -2385,6 +2386,11 @@ textarea:focus {
   border-color: #4f6fd9;
   background: linear-gradient(135deg, rgba(220, 231, 255, 0.92), rgba(236, 243, 255, 0.98));
   box-shadow: inset 0 0 0 2px rgba(79, 111, 217, 0.18);
+}
+
+.vision-upload.selecting {
+  border-color: rgba(236, 72, 153, 0.8);
+  box-shadow: inset 0 0 0 2px rgba(236, 72, 153, 0.2);
 }
 
 .vision-placeholder {
@@ -2410,6 +2416,8 @@ textarea:focus {
 
 .vision-canvas {
   width: 100%;
+  height: auto;
+  max-height: 540px;
   display: block;
   border-radius: 14px;
   background: #0f172a;
@@ -2421,31 +2429,58 @@ textarea:focus {
   pointer-events: none;
 }
 
+.vision-selection {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.vision-selection-box {
+  position: absolute;
+  border: 2px dashed rgba(236, 72, 153, 0.9);
+  background: rgba(236, 72, 153, 0.18);
+  border-radius: 12px;
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.16);
+}
+
 .vision-overlay .overlay-box {
   position: absolute;
-  border: 2px dashed rgba(79, 111, 217, 0.75);
+  border: 2px solid rgba(79, 111, 217, 0.85);
   border-radius: 12px;
-  background: rgba(79, 111, 217, 0.1);
-  color: #1f2937;
+  background: rgba(79, 111, 217, 0.18);
+  color: #0f172a;
   padding: 6px 8px;
   font-size: 12px;
   font-weight: 600;
-  backdrop-filter: blur(2px);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.22);
 }
 
 .vision-overlay .overlay-box .overlay-score {
   display: block;
   font-size: 11px;
   font-weight: 500;
-  color: #0f172a;
-  opacity: 0.72;
+  color: #1e293b;
+  opacity: 0.9;
+}
+
+.vision-overlay .overlay-box.active {
+  border-color: rgba(236, 72, 153, 0.95);
+  background: rgba(236, 72, 153, 0.28);
+  box-shadow: 0 16px 32px rgba(236, 72, 153, 0.28);
 }
 
 .vision-stage-footer {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
+}
+
+.vision-stage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .vision-hint {
@@ -2482,8 +2517,34 @@ textarea:focus {
   flex-direction: column;
   gap: 16px;
   max-height: 520px;
-  overflow: auto;
+  overflow-y: auto;
   padding-right: 4px;
+}
+
+.vision-note-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.vision-note-form label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.vision-note-form textarea {
+  min-height: 80px;
+}
+
+.vision-note-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.vision-note-form.hidden {
+  display: none;
 }
 
 .vision-card {
@@ -2631,6 +2692,26 @@ textarea:focus {
   gap: 12px;
 }
 
+.vision-history-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.vision-history-actions input[type="search"] {
+  padding: 8px 12px;
+  border: 1px solid rgba(148, 163, 210, 0.6);
+  border-radius: 12px;
+  font-size: 13px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.vision-history-actions input[type="search"]:focus {
+  border-color: #4f6fd9;
+  box-shadow: 0 0 0 2px rgba(79, 111, 217, 0.18);
+  outline: none;
+}
+
 .vision-history-meta {
   font-size: 12px;
   color: #64748b;
@@ -2653,10 +2734,21 @@ textarea:focus {
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
 }
 
+.vision-history-item.active {
+  border-color: rgba(79, 111, 217, 0.85);
+  box-shadow: 0 16px 36px rgba(79, 111, 217, 0.18);
+}
+
 .vision-history-item .history-title {
   font-size: 14px;
   font-weight: 600;
   color: #1f2937;
+}
+
+.vision-history-item .history-note {
+  font-size: 12px;
+  color: #475569;
+  line-height: 1.6;
 }
 
 .vision-history-item .history-meta {
@@ -2686,12 +2778,8 @@ textarea:focus {
 }
 
 @media (max-width: 1200px) {
-  .vision-layout {
+  .vision-workbench-grid {
     grid-template-columns: 1fr;
-  }
-
-  .vision-side {
-    order: 2;
   }
 }
 
@@ -2704,5 +2792,11 @@ textarea:focus {
   .vision-upload {
     min-height: 260px;
   }
+}
+
+.toolbox-link {
+  display: block;
+  margin-top: 12px;
+  text-align: center;
 }
 
