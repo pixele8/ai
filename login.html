@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · 虹小聊</title>
+<link rel="stylesheet" href="styles/app.css">
+</head>
+<body data-page="login">
+<div class="auth-shell">
+  <div class="auth-backdrop"></div>
+  <div class="auth-grid">
+    <section class="auth-intro">
+      <div class="intro-badge">虹小聊 · 智能决策助手</div>
+      <h1>离线也能畅享知识推演</h1>
+      <p>纯前端部署、工业白主题与多记忆库协作，让团队在安全环境中完成知识检索、FAQ 管理与决策推理。</p>
+      <ul>
+        <li>本地存储与 RBAC 权限</li>
+        <li>知识库 / 决策链 双引擎</li>
+        <li>工业科技感界面体验</li>
+      </ul>
+    </section>
+    <section class="auth-card">
+      <div class="auth-card-header">
+        <div class="auth-logo">虹</div>
+        <div>
+          <h2>欢迎登陆虹小聊</h2>
+          <p>开启离线智能对话之旅</p>
+        </div>
+      </div>
+      <div class="auth-tabs">
+        <button class="auth-tab active" data-mode="login">登录</button>
+        <button class="auth-tab" data-mode="register">注册</button>
+      </div>
+      <form id="authForm" class="auth-form">
+        <div class="form-field">
+          <label for="username">用户名</label>
+          <input id="username" name="username" type="text" autocomplete="username" required>
+        </div>
+        <div class="form-field">
+          <label for="password">密码</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required>
+        </div>
+        <button type="submit" class="primary-button" id="authSubmit">登录</button>
+        <p class="auth-hint">默认管理员：用户名 admin · 密码 admin123</p>
+      </form>
+      <footer class="app-footer">©️吴嘉辉</footer>
+    </section>
+  </div>
+</div>
+<script src="scripts/app.js"></script>
+</body>
+</html>

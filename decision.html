@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>决策链 · 虹小聊</title>
+<link rel="stylesheet" href="styles/app.css">
+</head>
+<body data-page="decision">
+<div class="app-shell">
+  <aside class="sidebar" id="bankSidebar">
+    <div class="brand">虹小聊</div>
+    <div class="nav-group">
+      <a class="nav-link" href="index.html">对话</a>
+      <a class="nav-link" href="kb.html">知识库</a>
+      <a class="nav-link" href="faq.html">FAQ</a>
+      <a class="nav-link active" href="decision.html">决策链</a>
+      <a class="nav-link" href="ai-tools.html">AI 工具箱</a>
+      <a class="nav-link" href="admin.html">系统</a>
+    </div>
+    <div class="sidebar-section">
+      <div class="section-title">记忆库</div>
+      <div class="badge-list" id="bankList"></div>
+      <button class="ghost-button" id="createBank">新建记忆库</button>
+    </div>
+    <button class="ghost-button" id="logoutButton">退出登录</button>
+  </aside>
+  <main class="main-panel decision-main">
+    <header class="main-header">
+      <div class="header-info">
+        <div class="header-title">决策链管理</div>
+        <div class="header-sub">构建可追溯的时间轴与关联网络</div>
+      </div>
+      <div class="user-info" id="userInfo"></div>
+    </header>
+    <section class="panel decision-panel">
+      <div class="decision-grid">
+        <div class="decision-history">
+          <div class="history-header">
+            <button class="primary-button" id="newProject">新建项目</button>
+          </div>
+          <form id="projectForm" class="stack hidden">
+            <label>项目名称
+              <input type="text" id="projectName" required placeholder="请输入项目名称">
+            </label>
+            <label>项目分组
+              <select id="projectGroup">
+                <option value="">未分组</option>
+              </select>
+            </label>
+            <label>开始时间
+              <input type="datetime-local" id="projectStart" required>
+            </label>
+            <div class="form-row inline">
+              <button type="submit" class="primary-button">开始记录</button>
+              <button type="button" class="ghost-button" id="cancelProject">取消</button>
+            </div>
+          </form>
+          <div class="history-list" id="projectList"></div>
+        </div>
+      <div class="decision-canvas-area">
+        <div class="canvas-header">
+          <div>
+            <div class="canvas-title" id="activeProjectName">未选择项目</div>
+            <div class="canvas-meta" id="activeProjectMeta">开始时间：--</div>
+          </div>
+          <button class="primary-button" id="completeProject">完成决策</button>
+        </div>
+        <div id="timelineCanvas" class="timeline-canvas" tabindex="0">
+          <div class="timeline-placeholder" id="timelinePlaceholder">拖动右侧常用项目到此处，开始绘制决策链</div>
+        </div>
+        <div class="link-list" id="linkList"></div>
+        <div class="node-detail hidden" id="nodeDetailPanel">
+          <div class="node-detail-header">
+            <div>
+              <h3 id="nodeDetailTitle">节点详情</h3>
+              <div class="meta" id="nodeDetailMeta">请选择节点查看详情</div>
+            </div>
+            <button type="button" class="ghost-button" id="closeNodeDetail">关闭</button>
+          </div>
+          <div class="node-detail-body">
+            <label>节点名称
+              <input type="text" id="detailName" placeholder="请输入节点名称">
+            </label>
+            <label>开始时间
+              <input type="datetime-local" id="detailStart">
+            </label>
+            <label>开始原因
+              <textarea id="detailReason" rows="3" placeholder="触发该节点的背景与动因"></textarea>
+            </label>
+            <label>产生后果
+              <textarea id="detailImpact" rows="3" placeholder="该节点带来的直接影响"></textarea>
+            </label>
+            <label>备注
+              <textarea id="detailNote" rows="3" placeholder="补充说明、执行要点等"></textarea>
+            </label>
+            <div class="form-row inline">
+              <button type="button" class="ghost-button" id="detailLink">建立关联</button>
+              <button type="button" class="ghost-button danger" id="detailRemove">移除节点</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="decision-palette">
+        <h3>常用决策项目</h3>
+        <button class="ghost-button" type="button" id="managePresets">管理常用项目</button>
+        <div id="decisionPalette" class="palette-list"></div>
+        <form id="linkForm" class="link-form hidden">
+          <h4>建立关联</h4>
+          <p class="link-summary" id="linkSummary"></p>
+          <label>相关性
+              <input type="text" id="linkRelation" placeholder="例如：强相关/因果/支持" required>
+            </label>
+            <label>关联强度
+              <select id="linkStrength">
+                <option value="strong">强</option>
+                <option value="medium" selected>中</option>
+                <option value="weak">弱</option>
+              </select>
+            </label>
+            <label>备注
+              <textarea id="linkNote" rows="3" placeholder="补充说明（可选）"></textarea>
+            </label>
+            <div class="form-row inline">
+              <button type="submit" class="primary-button">保存关联</button>
+              <button type="button" class="ghost-button" id="cancelLink">取消</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </section>
+    <section class="panel">
+      <div class="section-header">
+        <div>历史记录</div>
+        <a class="text-button" href="decision-history.html">打开历史中心</a>
+      </div>
+      <div id="decisionHistory" class="history-timeline"></div>
+    </section>
+  </main>
+</div>
+<div class="modal hidden" id="presetModal">
+  <div class="modal-content wide">
+    <h3>管理常用决策项目</h3>
+    <div id="presetList" class="preset-list"></div>
+    <div class="form-row inline">
+      <button type="button" class="ghost-button" id="addPresetRow">添加条目</button>
+      <span class="row-spacer"></span>
+      <button type="button" class="primary-button" id="savePreset">保存</button>
+      <button type="button" class="ghost-button" id="cancelPreset">取消</button>
+    </div>
+  </div>
+</div>
+<div class="modal hidden" id="completeModal">
+  <div class="modal-content">
+    <h3>完成当前决策</h3>
+    <form id="completeForm" class="stack">
+      <label>结束时间
+        <input type="datetime-local" id="completeEnd" required>
+      </label>
+      <label>决策效果
+        <textarea id="completeOutcome" rows="4" placeholder="总结关键结果" required></textarea>
+      </label>
+      <label>决策评分 (1-10)
+        <input type="number" id="completeScore" min="1" max="10" required>
+      </label>
+      <div class="form-row inline">
+        <button type="submit" class="primary-button">保存</button>
+        <button type="button" class="ghost-button" id="cancelComplete">取消</button>
+      </div>
+    </form>
+  </div>
+</div>
+<footer class="global-footer">©️吴嘉辉</footer>
+<script src="scripts/app.js"></script>
+</body>
+</html>
