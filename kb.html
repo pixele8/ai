@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>知识库 · 虹小聊</title>
+<link rel="stylesheet" href="styles/app.css">
+</head>
+<body data-page="kb">
+<div class="app-shell">
+  <aside class="sidebar" id="bankSidebar">
+    <div class="brand">虹小聊</div>
+    <div class="nav-group">
+      <a class="nav-link" href="index.html">对话</a>
+      <a class="nav-link active" href="kb.html">知识库</a>
+      <a class="nav-link" href="faq.html">FAQ</a>
+      <a class="nav-link" href="favorites.html">收藏夹</a>
+      <a class="nav-link" href="decision.html">决策链</a>
+      <a class="nav-link" href="ai-tools.html">AI 工具箱</a>
+      <a class="nav-link" href="admin.html">系统</a>
+    </div>
+    <div class="sidebar-section">
+      <div class="section-title">记忆库</div>
+      <div class="badge-list" id="bankList"></div>
+      <button class="ghost-button" id="createBank">新建记忆库</button>
+    </div>
+    <button class="ghost-button" id="logoutButton">退出登录</button>
+  </aside>
+  <main class="main-panel">
+    <header class="main-header">
+      <div class="header-info">
+        <div class="bank-badge" id="activeBankBadge">未选择记忆库</div>
+        <div class="header-sub">上传文件或手动录入内容</div>
+      </div>
+      <div class="user-info" id="userInfo"></div>
+    </header>
+    <section class="panel">
+      <h2>上传文件</h2>
+      <div class="upload-group">
+        <label class="upload-button">选择文件
+          <input type="file" id="kbUploader" multiple accept=".txt,.md,.csv,.json,.html" hidden>
+        </label>
+        <span class="upload-info" id="kbUploadInfo">未选择文件</span>
+      </div>
+      <p class="panel-hint">支持 txt、md、csv、json、html，多文件将自动分块索引。</p>
+      <div class="panel-actions">
+        <label>chunkSize<input type="number" id="kbChunkSize" min="50" max="2000"></label>
+        <label>chunkOverlap<input type="number" id="kbChunkOverlap" min="0" max="500"></label>
+        <button class="primary-button" id="processFiles">开始摄取</button>
+      </div>
+      <div id="kbFileList" class="file-list"></div>
+    </section>
+    <section class="panel">
+      <h2>手动录入</h2>
+      <form id="manualForm" class="form-inline">
+        <input type="text" id="manualTitle" placeholder="标题" required>
+        <textarea id="manualBody" placeholder="正文" rows="4" required></textarea>
+        <button type="submit" class="primary-button">保存到记忆库</button>
+      </form>
+    </section>
+    <section class="panel">
+      <h2>索引预览</h2>
+      <div id="chunkPreview" class="chunk-preview"></div>
+    </section>
+  </main>
+</div>
+<div class="modal hidden" id="chunkModal">
+  <div class="modal-content wide">
+    <h3 id="chunkMeta">分段详情</h3>
+    <form id="chunkForm" class="stack">
+      <textarea id="chunkContent" rows="8" placeholder="编辑分段内容"></textarea>
+      <div class="form-row inline">
+        <button type="submit" class="primary-button">保存</button>
+        <button type="button" class="ghost-button" id="chunkCancel">取消</button>
+      </div>
+    </form>
+  </div>
+</div>
+<script src="scripts/app.js"></script>
+</body>
+</html>

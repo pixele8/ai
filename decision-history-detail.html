@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>决策详情 · 虹小聊</title>
+<link rel="stylesheet" href="styles/app.css">
+</head>
+<body data-page="decision-history-detail">
+<div class="app-shell">
+  <aside class="sidebar" id="bankSidebar">
+    <div class="brand">虹小聊</div>
+    <div class="nav-group">
+      <a class="nav-link" href="index.html">对话</a>
+      <a class="nav-link" href="kb.html">知识库</a>
+      <a class="nav-link" href="faq.html">FAQ</a>
+      <a class="nav-link" href="favorites.html">收藏夹</a>
+      <a class="nav-link" href="decision.html">决策链</a>
+      <a class="nav-link" href="ai-tools.html">AI 工具箱</a>
+      <a class="nav-link" href="admin.html">系统</a>
+    </div>
+    <div class="sidebar-section">
+      <div class="section-title">记忆库</div>
+      <div class="badge-list" id="bankList"></div>
+      <button class="ghost-button" id="createBank">新建记忆库</button>
+    </div>
+    <button class="ghost-button" id="logoutButton">退出登录</button>
+  </aside>
+  <main class="main-panel history-detail-main">
+    <header class="main-header">
+      <div class="header-info">
+        <div class="header-title" id="detailTitle">决策详情</div>
+        <div class="header-sub" id="detailSubtitle">查看项目全貌与备注</div>
+      </div>
+      <div class="user-info" id="userInfo"></div>
+    </header>
+    <section class="panel detail-meta" id="detailMeta"></section>
+    <section class="panel detail-timeline">
+      <header class="section-header">
+        <div>时间轴</div>
+      </header>
+      <div class="detail-timeline-grid">
+        <div id="detailCanvas" class="timeline-canvas readonly">
+          <div class="timeline-placeholder">该决策暂无节点</div>
+        </div>
+        <div class="node-detail readonly hidden" id="detailNodePanel">
+          <div class="node-detail-header">
+            <div>
+              <h3 id="detailNodeTitle">节点详情</h3>
+              <div class="meta" id="detailNodeMeta">请选择节点查看详细信息</div>
+            </div>
+          </div>
+          <div class="node-detail-body">
+            <div class="detail-field">
+              <div class="detail-label">开始时间</div>
+              <div class="detail-value" id="detailNodeStart">--</div>
+            </div>
+            <div class="detail-field">
+              <div class="detail-label">开始原因</div>
+              <div class="detail-value" id="detailNodeReason">--</div>
+            </div>
+            <div class="detail-field">
+              <div class="detail-label">产生后果</div>
+              <div class="detail-value" id="detailNodeImpact">--</div>
+            </div>
+            <div class="detail-field">
+              <div class="detail-label">备注</div>
+              <div class="detail-value" id="detailNodeNote">--</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section class="panel detail-links">
+      <header class="section-header">
+        <div>关联关系</div>
+      </header>
+      <div id="detailLinks" class="detail-link-list"></div>
+    </section>
+    <section class="panel detail-remarks">
+      <header class="section-header">
+        <div>项目备注</div>
+        <button type="button" class="ghost-button" id="historyExportSingle">导出该项目</button>
+      </header>
+      <textarea id="detailNote" rows="4" placeholder="补充整体说明、复盘要点"></textarea>
+    </section>
+    <section class="panel detail-comments">
+      <header class="section-header">
+        <div>评论记录</div>
+      </header>
+      <form id="commentForm" class="stack">
+        <textarea id="commentInput" rows="3" placeholder="输入评论或复盘建议"></textarea>
+        <div class="form-row inline">
+          <span class="row-spacer"></span>
+          <button type="submit" class="primary-button">发表</button>
+        </div>
+      </form>
+      <div id="commentList" class="comment-list"></div>
+    </section>
+  </main>
+</div>
+<script src="scripts/app.js"></script>
+</body>
+</html>
