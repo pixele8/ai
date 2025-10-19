@@ -50,7 +50,16 @@
     </section>
     <section class="panel">
       <h2>常用问题库</h2>
+      <form id="commonForm" class="form-inline">
+        <input type="text" id="commonInput" placeholder="输入常用问题" required>
+        <button type="submit" class="primary-button">新增</button>
+      </form>
       <div id="commonList" class="common-list"></div>
+    </section>
+    <section class="panel">
+      <h2>会话引导</h2>
+      <div class="guide-config" id="guideConfig"></div>
+      <button class="ghost-button" id="editGuide">配置引导表单</button>
     </section>
     <section class="panel">
       <h2>操作日志</h2>
@@ -60,6 +69,26 @@
       <div id="logList" class="log-list"></div>
     </section>
   </main>
+</div>
+<div class="modal hidden" id="guideEditModal">
+  <div class="modal-content wide">
+    <h3>配置会话引导</h3>
+    <form id="guideEditForm" class="stack">
+      <label>标题
+        <input type="text" id="guideEditTitle" placeholder="例如：项目沟通引导">
+      </label>
+      <label>说明
+        <textarea id="guideEditDesc" rows="3" placeholder="向用户说明需要填写的内容"></textarea>
+      </label>
+      <div class="guide-field-list" id="guideFieldList"></div>
+      <div class="form-row inline">
+        <button type="button" class="ghost-button" id="addGuideField">添加字段</button>
+        <span class="row-spacer"></span>
+        <button type="submit" class="primary-button">保存配置</button>
+        <button type="button" class="ghost-button" id="cancelGuideEdit">取消</button>
+      </div>
+    </form>
+  </div>
 </div>
 <footer class="global-footer">©️吴嘉辉</footer>
 <script src="scripts/app.js"></script>

@@ -20,6 +20,16 @@
   var chunkEditingId = null;
   var activeFileFilterId = null;
   var authBackdropRaf = null;
+  var decisionLayoutRaf = null;
+  var DEFAULT_SESSION_GUIDE = {
+    title: "新会话引导",
+    description: "请补充本次沟通的目标、关键背景和期望成果，以便虹小聊提供更精准的协助。",
+    fields: [
+      { id: "goal", label: "沟通目标", placeholder: "希望解决的关键问题" },
+      { id: "milestone", label: "关键时间节点", placeholder: "例如上线时间或里程碑" },
+      { id: "stakeholder", label: "主要干系人", placeholder: "列出需要同步的角色或团队" }
+    ]
+  };
 
   function padNumber(value) {
     var num = parseInt(value, 10);
@@ -322,7 +332,8 @@
           chunkOverlap: 80,
           faqLow: 40,
           faqHigh: 75
-        }
+        },
+        sessionGuide: JSON.parse(JSON.stringify(DEFAULT_SESSION_GUIDE))
       };
     }
     if (!state.adminFlags) {
@@ -342,6 +353,9 @@
     }
     if (typeof state.activeDecisionId === "undefined") {
       state.activeDecisionId = null;
+    }
+    if (!state.sessionGuide || !state.sessionGuide.fields) {
+      state.sessionGuide = JSON.parse(JSON.stringify(DEFAULT_SESSION_GUIDE));
     }
     normalizeState();
     saveState();
@@ -402,6 +416,21 @@
       }
       if (!bank.logs) {
         bank.logs = [];
+      }
+      for (var sessionIndex = 0; sessionIndex < bank.sessions.length; sessionIndex += 1) {
+        var sess = bank.sessions[sessionIndex];
+        if (!sess.id) {
+          sess.id = uuid();
+        }
+        if (!sess.title) {
+          sess.title = "会话";
+        }
+        if (!sess.messages) {
+          sess.messages = [];
+        }
+        if (!sess.guideAnswers || typeof sess.guideAnswers !== "object") {
+          sess.guideAnswers = {};
+        }
       }
       var fileMap = {};
       for (var f = 0; f < bank.files.length; f += 1) {
@@ -479,6 +508,9 @@
         if (!bank.common[m].id) {
           bank.common[m].id = uuid();
         }
+        if (!bank.common[m].createdAt) {
+          bank.common[m].createdAt = new Date().toISOString();
+        }
       }
     }
     var hasActive = false;
@@ -540,12 +572,36 @@
         if (!link.createdAt) {
           link.createdAt = new Date().toISOString();
         }
+        if (!link.strength) {
+          link.strength = "medium";
+        }
       }
     }
     if (state.decisions.length === 0) {
       state.activeDecisionId = null;
     } else if (!hasActive) {
       state.activeDecisionId = state.decisions[0].id;
+    }
+    if (!state.sessionGuide || !state.sessionGuide.fields) {
+      state.sessionGuide = JSON.parse(JSON.stringify(DEFAULT_SESSION_GUIDE));
+    }
+    if (!state.sessionGuide.title) {
+      state.sessionGuide.title = DEFAULT_SESSION_GUIDE.title;
+    }
+    if (!state.sessionGuide.description) {
+      state.sessionGuide.description = DEFAULT_SESSION_GUIDE.description;
+    }
+    for (var fieldIndex = 0; fieldIndex < state.sessionGuide.fields.length; fieldIndex += 1) {
+      var field = state.sessionGuide.fields[fieldIndex];
+      if (!field.id) {
+        field.id = uuid();
+      }
+      if (!field.label) {
+        field.label = "字段" + (fieldIndex + 1);
+      }
+      if (typeof field.placeholder !== "string") {
+        field.placeholder = "";
+      }
     }
   }
 
@@ -890,13 +946,16 @@
     var session = {
       id: uuid(),
       title: "新会话",
-      messages: []
+      createdAt: new Date().toISOString(),
+      messages: [],
+      guideAnswers: {}
     };
     bank.sessions.unshift(session);
     state.activeSessionId = session.id;
     saveState();
     renderSessionList();
     renderChat();
+    openGuideModal(session, true);
   }
 
   function findSession(bank, sessionId) {
@@ -958,6 +1017,29 @@
     return result;
   }
 
+  function updateGuideToggle(session) {
+    var toggle = document.getElementById("guideToggle");
+    if (!toggle) {
+      return;
+    }
+    var config = state.sessionGuide;
+    if (!session || !config || !config.fields || config.fields.length === 0) {
+      toggle.classList.add("hidden");
+      return;
+    }
+    toggle.classList.remove("hidden");
+    var hasValue = false;
+    if (session.guideAnswers) {
+      for (var key in session.guideAnswers) {
+        if (session.guideAnswers.hasOwnProperty(key) && session.guideAnswers[key]) {
+          hasValue = true;
+          break;
+        }
+      }
+    }
+    toggle.textContent = hasValue ? "查看引导" : "填写引导";
+  }
+
   function renderChat() {
     var area = document.getElementById("chatArea");
     if (!area) {
@@ -966,20 +1048,23 @@
     area.innerHTML = "";
     var bank = getActiveBank();
     if (!bank) {
+      updateGuideToggle(null);
       renderEvidence([], []);
       area.innerHTML = '<div class="message"><div class="message-bubble"><div class="content">请先创建记忆库</div></div></div>';
       return;
     }
     var session = findSession(bank, state.activeSessionId);
     if (!session) {
+      updateGuideToggle(null);
       renderEvidence([], []);
       area.innerHTML = '<div class="message"><div class="message-bubble"><div class="content">请选择或新建会话</div></div></div>';
       return;
     }
+    updateGuideToggle(session);
     for (var i = 0; i < session.messages.length; i += 1) {
       var message = session.messages[i];
       var wrapper = document.createElement("div");
-      wrapper.className = "message" + (message.role === "user" ? " user" : "");
+      wrapper.className = "message " + (message.role === "user" ? "user" : "assistant");
       var bubble = document.createElement("div");
       bubble.className = "message-bubble";
       var meta = document.createElement("div");
@@ -995,38 +1080,16 @@
         label.className = "meta";
         label.textContent = "证据";
         bubble.appendChild(label);
-        for (var j = 0; j < message.evidence.length; j += 1) {
-          var ecard = document.createElement("div");
-          ecard.className = "evidence-card embedded";
-          var titleRow = document.createElement("div");
-          titleRow.className = "evidence-title";
-          var source = document.createElement("span");
-          source.className = "evidence-source";
-          if (message.evidence[j].type === "faq") {
-            source.textContent = "FAQ · " + message.evidence[j].source;
-          } else {
-            source.textContent = message.evidence[j].source + " · 段 " + message.evidence[j].chunk;
-          }
-          titleRow.appendChild(source);
-          if (typeof message.evidence[j].score === "number") {
-            var score = document.createElement("span");
-            score.className = "evidence-score";
-            score.textContent = message.evidence[j].type === "faq"
-              ? message.evidence[j].score + "%"
-              : message.evidence[j].score.toFixed(2);
-            titleRow.appendChild(score);
-          }
-          ecard.appendChild(titleRow);
-          if (message.evidence[j].text) {
-            var snippet = document.createElement("div");
-            snippet.className = "evidence-body";
-            snippet.innerHTML = highlightKeywords(
-              snippetText(message.evidence[j].text, 160),
-              message.evidenceTokens || []
-            );
-            ecard.appendChild(snippet);
-          }
-          bubble.appendChild(ecard);
+        var embedPanel = document.createElement("div");
+        embedPanel.className = "evidence-panel";
+        var used = renderEvidenceGroups(
+          embedPanel,
+          message.evidence,
+          message.evidenceTokens || message.tags || [],
+          true
+        );
+        if (used) {
+          bubble.appendChild(embedPanel);
         }
       }
       wrapper.appendChild(bubble);
@@ -1065,59 +1128,231 @@
     }
   }
 
+  function uniqueKeywords(list) {
+    var result = [];
+    if (!list) {
+      return result;
+    }
+    var mark = {};
+    for (var i = 0; i < list.length; i += 1) {
+      var key = list[i];
+      if (!key) {
+        continue;
+      }
+      if (!mark[key]) {
+        mark[key] = true;
+        result.push(key);
+      }
+    }
+    return result;
+  }
+
+  function renderEvidenceGroups(container, evidence, keywords, embedded) {
+    container.innerHTML = "";
+    if (!evidence || evidence.length === 0) {
+      if (!embedded) {
+        var empty = document.createElement("div");
+        empty.className = "evidence-empty";
+        empty.textContent = "暂无高相关证据";
+        container.appendChild(empty);
+      }
+      return false;
+    }
+    var highlightKeys = [];
+    if (keywords && keywords.length > 0) {
+      highlightKeys = uniqueKeywords(keywords);
+    }
+    var grouped = { faq: [], decision: [], knowledge: [] };
+    for (var i = 0; i < evidence.length; i += 1) {
+      var item = evidence[i];
+      if (item.type === "faq") {
+        grouped.faq.push(item);
+      } else if (item.type === "decision") {
+        grouped.decision.push(item);
+      } else {
+        grouped.knowledge.push(item);
+      }
+    }
+    var order = ["faq", "decision", "knowledge"];
+    var titles = { faq: "FAQ 依据", decision: "决策链依据", knowledge: "知识库依据" };
+    var appended = false;
+    for (var g = 0; g < order.length; g += 1) {
+      var type = order[g];
+      var list = grouped[type];
+      if (!list || list.length === 0) {
+        continue;
+      }
+      appended = true;
+      var block = document.createElement("div");
+      block.className = "evidence-group";
+      var title = document.createElement("div");
+      title.className = "evidence-group-title";
+      title.textContent = titles[type];
+      block.appendChild(title);
+      for (var j = 0; j < list.length; j += 1) {
+        var info = list[j];
+        var card = document.createElement("div");
+        card.className = "evidence-card" + (embedded ? " embedded" : "");
+        var header = document.createElement("div");
+        header.className = "evidence-title";
+        var source = document.createElement("span");
+        source.className = "evidence-source";
+        if (type === "faq") {
+          source.textContent = "FAQ · " + info.source;
+        } else if (type === "decision") {
+          source.textContent = info.source;
+        } else {
+          source.textContent = info.source + " · 段 " + info.chunk;
+        }
+        header.appendChild(source);
+        if (typeof info.score === "number") {
+          var score = document.createElement("span");
+          score.className = "evidence-score";
+          if (type === "knowledge") {
+            score.textContent = info.score.toFixed(2);
+          } else {
+            score.textContent = info.score + "%";
+          }
+          header.appendChild(score);
+        }
+        card.appendChild(header);
+        if (info.text) {
+          var body = document.createElement("div");
+          body.className = "evidence-body";
+          var limit = embedded ? 140 : 200;
+          body.innerHTML = highlightKeywords(snippetText(info.text, limit), highlightKeys);
+          card.appendChild(body);
+        }
+        block.appendChild(card);
+      }
+      container.appendChild(block);
+    }
+    if (!appended && !embedded) {
+      var fallback = document.createElement("div");
+      fallback.className = "evidence-empty";
+      fallback.textContent = "暂无高相关证据";
+      container.appendChild(fallback);
+    }
+    return appended;
+  }
+
   function renderEvidence(evidence, keywords) {
     var panel = document.getElementById("evidencePanel");
     if (!panel) {
       return;
     }
-    panel.innerHTML = "";
-    if (!evidence || evidence.length === 0) {
+    renderEvidenceGroups(panel, evidence, keywords, false);
+  }
+
+  function getGuideConfig() {
+    if (!state || !state.sessionGuide || !state.sessionGuide.fields || state.sessionGuide.fields.length === 0) {
+      return null;
+    }
+    return state.sessionGuide;
+  }
+
+  function closeGuideModal() {
+    var modal = document.getElementById("guideModal");
+    if (modal) {
+      modal.classList.add("hidden");
+    }
+    var form = document.getElementById("guideForm");
+    if (form) {
+      form.reset();
+      form.removeAttribute("data-session");
+    }
+  }
+
+  function openGuideModal(session, autoFocus) {
+    var config = getGuideConfig();
+    if (!config) {
+      return false;
+    }
+    if (!session) {
+      var bank = getActiveBank();
+      session = bank ? findSession(bank, state.activeSessionId) : null;
+    }
+    if (!session) {
+      return false;
+    }
+    var modal = document.getElementById("guideModal");
+    var form = document.getElementById("guideForm");
+    var title = document.getElementById("guideTitle");
+    var desc = document.getElementById("guideDescription");
+    if (!modal || !form) {
+      return false;
+    }
+    form.innerHTML = "";
+    form.setAttribute("data-session", session.id);
+    if (title) {
+      title.textContent = config.title || "会话引导";
+    }
+    if (desc) {
+      desc.textContent = config.description || "";
+      desc.classList.toggle("hidden", !config.description);
+    }
+    var firstField = null;
+    for (var i = 0; i < config.fields.length; i += 1) {
+      var field = config.fields[i];
+      var wrapper = document.createElement("label");
+      wrapper.textContent = field.label || ("字段" + (i + 1));
+      var textarea = document.createElement("textarea");
+      textarea.name = field.id;
+      textarea.rows = 3;
+      textarea.placeholder = field.placeholder || "";
+      textarea.value = session.guideAnswers && session.guideAnswers[field.id] ? session.guideAnswers[field.id] : "";
+      wrapper.appendChild(textarea);
+      form.appendChild(wrapper);
+      if (!firstField) {
+        firstField = textarea;
+      }
+    }
+    modal.classList.remove("hidden");
+    if (autoFocus && firstField) {
+      firstField.focus();
+    }
+    return true;
+  }
+
+  function handleGuideSubmit(evt) {
+    evt.preventDefault();
+    var form = evt.target;
+    if (!form) {
       return;
     }
-    var highlightKeys = [];
-    if (keywords && keywords.length > 0) {
-      var mark = {};
-      for (var i = 0; i < keywords.length; i += 1) {
-        var key = keywords[i];
-        if (!key) {
-          continue;
-        }
-        if (!mark[key]) {
-          mark[key] = true;
-          highlightKeys.push(key);
-        }
+    var sessionId = form.getAttribute("data-session");
+    var bank = getActiveBank();
+    var config = getGuideConfig();
+    if (!sessionId || !bank || !config) {
+      closeGuideModal();
+      return;
+    }
+    var session = findSession(bank, sessionId);
+    if (!session) {
+      closeGuideModal();
+      return;
+    }
+    var answers = {};
+    var hasValue = false;
+    for (var i = 0; i < config.fields.length; i += 1) {
+      var field = config.fields[i];
+      var element = form.elements[field.id];
+      var value = element ? element.value.trim() : "";
+      answers[field.id] = value;
+      if (value) {
+        hasValue = true;
       }
     }
-    for (var i = 0; i < evidence.length; i += 1) {
-      var card = document.createElement("div");
-      card.className = "evidence-card";
-      var header = document.createElement("div");
-      header.className = "evidence-title";
-      var source = document.createElement("span");
-      source.className = "evidence-source";
-      if (evidence[i].type === "faq") {
-        source.textContent = "FAQ · " + evidence[i].source;
-      } else {
-        source.textContent = evidence[i].source + " · 段 " + evidence[i].chunk;
-      }
-      header.appendChild(source);
-      if (typeof evidence[i].score === "number") {
-        var score = document.createElement("span");
-        score.className = "evidence-score";
-        score.textContent = evidence[i].type === "faq"
-          ? evidence[i].score + "%"
-          : evidence[i].score.toFixed(2);
-        header.appendChild(score);
-      }
-      card.appendChild(header);
-      if (evidence[i].text) {
-        var body = document.createElement("div");
-        body.className = "evidence-body";
-        body.innerHTML = highlightKeywords(snippetText(evidence[i].text, 160), highlightKeys);
-        card.appendChild(body);
-      }
-      panel.appendChild(card);
-    }
+    session.guideAnswers = answers;
+    session.guideCompletedAt = hasValue ? new Date().toISOString() : null;
+    saveState();
+    updateGuideToggle(session);
+    closeGuideModal();
+    showToast("引导信息已保存");
+  }
+
+  function skipGuideModal() {
+    closeGuideModal();
   }
 
   function tokenize(text) {
@@ -1625,6 +1860,111 @@
     return expanded;
   }
 
+  function scoreDecisionText(text, tokens) {
+    if (!text || !tokens || tokens.length === 0) {
+      return 0;
+    }
+    var normalized = String(text).toLowerCase();
+    var seen = {};
+    var unique = 0;
+    var hits = 0;
+    for (var i = 0; i < tokens.length; i += 1) {
+      var token = tokens[i];
+      if (!token) {
+        continue;
+      }
+      var key = token.toLowerCase();
+      if (seen[key]) {
+        continue;
+      }
+      seen[key] = true;
+      unique += 1;
+      if (normalized.indexOf(key) !== -1) {
+        hits += 1;
+      }
+    }
+    if (unique === 0) {
+      return 0;
+    }
+    return Math.round((hits / unique) * 100);
+  }
+
+  function collectDecisionEvidence(tokens) {
+    var results = [];
+    if (!tokens || tokens.length === 0 || !state || !state.decisions) {
+      return results;
+    }
+    for (var i = 0; i < state.decisions.length; i += 1) {
+      var project = state.decisions[i];
+      var base = "项目《" + (project.name || "未命名项目") + "》";
+      if (project.outcome) {
+        var outcomeText = "效果：" + project.outcome;
+        if (typeof project.score === "number") {
+          outcomeText += "（评分 " + project.score + "）";
+        }
+        var projectScore = scoreDecisionText(outcomeText, tokens);
+        if (projectScore >= 20) {
+          results.push({
+            type: "decision",
+            source: base + " · 复盘",
+            text: outcomeText,
+            score: projectScore
+          });
+        }
+      }
+      if (project.timeline) {
+        for (var j = 0; j < project.timeline.length; j += 1) {
+          var node = project.timeline[j];
+          var label = base + " · 节点《" + (node.title || "节点") + "》";
+          var parts = [];
+          if (node.reason) {
+            parts.push("原因：" + node.reason);
+          }
+          if (node.impact) {
+            parts.push("影响：" + node.impact);
+          }
+          if (node.note) {
+            parts.push("备注：" + node.note);
+          }
+          var nodeText = parts.join("；");
+          var nodeScore = scoreDecisionText((node.title || "") + " " + nodeText, tokens);
+          if (nodeScore >= 20 && nodeText) {
+            results.push({
+              type: "decision",
+              source: label,
+              text: nodeText,
+              score: nodeScore
+            });
+          }
+        }
+      }
+      if (project.links) {
+        for (var k = 0; k < project.links.length; k += 1) {
+          var link = project.links[k];
+          var relation = link.relation || "关联";
+          var relationText = "关系：" + relation;
+          if (link.note) {
+            relationText += "，" + link.note;
+          }
+          var linkLabel = base + " · " + findNodeTitle(project, link.fromId) + " → " + findNodeTitle(project, link.toId);
+          var linkScore = scoreDecisionText(relationText, tokens);
+          if (linkScore >= 20) {
+            results.push({
+              type: "decision",
+              source: linkLabel,
+              text: relationText,
+              score: linkScore
+            });
+          }
+        }
+      }
+    }
+    results.sort(function (a, b) {
+      return b.score - a.score;
+    });
+    return results.slice(0, 5);
+  }
+
   function reasoningSummary(texts, level) {
     var points = [];
     for (var i = 0; i < texts.length; i += 1) {
@@ -1664,54 +2004,122 @@
     var evidence = [];
     if (!replyText) {
       var expanded = expandTerms(tokens);
-      var scored = computeBM25(bank, expanded);
-      var top = scored.slice(0, state.settings.topN);
-      for (var i = 0; i < top.length; i += 1) {
-        var chunk = lookupChunk(bank, top[i].id);
-        if (chunk) {
-          evidence.push({ source: chunk.file, chunk: chunk.order, text: chunk.text, score: top[i].score });
-        }
-      }
-      var knowledgeBest = evidence.length > 0 ? evidence[0] : null;
+      var knowledgeScores = computeBM25(bank, expanded);
       var faqResult = matchFaq(bank, text);
       var bestFaq = faqResult.best;
-      if (bestFaq && bestFaq.score >= state.settings.faqLow) {
-        evidence.unshift({
-          source: bestFaq.item.question,
+      var faqEvidence = [];
+      var bestFaqEvidence = null;
+      var matches = faqResult.matches || [];
+      for (var f = 0; f < matches.length && f < 3; f += 1) {
+        var match = matches[f];
+        var faqEntry = {
+          type: "faq",
+          source: match.item.question,
           chunk: "FAQ",
-          text: bestFaq.item.answer,
-          score: bestFaq.score,
-          type: "faq"
-        });
+          text: match.item.answer,
+          score: match.score
+        };
+        if (bestFaq && bestFaq.item && match.item && bestFaq.item.id === match.item.id) {
+          bestFaqEvidence = faqEntry;
+        }
+        faqEvidence.push(faqEntry);
+      }
+      var knowledgeEvidence = [];
+      var bestKnowledgeEvidence = null;
+      var topScore = knowledgeScores.length > 0 ? knowledgeScores[0].score : 0;
+      var limit = state.settings.topN;
+      for (var k = 0; k < knowledgeScores.length && knowledgeEvidence.length < limit; k += 1) {
+        var entry = knowledgeScores[k];
+        if (entry.score <= 0) {
+          continue;
+        }
+        if (topScore > 0 && entry.score < topScore * 0.4) {
+          continue;
+        }
+        var chunk = lookupChunk(bank, entry.id);
+        if (!chunk) {
+          continue;
+        }
+        var knowledgeEntry = {
+          type: "knowledge",
+          source: chunk.file,
+          chunk: chunk.order,
+          text: chunk.text,
+          score: entry.score
+        };
+        if (!bestKnowledgeEvidence) {
+          bestKnowledgeEvidence = knowledgeEntry;
+        }
+        knowledgeEvidence.push(knowledgeEntry);
+      }
+      var decisionEvidence = collectDecisionEvidence(tokens);
+      var bestDecisionEvidence = decisionEvidence.length > 0 ? decisionEvidence[0] : null;
+      evidence = faqEvidence.concat(decisionEvidence, knowledgeEvidence);
+      for (var idx = 0; idx < evidence.length; idx += 1) {
+        evidence[idx].ref = idx + 1;
+      }
+      var summaryLines = [];
+      if (bestFaq && bestFaq.score >= state.settings.faqHigh && bestFaqEvidence) {
+        summaryLines.push("优先参考FAQ答案：" + bestFaqEvidence.text + "（资料" + bestFaqEvidence.ref + "）");
+      } else {
+        if (bestFaqEvidence) {
+          summaryLines.push("FAQ建议：" + snippetText(bestFaqEvidence.text, 80) + "（资料" + bestFaqEvidence.ref + "）");
+        }
+        if (bestKnowledgeEvidence) {
+          summaryLines.push("知识库提示：" + snippetText(bestKnowledgeEvidence.text, 80) + "（资料" + bestKnowledgeEvidence.ref + "）");
+        }
+        if (bestDecisionEvidence) {
+          summaryLines.push("决策链洞察：" + snippetText(bestDecisionEvidence.text, 80) + "（资料" + bestDecisionEvidence.ref + "）");
+        }
+      }
+      if (summaryLines.length === 0) {
+        summaryLines.push("当前资料中未找到高相关答案，请补充更多上下文信息。");
+      }
+      var sections = [];
+      if (faqEvidence.length > 0) {
+        var faqLines = [];
+        for (var fe = 0; fe < faqEvidence.length; fe += 1) {
+          faqLines.push("- （资料" + faqEvidence[fe].ref + "）" + snippetText(faqEvidence[fe].text, 100) + " —— " + faqEvidence[fe].source);
+        }
+        sections.push("FAQ 依据：\n" + faqLines.join("\n"));
+      }
+      if (decisionEvidence.length > 0) {
+        var decisionLines = [];
+        for (var de = 0; de < decisionEvidence.length; de += 1) {
+          decisionLines.push("- （资料" + decisionEvidence[de].ref + "）" + snippetText(decisionEvidence[de].text, 120) + " —— " + decisionEvidence[de].source);
+        }
+        sections.push("决策链依据：\n" + decisionLines.join("\n"));
+      }
+      if (knowledgeEvidence.length > 0) {
+        var knowledgeLines = [];
+        for (var ke = 0; ke < knowledgeEvidence.length; ke += 1) {
+          knowledgeLines.push("- （资料" + knowledgeEvidence[ke].ref + "）" + snippetText(knowledgeEvidence[ke].text, 120) + " —— " + knowledgeEvidence[ke].source + " · 段 " + knowledgeEvidence[ke].chunk);
+        }
+        var reasoningEnabled = state.adminFlags.reasoning;
+        var pageToggle = document.getElementById("reasoningToggle");
+        if (pageToggle && pageToggle.checked && currentUser && currentUser.role === "admin") {
+          reasoningEnabled = true;
+        }
+        if (reasoningEnabled) {
+          var reasoning = reasoningSummary(knowledgeEvidence.map(function (item) { return item.text; }), state.adminFlags.reasoningLevel || 1);
+          if (reasoning) {
+            var refs = knowledgeEvidence.map(function (item) { return "资料" + item.ref; }).join("、");
+            knowledgeLines.push("- 要点整理（基于" + refs + "）：\n  " + reasoning.split("\n").join("\n  "));
+          }
+        }
+        sections.push("知识库依据：\n" + knowledgeLines.join("\n"));
+      }
+      replyText = "结论：\n" + summaryLines.map(function (line) { return "- " + line; }).join("\n");
+      for (var s = 0; s < sections.length; s += 1) {
+        replyText += "\n\n" + sections[s];
       }
       renderEvidence(evidence, highlightTokens);
-      if (bestFaq && bestFaq.score >= state.settings.faqHigh) {
-        replyText = "FAQ直答：" + bestFaq.item.answer;
-      } else if (knowledgeBest) {
-        replyText = knowledgeBest.text;
-        if (bestFaq && bestFaq.score >= state.settings.faqLow) {
-          replyText = replyText + "\nFAQ建议：" + bestFaq.item.answer;
-        }
-      } else if (bestFaq) {
-        replyText = "FAQ建议：" + bestFaq.item.answer;
-      } else {
-        replyText = "当前记忆库暂无相关内容，我会记录您的问题以便后续补充。";
-      }
-      var reasoningEnabled = state.adminFlags.reasoning;
-      var pageToggle = document.getElementById("reasoningToggle");
-      if (pageToggle && pageToggle.checked && currentUser && currentUser.role === "admin") {
-        reasoningEnabled = true;
-      }
-      if (reasoningEnabled && evidence.length > 0) {
-        var reasoning = reasoningSummary(evidence.map(function (item) { return item.text; }), state.adminFlags.reasoningLevel || 1);
-        replyText = replyText + "\n要点：\n" + reasoning;
-      }
     }
     var reply = {
       role: "assistant",
       text: replyText,
       ts: new Date().toISOString(),
-      evidence: evidence.slice(0, 3),
+      evidence: evidence.slice(0, 6),
       evidenceTokens: highlightTokens
     };
     session.messages.push(reply);
@@ -2065,22 +2473,53 @@
       list.textContent = "请先选择记忆库";
       return;
     }
+    if (bank.common.length === 0) {
+      list.innerHTML = '<div class="panel-hint">暂无常用问题</div>';
+      return;
+    }
     for (var i = 0; i < bank.common.length; i += 1) {
       (function (item) {
         var card = document.createElement("div");
         card.className = "faq-card";
-        card.innerHTML = '<header><div>' + item.text + '</div><div class="meta">' + (item.createdBy || "") + '</div></header>';
-        card.addEventListener("click", function () {
-          if (window.confirm("删除该常用问题？")) {
-            var idx = bank.common.indexOf(item);
-            if (idx >= 0) {
-              bank.common.splice(idx, 1);
-            }
-            saveState();
-            renderCommonList();
-            renderCommonChips();
+        var header = document.createElement("header");
+        var title = document.createElement("div");
+        title.textContent = item.text;
+        var actions = document.createElement("div");
+        actions.className = "card-actions";
+        var removeBtn = document.createElement("button");
+        removeBtn.className = "text-button danger";
+        removeBtn.type = "button";
+        removeBtn.textContent = "删除";
+        removeBtn.addEventListener("click", function () {
+          if (!window.confirm("删除该常用问题？")) {
+            return;
           }
+          var idx = bank.common.indexOf(item);
+          if (idx >= 0) {
+            bank.common.splice(idx, 1);
+          }
+          saveState();
+          renderCommonList();
+          renderCommonChips();
+          showToast("常用问题已删除");
         });
+        actions.appendChild(removeBtn);
+        header.appendChild(title);
+        header.appendChild(actions);
+        card.appendChild(header);
+        if (item.createdBy || item.createdAt) {
+          var meta = document.createElement("div");
+          meta.className = "meta";
+          var parts = [];
+          if (item.createdBy) {
+            parts.push("创建:" + item.createdBy);
+          }
+          if (item.createdAt) {
+            parts.push(formatDateTime(item.createdAt));
+          }
+          meta.textContent = parts.join(" · ");
+          card.appendChild(meta);
+        }
         list.appendChild(card);
       })(bank.common[i]);
     }
@@ -2119,6 +2558,7 @@
             bank.logs.splice(idx, 1);
             saveState();
             renderLogs();
+            showToast("日志已删除");
           }
         });
         actions.appendChild(delBtn);
@@ -2135,6 +2575,149 @@
         list.appendChild(card);
       })(bank.logs[i]);
     }
+  }
+
+  function renderGuideConfig() {
+    var box = document.getElementById("guideConfig");
+    if (!box) {
+      return;
+    }
+    var config = getGuideConfig();
+    box.innerHTML = "";
+    if (!config) {
+      box.innerHTML = '<div class="panel-hint">尚未配置会话引导表单</div>';
+      return;
+    }
+    var title = document.createElement("h4");
+    title.textContent = config.title || "会话引导";
+    box.appendChild(title);
+    if (config.description) {
+      var desc = document.createElement("p");
+      desc.textContent = config.description;
+      box.appendChild(desc);
+    }
+    if (!config.fields || config.fields.length === 0) {
+      var hint = document.createElement("div");
+      hint.className = "panel-hint";
+      hint.textContent = "暂无字段";
+      box.appendChild(hint);
+      return;
+    }
+    var list = document.createElement("ul");
+    for (var i = 0; i < config.fields.length; i += 1) {
+      var item = document.createElement("li");
+      item.textContent = (i + 1) + ". " + (config.fields[i].label || "字段");
+      list.appendChild(item);
+    }
+    box.appendChild(list);
+  }
+
+  function appendGuideFieldRow(field) {
+    var list = document.getElementById("guideFieldList");
+    if (!list) {
+      return;
+    }
+    var row = document.createElement("div");
+    row.className = "guide-field-row";
+    row.dataset.id = field && field.id ? field.id : uuid();
+    var labelInput = document.createElement("input");
+    labelInput.type = "text";
+    labelInput.placeholder = "字段标题";
+    labelInput.value = field && field.label ? field.label : "";
+    labelInput.setAttribute("data-role", "label");
+    var placeholderInput = document.createElement("input");
+    placeholderInput.type = "text";
+    placeholderInput.placeholder = "填写提示";
+    placeholderInput.value = field && field.placeholder ? field.placeholder : "";
+    placeholderInput.setAttribute("data-role", "placeholder");
+    var removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "text-button danger";
+    removeBtn.textContent = "移除";
+    removeBtn.addEventListener("click", function () {
+      if (row.parentNode) {
+        row.parentNode.removeChild(row);
+      }
+      var remain = document.querySelectorAll("#guideFieldList .guide-field-row");
+      if (!remain || remain.length === 0) {
+        appendGuideFieldRow();
+      }
+    });
+    row.appendChild(labelInput);
+    row.appendChild(placeholderInput);
+    row.appendChild(removeBtn);
+    list.appendChild(row);
+  }
+
+  function openGuideEditor() {
+    var modal = document.getElementById("guideEditModal");
+    var titleInput = document.getElementById("guideEditTitle");
+    var descInput = document.getElementById("guideEditDesc");
+    var list = document.getElementById("guideFieldList");
+    var config = state.sessionGuide || JSON.parse(JSON.stringify(DEFAULT_SESSION_GUIDE));
+    if (!modal || !list) {
+      return false;
+    }
+    list.innerHTML = "";
+    if (titleInput) {
+      titleInput.value = config.title || "";
+    }
+    if (descInput) {
+      descInput.value = config.description || "";
+    }
+    var fields = config.fields && config.fields.length > 0 ? config.fields : DEFAULT_SESSION_GUIDE.fields;
+    for (var i = 0; i < fields.length; i += 1) {
+      appendGuideFieldRow(fields[i]);
+    }
+    modal.classList.remove("hidden");
+    return true;
+  }
+
+  function closeGuideEditor() {
+    var modal = document.getElementById("guideEditModal");
+    if (modal) {
+      modal.classList.add("hidden");
+    }
+  }
+
+  function saveGuideConfig() {
+    var titleInput = document.getElementById("guideEditTitle");
+    var descInput = document.getElementById("guideEditDesc");
+    var list = document.getElementById("guideFieldList");
+    if (!list) {
+      closeGuideEditor();
+      return;
+    }
+    var rows = list.querySelectorAll(".guide-field-row");
+    var fields = [];
+    for (var i = 0; i < rows.length; i += 1) {
+      var row = rows[i];
+      var labelInput = row.querySelector('input[data-role="label"]');
+      var placeholderInput = row.querySelector('input[data-role="placeholder"]');
+      var label = labelInput ? labelInput.value.trim() : "";
+      var placeholder = placeholderInput ? placeholderInput.value.trim() : "";
+      if (!label) {
+        continue;
+      }
+      fields.push({
+        id: row.dataset.id || uuid(),
+        label: label,
+        placeholder: placeholder
+      });
+    }
+    if (fields.length === 0) {
+      showToast("请至少保留一个字段");
+      return;
+    }
+    state.sessionGuide = {
+      title: titleInput ? titleInput.value.trim() : DEFAULT_SESSION_GUIDE.title,
+      description: descInput ? descInput.value.trim() : "",
+      fields: fields
+    };
+    saveState();
+    renderGuideConfig();
+    closeGuideEditor();
+    showToast("会话引导已更新");
   }
 
   function getDecisionProjectById(id) {
@@ -2420,6 +3003,14 @@
         info.appendChild(fromLabel);
         info.appendChild(document.createTextNode(" → "));
         info.appendChild(toLabel);
+        var strength = link.strength || "medium";
+        if (strength !== "strong" && strength !== "weak") {
+          strength = "medium";
+        }
+        var badge = document.createElement("span");
+        badge.className = "badge-strength " + strength;
+        badge.textContent = strength === "strong" ? "强" : (strength === "weak" ? "弱" : "中");
+        info.appendChild(badge);
         var metaInfo = document.createElement("div");
         metaInfo.className = "meta";
         metaInfo.textContent = relation + note;
@@ -2436,6 +3027,7 @@
             saveState();
             renderLinkList(project);
             renderDecisionHistory();
+            scheduleDecisionLayout(project);
           }
         });
         actions.appendChild(delBtn);
@@ -2706,6 +3298,7 @@
     }
     saveState();
     refreshNodeBubble(node);
+    scheduleDecisionLayout(project);
   }
 
   function renderActiveProject() {
@@ -2739,6 +3332,7 @@
       if (panel) {
         panel.classList.add("hidden");
       }
+      scheduleDecisionLayout(null);
       return;
     }
     sortTimeline(project);
@@ -2754,6 +3348,7 @@
     }
     renderLinkList(project);
     renderNodeDetail();
+    scheduleDecisionLayout(project);
   }
 
   function renderProjectList() {
@@ -2897,6 +3492,118 @@
     }
   }
 
+  function layoutNodeConnectors(canvas) {
+    if (!canvas) {
+      return;
+    }
+    var nodes = canvas.querySelectorAll(".mind-node");
+    if (!nodes || nodes.length === 0) {
+      return;
+    }
+    var canvasRect = canvas.getBoundingClientRect();
+    var center = canvasRect.width / 2;
+    for (var i = 0; i < nodes.length; i += 1) {
+      var node = nodes[i];
+      var connector = node.querySelector(".mind-node-connector");
+      var bubble = node.querySelector(".mind-node-bubble");
+      if (!connector || !bubble) {
+        continue;
+      }
+      var nodeRect = node.getBoundingClientRect();
+      var bubbleRect = bubble.getBoundingClientRect();
+      var startX = node.classList.contains("left")
+        ? bubbleRect.right - nodeRect.left
+        : canvasRect.left + center - nodeRect.left;
+      var endX = node.classList.contains("left")
+        ? canvasRect.left + center - nodeRect.left
+        : bubbleRect.left - nodeRect.left;
+      var width = Math.max(12, Math.abs(endX - startX));
+      var left = Math.min(startX, endX);
+      var top = bubbleRect.top - nodeRect.top + bubbleRect.height / 2 - 1;
+      connector.style.left = left + "px";
+      connector.style.width = width + "px";
+      connector.style.top = top + "px";
+    }
+  }
+
+  function drawDecisionLinks(canvas, project) {
+    if (!canvas) {
+      return;
+    }
+    var layer = canvas.querySelector(".link-overlay");
+    if (!layer) {
+      layer = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      layer.classList.add("link-overlay");
+      canvas.appendChild(layer);
+    }
+    while (layer.firstChild) {
+      layer.removeChild(layer.firstChild);
+    }
+    if (!project || !project.links || project.links.length === 0) {
+      return;
+    }
+    var canvasRect = canvas.getBoundingClientRect();
+    layer.setAttribute("width", canvasRect.width);
+    layer.setAttribute("height", canvas.scrollHeight);
+    layer.setAttribute("viewBox", "0 0 " + canvasRect.width + " " + canvas.scrollHeight);
+    var center = canvasRect.width / 2;
+    for (var i = 0; i < project.links.length; i += 1) {
+      var link = project.links[i];
+      var fromNode = canvas.querySelector('[data-node="' + link.fromId + '"]');
+      var toNode = canvas.querySelector('[data-node="' + link.toId + '"]');
+      if (!fromNode || !toNode) {
+        continue;
+      }
+      var fromBubble = fromNode.querySelector(".mind-node-bubble");
+      var toBubble = toNode.querySelector(".mind-node-bubble");
+      if (!fromBubble || !toBubble) {
+        continue;
+      }
+      var fromRect = fromBubble.getBoundingClientRect();
+      var toRect = toBubble.getBoundingClientRect();
+      var fromX = fromNode.classList.contains("left")
+        ? fromRect.right - canvasRect.left
+        : fromRect.left - canvasRect.left;
+      var toX = toNode.classList.contains("left")
+        ? toRect.right - canvasRect.left
+        : toRect.left - canvasRect.left;
+      var fromY = fromRect.top - canvasRect.top + fromRect.height / 2;
+      var toY = toRect.top - canvasRect.top + toRect.height / 2;
+      var controlOffset = function (node, x) {
+        if (node.classList.contains("left")) {
+          return Math.min(160, center - x) + 40;
+        }
+        return -1 * (Math.min(160, x - center) + 40);
+      };
+      var c1x = fromX + controlOffset(fromNode, fromX);
+      var c2x = toX + controlOffset(toNode, toX);
+      var path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", "M" + fromX + "," + fromY + " C " + c1x + "," + fromY + " " + c2x + "," + toY + " " + toX + "," + toY);
+      var strength = link.strength || "medium";
+      if (strength !== "strong" && strength !== "weak") {
+        strength = "medium";
+      }
+      path.setAttribute("class", "link-path strength-" + strength);
+      path.setAttribute("stroke-linecap", "round");
+      layer.appendChild(path);
+    }
+  }
+
+  function scheduleDecisionLayout(project) {
+    if (decisionLayoutRaf) {
+      window.cancelAnimationFrame(decisionLayoutRaf);
+    }
+    var canvas = document.getElementById("timelineCanvas");
+    if (!canvas) {
+      return;
+    }
+    decisionLayoutRaf = window.requestAnimationFrame(function () {
+      decisionLayoutRaf = null;
+      layoutNodeConnectors(canvas);
+      drawDecisionLinks(canvas, project);
+    });
+  }
+
   function renderDecisionPage() {
     renderDecisionPalette();
     renderProjectList();
@@ -3036,6 +3743,14 @@
     Promise.all(tasks).then(function () {
       saveState();
       renderKnowledge();
+      var uploaderEl = document.getElementById("kbUploader");
+      if (uploaderEl) {
+        uploaderEl.value = "";
+      }
+      var info = document.getElementById("kbUploadInfo");
+      if (info) {
+        info.textContent = "未选择文件";
+      }
       showToast("文件已摄取");
     });
   }
@@ -3123,6 +3838,28 @@
     if (createSessionBtn) {
       createSessionBtn.addEventListener("click", createSession);
     }
+    var guideToggle = document.getElementById("guideToggle");
+    if (guideToggle) {
+      guideToggle.addEventListener("click", function () {
+        var bank = getActiveBank();
+        var session = bank ? findSession(bank, state.activeSessionId) : null;
+        if (!openGuideModal(session, true)) {
+          showToast("请先在系统配置引导表单");
+        }
+      });
+    }
+    var guideForm = document.getElementById("guideForm");
+    if (guideForm) {
+      guideForm.addEventListener("submit", handleGuideSubmit);
+    }
+    var closeGuideBtn = document.getElementById("closeGuide");
+    if (closeGuideBtn) {
+      closeGuideBtn.addEventListener("click", closeGuideModal);
+    }
+    var skipGuideBtn = document.getElementById("skipGuide");
+    if (skipGuideBtn) {
+      skipGuideBtn.addEventListener("click", skipGuideModal);
+    }
     var createBankBtn = document.getElementById("createBank");
     if (createBankBtn) {
       createBankBtn.addEventListener("click", createBank);
@@ -3195,6 +3932,26 @@
     renderKnowledge();
     var uploader = document.getElementById("kbUploader");
     var processBtn = document.getElementById("processFiles");
+    if (uploader) {
+      uploader.addEventListener("change", function () {
+        var info = document.getElementById("kbUploadInfo");
+        if (!info) {
+          return;
+        }
+        if (!uploader.files || uploader.files.length === 0) {
+          info.textContent = "未选择文件";
+          return;
+        }
+        var names = [];
+        for (var i = 0; i < uploader.files.length && i < 3; i += 1) {
+          names.push(uploader.files[i].name);
+        }
+        if (uploader.files.length > 3) {
+          names.push("等 " + (uploader.files.length - 3) + " 个文件");
+        }
+        info.textContent = names.join("，");
+      });
+    }
     if (processBtn) {
       processBtn.addEventListener("click", function () {
         if (!uploader || !uploader.files || uploader.files.length === 0) {
@@ -3288,6 +4045,9 @@
     if (logoutBtn) {
       logoutBtn.addEventListener("click", logout);
     }
+    window.addEventListener("resize", function () {
+      scheduleDecisionLayout(getActiveDecisionProject());
+    });
   }
 
   function initFaqPage() {
@@ -3596,14 +4356,20 @@
         }
         var relationInput = document.getElementById("linkRelation");
         var noteInput = document.getElementById("linkNote");
+        var strengthInput = document.getElementById("linkStrength");
         var relation = relationInput ? relationInput.value.trim() : "";
         var note = noteInput ? noteInput.value.trim() : "";
+        var strengthValue = strengthInput ? strengthInput.value : "medium";
+        if (strengthValue !== "strong" && strengthValue !== "weak") {
+          strengthValue = "medium";
+        }
         project.links.push({
           id: uuid(),
           fromId: fromId,
           toId: toId,
           relation: relation || "关联",
           note: note,
+          strength: strengthValue,
           createdAt: new Date().toISOString()
         });
         pendingLinkFromId = null;
@@ -3824,21 +4590,70 @@
         }
       });
     }
-    var commonList = document.getElementById("commonList");
-    if (commonList) {
-      commonList.addEventListener("dblclick", function () {
+    var commonForm = document.getElementById("commonForm");
+    if (commonForm) {
+      commonForm.addEventListener("submit", function (evt) {
+        evt.preventDefault();
         var bank = getActiveBank();
         if (!bank) {
+          showToast("请先选择记忆库");
           return;
         }
-        var text = window.prompt("新增常用问题");
+        var input = document.getElementById("commonInput");
+        var text = input ? input.value.trim() : "";
         if (!text) {
+          showToast("请输入常用问题");
           return;
         }
-        bank.common.push({ id: uuid(), text: text, createdBy: currentUser.username });
+        bank.common.push({
+          id: uuid(),
+          text: text,
+          createdBy: currentUser ? currentUser.username : "",
+          createdAt: new Date().toISOString()
+        });
         saveState();
         renderCommonList();
         renderCommonChips();
+        if (input) {
+          input.value = "";
+        }
+        showToast("常用问题已新增");
+      });
+    }
+    renderGuideConfig();
+    var editGuideBtn = document.getElementById("editGuide");
+    if (editGuideBtn) {
+      editGuideBtn.addEventListener("click", function () {
+        if (!openGuideEditor()) {
+          showToast("暂无可编辑字段，请稍后再试");
+        }
+      });
+    }
+    var addGuideFieldBtn = document.getElementById("addGuideField");
+    if (addGuideFieldBtn) {
+      addGuideFieldBtn.addEventListener("click", function () {
+        appendGuideFieldRow();
+      });
+    }
+    var guideEditForm = document.getElementById("guideEditForm");
+    if (guideEditForm) {
+      guideEditForm.addEventListener("submit", function (evt) {
+        evt.preventDefault();
+        saveGuideConfig();
+      });
+    }
+    var cancelGuideEdit = document.getElementById("cancelGuideEdit");
+    if (cancelGuideEdit) {
+      cancelGuideEdit.addEventListener("click", function () {
+        closeGuideEditor();
+      });
+    }
+    var guideEditModal = document.getElementById("guideEditModal");
+    if (guideEditModal) {
+      guideEditModal.addEventListener("click", function (evt) {
+        if (evt.target === guideEditModal) {
+          closeGuideEditor();
+        }
       });
     }
     var createBankBtn = document.getElementById("createBank");

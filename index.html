@@ -33,7 +33,10 @@
     <header class="main-header">
       <div class="header-info">
         <div class="bank-badge" id="activeBankBadge">未选择记忆库</div>
-        <div class="settings-entry" id="settingsToggle">设置</div>
+        <div class="header-tools">
+          <div class="guide-entry hidden" id="guideToggle">引导表单</div>
+          <div class="settings-entry" id="settingsToggle">设置</div>
+        </div>
       </div>
       <div class="user-info" id="userInfo"></div>
     </header>
@@ -63,6 +66,20 @@
       <button type="submit" class="primary-button">保存</button>
     </form>
   </aside>
+</div>
+<div class="modal hidden" id="guideModal">
+  <div class="modal-content wide">
+    <div class="modal-header">
+      <h3 id="guideTitle">会话引导</h3>
+      <button type="button" class="icon-button" id="closeGuide">×</button>
+    </div>
+    <div id="guideDescription" class="guide-description"></div>
+    <form id="guideForm" class="stack"></form>
+    <div class="form-row inline">
+      <button type="submit" form="guideForm" class="primary-button">保存指引</button>
+      <button type="button" class="ghost-button" id="skipGuide">跳过</button>
+    </div>
+  </div>
 </div>
 <footer class="global-footer">©️吴嘉辉</footer>
 <script src="scripts/app.js"></script>
