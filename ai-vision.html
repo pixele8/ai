@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>基板热脏污识别 · 虹小聊</title>
+<link rel="stylesheet" href="styles/app.css">
+</head>
+<body data-page="vision">
+<div class="app-shell">
+  <aside class="sidebar" id="bankSidebar">
+    <div class="brand">虹小聊</div>
+    <div class="nav-group">
+      <a class="nav-link" href="index.html">对话</a>
+      <a class="nav-link" href="kb.html">知识库</a>
+      <a class="nav-link" href="faq.html">FAQ</a>
+      <a class="nav-link" href="decision.html">决策链</a>
+      <a class="nav-link" href="ai-tools.html">AI 工具箱</a>
+      <a class="nav-link" href="admin.html">系统</a>
+    </div>
+    <div class="sidebar-section">
+      <div class="section-title">记忆库</div>
+      <div class="badge-list" id="bankList"></div>
+      <button class="ghost-button" id="createBank">新建记忆库</button>
+    </div>
+    <a class="ghost-button toolbox-link" href="ai-tools.html">返回工具箱</a>
+    <button class="ghost-button" id="logoutButton">退出登录</button>
+  </aside>
+  <main class="main-panel vision-main">
+    <header class="main-header">
+      <div class="header-info">
+        <div class="header-title">基板热脏污识别工作台</div>
+        <div class="header-sub">粘贴或上传检测图，自动识别热脏污主体区域并支持人工订正、导出与强化学习。</div>
+      </div>
+      <div class="user-info" id="userInfo"></div>
+    </header>
+    <section class="panel vision-workbench">
+      <div class="vision-workbench-grid">
+        <div class="vision-stage">
+          <div class="vision-upload" id="visionUpload" tabindex="0">
+            <div class="vision-placeholder" id="visionPlaceholder">
+              <strong>粘贴 (Ctrl+V)</strong> 或拖放玻璃检测图到此处
+              <span>支持 PNG / JPG / WEBP，导入后可圈选主体区域并订正分类。</span>
+            </div>
+            <canvas id="visionCanvas" class="vision-canvas hidden" aria-label="热脏污识别画布"></canvas>
+            <div id="visionOverlay" class="vision-overlay hidden"></div>
+            <div id="visionSelection" class="vision-selection hidden"></div>
+          </div>
+          <div class="vision-stage-footer">
+            <div class="vision-stage-actions">
+              <button type="button" class="ghost-button" id="visionUploadBtn">选择文件</button>
+              <input type="file" id="visionFileInput" accept="image/png,image/jpeg,image/jpg,image/webp" class="hidden">
+              <button type="button" class="ghost-button" id="visionExportBtn" disabled>导出带标注</button>
+            </div>
+            <div class="vision-hint">系统仅记录识别时间与类别，概率及订正会进入强化学习反馈。</div>
+          </div>
+        </div>
+        <aside class="vision-side">
+          <div class="vision-side-header">
+            <div class="vision-side-title">识别结果</div>
+            <div class="vision-side-tools">
+              <button type="button" class="ghost-button" id="visionAddFindingBtn">新增主体</button>
+              <a class="ghost-button" id="visionHistoryToggle" href="ai-vision-history.html">历史中心</a>
+            </div>
+          </div>
+          <div class="vision-summary" id="visionSummary">
+            <div class="vision-summary-status">待命</div>
+            <div class="vision-summary-meta">等待图像输入</div>
+          </div>
+          <div id="visionFindings" class="vision-findings"></div>
+          <form id="visionNoteForm" class="vision-note-form hidden">
+            <label for="visionNoteInput">识别备注</label>
+            <textarea id="visionNoteInput" placeholder="记录这次识别的工单、设备或处理意见"></textarea>
+            <div class="vision-note-actions">
+              <button type="submit" class="primary-button">保存备注</button>
+            </div>
+          </form>
+        </aside>
+      </div>
+    </section>
+  </main>
+</div>
+<footer class="global-footer">©️吴嘉辉</footer>
+<script src="scripts/app.js"></script>
+<script src="scripts/tools-vision.js"></script>
+</body>
+</html>
