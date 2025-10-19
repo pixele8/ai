@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 工具箱 · 虹小聊</title>
+<link rel="stylesheet" href="styles/app.css">
+</head>
+<body data-page="tools">
+<div class="app-shell">
+  <aside class="sidebar" id="bankSidebar">
+    <div class="brand">虹小聊</div>
+    <div class="nav-group">
+      <a class="nav-link" href="index.html">对话</a>
+      <a class="nav-link" href="kb.html">知识库</a>
+      <a class="nav-link" href="faq.html">FAQ</a>
+      <a class="nav-link" href="decision.html">决策链</a>
+      <a class="nav-link active" href="ai-tools.html">AI 工具箱</a>
+      <a class="nav-link" href="admin.html">系统</a>
+    </div>
+    <div class="sidebar-section">
+      <div class="section-title">记忆库</div>
+      <div class="badge-list" id="bankList"></div>
+      <button class="ghost-button" id="createBank">新建记忆库</button>
+    </div>
+    <button class="ghost-button" id="logoutButton">退出登录</button>
+  </aside>
+  <main class="main-panel tools-main">
+    <header class="main-header">
+      <div class="header-info">
+        <div class="header-title">AI 工具箱</div>
+        <div class="header-sub">聚合常用离线增强功能与快捷入口</div>
+      </div>
+      <div class="user-info" id="userInfo"></div>
+    </header>
+    <section class="panel">
+      <h2>快速入口</h2>
+      <div class="tool-grid">
+        <a class="tool-card" href="kb.html">
+          <div class="tool-icon" aria-hidden="true">KB</div>
+          <div class="tool-body">
+            <h3>知识拆分工作台</h3>
+            <p>上传/复制文本并自动抽取问答，优化检索效果。</p>
+          </div>
+        </a>
+        <a class="tool-card" href="faq.html">
+          <div class="tool-icon" aria-hidden="true">FAQ</div>
+          <div class="tool-body">
+            <h3>FAQ 智能管理</h3>
+            <p>维护问答条目，执行去重、阈值策略与导入导出。</p>
+          </div>
+        </a>
+        <a class="tool-card" href="decision.html">
+          <div class="tool-icon" aria-hidden="true">决策</div>
+          <div class="tool-body">
+            <h3>决策链画布</h3>
+            <p>使用类思维导图界面记录节点、关联与评估信息。</p>
+          </div>
+        </a>
+        <a class="tool-card" href="decision-history.html">
+          <div class="tool-icon" aria-hidden="true">档案</div>
+          <div class="tool-body">
+            <h3>决策历史档案</h3>
+            <p>按分组与年份浏览归档项目，支持检索、评论与导出。</p>
+          </div>
+        </a>
+        <a class="tool-card" href="ai-vision.html">
+          <div class="tool-icon" aria-hidden="true">视觉</div>
+          <div class="tool-body">
+            <h3>基板热脏污识别</h3>
+            <p>进入专用工作台，执行热脏污检测、订正与强化学习。</p>
+          </div>
+        </a>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>实验性工具</h2>
+      <div class="tool-grid compact">
+        <div class="tool-card ghost">
+          <div class="tool-icon" aria-hidden="true">配置</div>
+          <div class="tool-body">
+            <h3>术语扩展配置</h3>
+            <p>自定义领域术语及同义词，增强本地推理（敬请期待）。</p>
+          </div>
+        </div>
+        <div class="tool-card ghost">
+          <div class="tool-icon" aria-hidden="true">日志</div>
+          <div class="tool-body">
+            <h3>日志智能摘要</h3>
+            <p>自动总结对话与推理日志，生成结构化报告（规划中）。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+<footer class="global-footer">©️吴嘉辉</footer>
+<script src="scripts/app.js"></script>
+</body>
+</html>
