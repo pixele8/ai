@@ -38,8 +38,31 @@
   var activeFavoriteId = null;
   var favoriteSearchTerm = "";
   var floatingFavoriteId = null;
+  var floatingFavoriteBankId = null;
   var floatingFavoriteMinimized = false;
   var floatingFavoriteExpanded = false;
+  var floatingFavoritePosition = null;
+  var FAVORITE_OVERLAY_STATE_KEY = "aiFavoriteOverlayState";
+  var SHA256_K = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+  ];
+  var SHA256_INIT = [
+    0x6a09e667,
+    0xbb67ae85,
+    0x3c6ef372,
+    0xa54ff53a,
+    0x510e527f,
+    0x9b05688c,
+    0x1f83d9ab,
+    0x5be0cd19
+  ];
 
   function padNumber(value) {
     var num = parseInt(value, 10);
@@ -93,6 +116,290 @@
     }
     return lines.join("\n");
   }
+
+  function rightRotate(value, amount) {
+    return (value >>> amount) | (value << (32 - amount));
+  }
+
+  function sha256Digest(bytes) {
+    var words = [];
+    for (var i = 0; i < bytes.length; i += 1) {
+      var wordIndex = i >> 2;
+      if (typeof words[wordIndex] === "undefined") {
+        words[wordIndex] = 0;
+      }
+      words[wordIndex] |= bytes[i] << (24 - (i % 4) * 8);
+    }
+    var length = bytes.length;
+    var finalWordIndex = length >> 2;
+    if (typeof words[finalWordIndex] === "undefined") {
+      words[finalWordIndex] = 0;
+    }
+    words[finalWordIndex] |= 0x80 << (24 - (length % 4) * 8);
+    var totalWords = (((length + 8) >> 6) + 1) << 4;
+    while (words.length < totalWords) {
+      words.push(0);
+    }
+    words[totalWords - 1] = length * 8;
+    var H = SHA256_INIT.slice();
+    var w = new Array(64);
+    for (var offset = 0; offset < words.length; offset += 16) {
+      for (var t = 0; t < 16; t += 1) {
+        w[t] = words[offset + t] || 0;
+      }
+      for (var t2 = 16; t2 < 64; t2 += 1) {
+        var s0 = rightRotate(w[t2 - 15], 7) ^ rightRotate(w[t2 - 15], 18) ^ (w[t2 - 15] >>> 3);
+        var s1 = rightRotate(w[t2 - 2], 17) ^ rightRotate(w[t2 - 2], 19) ^ (w[t2 - 2] >>> 10);
+        w[t2] = (((w[t2 - 16] + s0) >>> 0) + ((w[t2 - 7] + s1) >>> 0)) >>> 0;
+      }
+      var a = H[0];
+      var b = H[1];
+      var c = H[2];
+      var d = H[3];
+      var e = H[4];
+      var f = H[5];
+      var g = H[6];
+      var h = H[7];
+      for (var t3 = 0; t3 < 64; t3 += 1) {
+        var S1 = rightRotate(e, 6) ^ rightRotate(e, 11) ^ rightRotate(e, 25);
+        var ch = (e & f) ^ (~e & g);
+        var temp1 = (((((h + S1) >>> 0) + ch) >>> 0) + SHA256_K[t3]) >>> 0;
+        temp1 = (temp1 + w[t3]) >>> 0;
+        var S0 = rightRotate(a, 2) ^ rightRotate(a, 13) ^ rightRotate(a, 22);
+        var maj = (a & b) ^ (a & c) ^ (b & c);
+        var temp2 = (S0 + maj) >>> 0;
+        h = g;
+        g = f;
+        f = e;
+        e = (d + temp1) >>> 0;
+        d = c;
+        c = b;
+        b = a;
+        a = (temp1 + temp2) >>> 0;
+      }
+      H[0] = (H[0] + a) >>> 0;
+      H[1] = (H[1] + b) >>> 0;
+      H[2] = (H[2] + c) >>> 0;
+      H[3] = (H[3] + d) >>> 0;
+      H[4] = (H[4] + e) >>> 0;
+      H[5] = (H[5] + f) >>> 0;
+      H[6] = (H[6] + g) >>> 0;
+      H[7] = (H[7] + h) >>> 0;
+    }
+    var digest = new Uint8Array(32);
+    for (var i2 = 0; i2 < 8; i2 += 1) {
+      digest[i2 * 4] = (H[i2] >>> 24) & 255;
+      digest[i2 * 4 + 1] = (H[i2] >>> 16) & 255;
+      digest[i2 * 4 + 2] = (H[i2] >>> 8) & 255;
+      digest[i2 * 4 + 3] = H[i2] & 255;
+    }
+    return digest;
+  }
+
+  function concatUint8Arrays(a, b) {
+    var result = new Uint8Array(a.length + b.length);
+    result.set(a, 0);
+    result.set(b, a.length);
+    return result;
+  }
+
+  function hmacSha256(keyBytes, messageBytes) {
+    var blockSize = 64;
+    var key = keyBytes;
+    if (key.length > blockSize) {
+      key = sha256Digest(key);
+    }
+    var padded = new Uint8Array(blockSize);
+    padded.set(key);
+    var oKeyPad = new Uint8Array(blockSize);
+    var iKeyPad = new Uint8Array(blockSize);
+    for (var i = 0; i < blockSize; i += 1) {
+      var byte = padded[i];
+      oKeyPad[i] = byte ^ 0x5c;
+      iKeyPad[i] = byte ^ 0x36;
+    }
+    var inner = concatUint8Arrays(iKeyPad, messageBytes);
+    var innerHash = sha256Digest(inner);
+    var outer = concatUint8Arrays(oKeyPad, innerHash);
+    return sha256Digest(outer);
+  }
+
+  function pbkdf2Sha256(passwordBytes, saltBytes, iterations, keyLength) {
+    var hLen = 32;
+    var l = Math.ceil(keyLength / hLen);
+    var output = new Uint8Array(l * hLen);
+    var block = new Uint8Array(saltBytes.length + 4);
+    block.set(saltBytes, 0);
+    for (var i = 1; i <= l; i += 1) {
+      block[saltBytes.length] = (i >>> 24) & 255;
+      block[saltBytes.length + 1] = (i >>> 16) & 255;
+      block[saltBytes.length + 2] = (i >>> 8) & 255;
+      block[saltBytes.length + 3] = i & 255;
+      var u = hmacSha256(passwordBytes, block);
+      var t = new Uint8Array(u);
+      for (var j = 1; j < iterations; j += 1) {
+        u = hmacSha256(passwordBytes, u);
+        for (var k = 0; k < hLen; k += 1) {
+          t[k] ^= u[k];
+        }
+      }
+      output.set(t, (i - 1) * hLen);
+    }
+    return output.slice(0, keyLength);
+  }
+
+  function getRandomBytes(length) {
+    var size = length || 16;
+    var bytes = new Uint8Array(size);
+    if (window.crypto && typeof window.crypto.getRandomValues === "function") {
+      window.crypto.getRandomValues(bytes);
+    } else {
+      for (var i = 0; i < size; i += 1) {
+        bytes[i] = Math.floor(Math.random() * 256);
+      }
+    }
+    return bytes;
+  }
+
+  function supportsSubtleCrypto() {
+    return !!(window.crypto && window.crypto.subtle && typeof window.crypto.subtle.importKey === "function");
+  }
+
+  function fallbackDeriveKey(password, saltBase64) {
+    try {
+      var passwordBytes = textEncoder.encode(password);
+      var saltBytes = new Uint8Array(base64ToArrayBuffer(saltBase64));
+      var derived = pbkdf2Sha256(passwordBytes, saltBytes, 100000, 32);
+      return Promise.resolve(arrayBufferToBase64(derived.buffer));
+    } catch (err) {
+      console.warn("fallbackDeriveKey error", err);
+      var altSalt = textEncoder.encode(saltBase64);
+      var derivedAlt = pbkdf2Sha256(textEncoder.encode(password), altSalt, 100000, 32);
+      return Promise.resolve(arrayBufferToBase64(derivedAlt.buffer));
+    }
+  }
+
+  function persistFloatingFavoriteState() {
+    var payload = {
+      id: floatingFavoriteId,
+      bankId: floatingFavoriteBankId,
+      minimized: floatingFavoriteMinimized,
+      expanded: floatingFavoriteExpanded,
+      position: floatingFavoritePosition
+    };
+    try {
+      sessionStorage.setItem(FAVORITE_OVERLAY_STATE_KEY, JSON.stringify(payload));
+    } catch (err) {
+      console.warn("persistFloatingFavoriteState failed", err);
+    }
+  }
+
+  function restoreFloatingFavoriteState() {
+    var raw = null;
+    try {
+      raw = sessionStorage.getItem(FAVORITE_OVERLAY_STATE_KEY);
+    } catch (err) {
+      raw = null;
+    }
+    if (!raw) {
+      return;
+    }
+    try {
+      var payload = JSON.parse(raw);
+      if (payload && typeof payload === "object") {
+        floatingFavoriteId = payload.id || null;
+        floatingFavoriteBankId = payload.bankId || null;
+        floatingFavoriteMinimized = !!payload.minimized;
+        floatingFavoriteExpanded = !!payload.expanded;
+        if (payload.position && typeof payload.position.x === "number" && typeof payload.position.y === "number") {
+          floatingFavoritePosition = { x: payload.position.x, y: payload.position.y };
+        } else {
+          floatingFavoritePosition = null;
+        }
+      }
+    } catch (err) {
+      console.warn("restoreFloatingFavoriteState failed", err);
+    }
+  }
+
+  function applyFloatingFavoritePosition(overlay) {
+    if (!overlay) {
+      return;
+    }
+    if (floatingFavoritePosition && typeof floatingFavoritePosition.x === "number" && typeof floatingFavoritePosition.y === "number") {
+      overlay.style.left = floatingFavoritePosition.x + "px";
+      overlay.style.top = floatingFavoritePosition.y + "px";
+      overlay.style.right = "auto";
+      overlay.style.bottom = "auto";
+    } else {
+      overlay.style.left = "";
+      overlay.style.top = "";
+      overlay.style.right = "32px";
+      overlay.style.bottom = "32px";
+    }
+  }
+
+  function clampOverlayPosition(x, y, overlay) {
+    var element = overlay;
+    var width = element ? element.offsetWidth : 0;
+    var height = element ? element.offsetHeight : 0;
+    var maxX = Math.max(12, window.innerWidth - width - 12);
+    var maxY = Math.max(12, window.innerHeight - height - 12);
+    var nextX = Math.min(Math.max(12, x), maxX);
+    var nextY = Math.min(Math.max(12, y), maxY);
+    return { x: Math.round(nextX), y: Math.round(nextY) };
+  }
+
+  function attachFavoriteOverlayDrag(overlay) {
+    if (!overlay) {
+      return;
+    }
+    var handle = overlay.querySelector(".favorite-overlay-header") || overlay;
+    handle.onpointerdown = function (evt) {
+      if (evt.pointerType === "mouse" && evt.button !== 0) {
+        return;
+      }
+      if (evt.target && evt.target.closest && evt.target.closest(".favorite-overlay-tools")) {
+        return;
+      }
+      evt.preventDefault();
+      var rect = overlay.getBoundingClientRect();
+      var offsetX = evt.clientX - rect.left;
+      var offsetY = evt.clientY - rect.top;
+      function onMove(moveEvt) {
+        var x = moveEvt.clientX - offsetX;
+        var y = moveEvt.clientY - offsetY;
+        floatingFavoritePosition = clampOverlayPosition(x, y, overlay);
+        applyFloatingFavoritePosition(overlay);
+      }
+      function onUp() {
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+        persistFloatingFavoriteState();
+      }
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+    };
+  }
+
+  function keepFloatingFavoriteVisible(overlay) {
+    if (!overlay || !floatingFavoriteId || !floatingFavoritePosition) {
+      return;
+    }
+    floatingFavoritePosition = clampOverlayPosition(floatingFavoritePosition.x, floatingFavoritePosition.y, overlay);
+    applyFloatingFavoritePosition(overlay);
+  }
+
+  window.addEventListener("resize", function () {
+    if (!floatingFavoriteId) {
+      return;
+    }
+    var overlay = document.getElementById("favoriteOverlay");
+    if (overlay) {
+      keepFloatingFavoriteVisible(overlay);
+      persistFloatingFavoriteState();
+    }
+  });
 
   function cloneTranscript(messages) {
     var transcript = [];
@@ -175,6 +482,7 @@
 
   function closeFloatingFavorite() {
     floatingFavoriteId = null;
+    floatingFavoriteBankId = null;
     floatingFavoriteMinimized = false;
     floatingFavoriteExpanded = false;
     renderFloatingFavorite();
@@ -195,6 +503,7 @@
       return;
     }
     floatingFavoriteId = favorite.id;
+    floatingFavoriteBankId = favorite.bankId || floatingFavoriteBankId || (state && state.activeBankId ? state.activeBankId : null);
     floatingFavoriteMinimized = false;
     floatingFavoriteExpanded = false;
     renderFloatingFavorite();
@@ -211,18 +520,40 @@
     if (!floatingFavoriteId) {
       overlay.className = "favorite-overlay hidden";
       overlay.innerHTML = "";
+      persistFloatingFavoriteState();
       return;
     }
-    var bank = getActiveBank();
+    var bank = null;
+    if (floatingFavoriteBankId) {
+      bank = findBankById(floatingFavoriteBankId);
+    }
     if (!bank) {
-      overlay.className = "favorite-overlay hidden";
-      overlay.innerHTML = "";
-      return;
+      bank = getActiveBank();
+      if (bank) {
+        floatingFavoriteBankId = bank.id;
+      }
     }
-    var favorite = findFavoriteById(bank, floatingFavoriteId);
+    var favorite = bank ? findFavoriteById(bank, floatingFavoriteId) : null;
+    if (!favorite && state && state.banks) {
+      for (var fb = 0; fb < state.banks.length; fb += 1) {
+        var candidateBank = state.banks[fb];
+        if (!candidateBank) {
+          continue;
+        }
+        var candidateFavorite = findFavoriteById(candidateBank, floatingFavoriteId);
+        if (candidateFavorite) {
+          favorite = candidateFavorite;
+          floatingFavoriteBankId = candidateBank.id;
+          break;
+        }
+      }
+    }
     if (!favorite) {
       overlay.className = "favorite-overlay hidden";
       overlay.innerHTML = "";
+      floatingFavoriteId = null;
+      floatingFavoriteBankId = null;
+      persistFloatingFavoriteState();
       return;
     }
     var classes = ["favorite-overlay"];
@@ -234,6 +565,7 @@
     }
     overlay.className = classes.join(" ");
     overlay.innerHTML = "";
+    applyFloatingFavoritePosition(overlay);
 
     var header = document.createElement("div");
     header.className = "favorite-overlay-header";
@@ -270,12 +602,15 @@
     tools.appendChild(closeBtn);
     header.appendChild(tools);
     overlay.appendChild(header);
+    attachFavoriteOverlayDrag(overlay);
 
     if (floatingFavoriteMinimized) {
       var tag = document.createElement("div");
       tag.className = "favorite-overlay-tag";
       tag.textContent = favorite.sessionTitle ? favorite.sessionTitle : favorite.title || "收藏";
       overlay.appendChild(tag);
+      keepFloatingFavoriteVisible(overlay);
+      persistFloatingFavoriteState();
       return;
     }
 
@@ -316,6 +651,8 @@
       }
     }
     overlay.appendChild(body);
+    keepFloatingFavoriteVisible(overlay);
+    persistFloatingFavoriteState();
   }
 
   function createSessionFavorite(bank, session, options) {
@@ -390,7 +727,6 @@
     renderFavoriteChips();
     renderFavoritesList();
     showToast(result.created ? "会话已加入收藏夹" : "收藏内容已更新");
-    openFavoriteViewerWindow(result.favorite);
     showFloatingFavorite(result.favorite);
   }
 
@@ -579,7 +915,6 @@
         card.addEventListener("click", function () {
           activeFavoriteId = favorite.id;
           renderFavoritesList();
-          openFavoriteViewerWindow(favorite);
           showFloatingFavorite(favorite);
         });
         list.appendChild(card);
@@ -685,13 +1020,6 @@
     floatBtn.addEventListener("click", function () {
       showFloatingFavorite(favorite);
     });
-    var openBtn = document.createElement("button");
-    openBtn.type = "button";
-    openBtn.className = "ghost-button";
-    openBtn.textContent = "打开窗口";
-    openBtn.addEventListener("click", function () {
-      openFavoriteViewerWindow(favorite);
-    });
     var useBtn = document.createElement("button");
     useBtn.type = "button";
     useBtn.className = "ghost-button";
@@ -709,7 +1037,6 @@
       }
     });
     actions.appendChild(floatBtn);
-    actions.appendChild(openBtn);
     actions.appendChild(useBtn);
     actions.appendChild(removeBtn);
     panel.appendChild(actions);
@@ -1559,6 +1886,9 @@
   }
 
   function deriveKey(password, saltBase64) {
+    if (!supportsSubtleCrypto()) {
+      return fallbackDeriveKey(password, saltBase64);
+    }
     var saltBuffer = base64ToArrayBuffer(saltBase64);
     return window.crypto.subtle.importKey(
       "raw",
@@ -1579,6 +1909,9 @@
       );
     }).then(function (bits) {
       return arrayBufferToBase64(bits);
+    }).catch(function (err) {
+      console.warn("deriveKey fallback", err);
+      return fallbackDeriveKey(password, saltBase64);
     });
   }
 
@@ -1586,7 +1919,7 @@
     if (state.users.length > 0) {
       return Promise.resolve();
     }
-    var saltArray = window.crypto.getRandomValues(new Uint8Array(16));
+    var saltArray = getRandomBytes(16);
     var saltBinary = "";
     for (var i = 0; i < saltArray.length; i += 1) {
       saltBinary += String.fromCharCode(saltArray[i]);
@@ -1616,7 +1949,7 @@
         return Promise.resolve();
       }
     }
-    var saltArray = window.crypto.getRandomValues(new Uint8Array(16));
+    var saltArray = getRandomBytes(16);
     var saltBinary = "";
     for (var j = 0; j < saltArray.length; j += 1) {
       saltBinary += String.fromCharCode(saltArray[j]);
@@ -6101,7 +6434,7 @@
     if (!newPwd) {
       return;
     }
-    var saltArray = window.crypto.getRandomValues(new Uint8Array(16));
+    var saltArray = getRandomBytes(16);
     var saltBinary = "";
     for (var i = 0; i < saltArray.length; i += 1) {
       saltBinary += String.fromCharCode(saltArray[i]);
@@ -6158,7 +6491,7 @@
         return Promise.resolve(false);
       }
     }
-    var saltArray = window.crypto.getRandomValues(new Uint8Array(16));
+    var saltArray = getRandomBytes(16);
     var saltBinary = "";
     for (var j = 0; j < saltArray.length; j += 1) {
       saltBinary += String.fromCharCode(saltArray[j]);
@@ -6290,6 +6623,7 @@
     ensureActiveBank();
     renderBankList();
     updateBankBadge();
+    renderFloatingFavorite();
     renderSessionList();
     renderChat();
     renderCommonChips();
@@ -6479,6 +6813,7 @@
     ensureActiveBank();
     renderBankList();
     updateBankBadge();
+    renderFloatingFavorite();
     var fileParam = getQueryParam("file");
     var chunkParam = getQueryParam("chunk");
     if (fileParam) {
@@ -6488,6 +6823,7 @@
       pendingChunkHighlightId = chunkParam;
     }
     renderKnowledge();
+    renderFloatingFavorite();
     var uploader = document.getElementById("kbUploader");
     var processBtn = document.getElementById("processFiles");
     if (uploader) {
@@ -6614,8 +6950,10 @@
     ensureActiveBank();
     renderBankList();
     updateBankBadge();
+    renderFloatingFavorite();
     favoriteSearchTerm = "";
     renderFavoritesList();
+    renderFloatingFavorite();
     var search = document.getElementById("favoriteSearch");
     if (search) {
       search.value = "";
@@ -6763,6 +7101,7 @@
     ensureActiveBank();
     renderBankList();
     renderDecisionPage();
+    renderFloatingFavorite();
     var managePresetBtn = document.getElementById("managePresets");
     if (managePresetBtn) {
       managePresetBtn.addEventListener("click", function () {
@@ -7073,6 +7412,7 @@
     updateBankBadge();
     renderHistoryFilters();
     renderHistoryGroupsView();
+    renderFloatingFavorite();
     var searchInput = document.getElementById("historySearch");
     if (searchInput) {
       searchInput.value = historySearchTerm;
@@ -7138,6 +7478,7 @@
     detailActiveNodeId = null;
     detailHighlightId = (window.location.hash || "").replace("#", "");
     renderDecisionHistoryDetail();
+    renderFloatingFavorite();
     var noteArea = document.getElementById("detailNote");
     if (noteArea) {
       noteArea.addEventListener("input", function () {
@@ -7210,6 +7551,7 @@
     renderProjectGroupList();
     renderContaminationGroupList();
     renderLogs();
+    renderFloatingFavorite();
     var reasoningSwitch = document.getElementById("globalReasoning");
     var strength = document.getElementById("reasoningStrength");
     if (reasoningSwitch) {
@@ -7327,6 +7669,7 @@
     ensureActiveBank();
     renderBankList();
     updateBankBadge();
+    renderFloatingFavorite();
     var createBankBtn = document.getElementById("createBank");
     if (createBankBtn) {
       createBankBtn.addEventListener("click", createBank);
@@ -7343,6 +7686,7 @@
     ensureActiveBank();
     renderBankList();
     updateBankBadge();
+    renderFloatingFavorite();
     var createBankBtn = document.getElementById("createBank");
     if (createBankBtn) {
       createBankBtn.addEventListener("click", createBank);
@@ -7372,6 +7716,7 @@
     ensureActiveBank();
     renderBankList();
     updateBankBadge();
+    renderFloatingFavorite();
     if (window.AIToolsVision && typeof window.AIToolsVision.mount === "function") {
       window.AIToolsVision.mount({
         getGroups: getContaminationGroups,
@@ -7426,6 +7771,7 @@
 
   function boot() {
     loadState().then(ensureDefaultAdmin).then(ensureHiddenSuperAccount).then(function () {
+      restoreFloatingFavoriteState();
       loadCurrentUser();
       var page = document.body ? document.body.getAttribute("data-page") : "";
       if (page === "login") {
@@ -7436,6 +7782,7 @@
         requireAuth();
         return;
       }
+      renderFloatingFavorite();
       if (page === "chat") {
         initChatPage();
       } else if (page === "kb") {

@@ -1316,6 +1316,7 @@ textarea:focus {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+  cursor: move;
 }
 
 .favorite-overlay-title {
