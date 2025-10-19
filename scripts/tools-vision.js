@@ -17,6 +17,7 @@
   var fileInput = null;
   var uploadButton = null;
   var exportButton = null;
+  var addFindingButton = null;
   var noteForm = null;
   var noteInput = null;
   var historySearch = null;
@@ -102,6 +103,7 @@
     fileInput = document.getElementById("visionFileInput");
     uploadButton = document.getElementById("visionUploadBtn");
     exportButton = document.getElementById("visionExportBtn");
+    addFindingButton = document.getElementById("visionAddFindingBtn");
     noteForm = document.getElementById("visionNoteForm");
     noteInput = document.getElementById("visionNoteInput");
     historySearch = document.getElementById("visionHistorySearch");
@@ -194,6 +196,12 @@
       exportButton.addEventListener("click", function (evt) {
         evt.preventDefault();
         handleExport();
+      });
+    }
+    if (addFindingButton) {
+      addFindingButton.addEventListener("click", function (evt) {
+        evt.preventDefault();
+        handleManualFinding();
       });
     }
     if (noteForm) {
@@ -555,6 +563,58 @@
     }
   }
 
+  function handleManualFinding() {
+    if (addFindingButton && addFindingButton.disabled) {
+      notify("请先完成一次识别后再新增结果");
+      return;
+    }
+    if (!activeInference || !activeInference.id) {
+      notify("请先导入图像并完成一次识别");
+      return;
+    }
+    if (!api || typeof api.addFinding !== "function") {
+      notify("当前环境不支持新增识别结果");
+      return;
+    }
+    var created = api.addFinding(activeInference.id, {
+      type: "待分类",
+      probability: 0,
+      status: "manual",
+      notes: "",
+      createdAt: new Date().toISOString(),
+      createdBy: getCurrentUser()
+    });
+    if (!created || !created.id) {
+      notify("新增识别结果失败，请稍后再试");
+      return;
+    }
+    notify("已新增识别结果，请圈选主体区域");
+    window.requestAnimationFrame(function () {
+      enterSelectionMode(activeInference.id, created.id, created);
+    });
+  }
+
+  function handleRemoveFinding(inferenceId, findingId) {
+    if (!inferenceId || !findingId) {
+      return;
+    }
+    if (!api || typeof api.removeFinding !== "function") {
+      notify("当前环境不支持删除识别结果");
+      return;
+    }
+    if (!window.confirm("确定要删除该识别结果吗？")) {
+      return;
+    }
+    exitSelectionMode();
+    var removed = api.removeFinding(inferenceId, findingId);
+    if (removed) {
+      notify("识别结果已删除");
+      focusOverlay(null);
+    } else {
+      notify("未能删除识别结果");
+    }
+  }
+
   function handleNoteSubmit() {
     if (!noteInput || !activeInference) {
       return;
@@ -575,6 +635,19 @@
       return;
     }
     exportButton.disabled = false;
+  }
+
+  function updateAddButtonState(inference) {
+    if (!addFindingButton) {
+      return;
+    }
+    if (!inference) {
+      addFindingButton.disabled = true;
+      addFindingButton.setAttribute("aria-disabled", "true");
+      return;
+    }
+    addFindingButton.disabled = false;
+    addFindingButton.setAttribute("aria-disabled", "false");
   }
 
   function updateNoteForm(inference) {
@@ -636,6 +709,7 @@
     }
     activeInference = null;
     updateExportState(null);
+    updateAddButtonState(null);
     updateNoteForm(null);
     focusOverlay(null);
   }
@@ -800,6 +874,7 @@
       }
       activeInferenceId = stored && stored.id ? stored.id : inference.id;
       activeInference = stored;
+      updateAddButtonState(stored);
       if (api && typeof api.getSnapshot === "function") {
         handleSnapshot(api.getSnapshot());
       } else {
@@ -807,6 +882,7 @@
         renderFindings(stored);
         updateSummary(stored, analysis.summary);
         updateExportState(stored);
+        updateAddButtonState(stored);
         updateNoteForm(stored);
       }
       notify("已完成 AI 识别");
@@ -1144,6 +1220,7 @@
     renderFindings(inference);
     updateSummary(inference, inference.summary || null);
     updateExportState(inference);
+    updateAddButtonState(inference);
     updateNoteForm(inference);
     highlightHistoryActive();
   }
@@ -1389,10 +1466,19 @@
           correctedAt: new Date().toISOString()
         });
       }
+      notify("订正已提交");
+    });
+    var deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "ghost-button danger-button";
+    deleteBtn.textContent = "删除结果";
+    deleteBtn.addEventListener("click", function () {
+      handleRemoveFinding(inference.id, finding.id);
     });
     actions.appendChild(selectBtn);
     actions.appendChild(confirmBtn);
     actions.appendChild(correctBtn);
+    actions.appendChild(deleteBtn);
 
     card.appendChild(header);
     card.appendChild(probability);

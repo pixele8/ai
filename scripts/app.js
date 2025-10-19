@@ -1356,6 +1356,80 @@
     return null;
   }
 
+  function addVisionFinding(inferenceId, payload) {
+    ensureVisionStore();
+    if (!inferenceId) {
+      return null;
+    }
+    var host = null;
+    for (var i = 0; i < state.tools.visionHistory.length; i += 1) {
+      if (state.tools.visionHistory[i].id === inferenceId) {
+        host = state.tools.visionHistory[i];
+        break;
+      }
+    }
+    if (!host) {
+      return null;
+    }
+    if (!Array.isArray(host.findings)) {
+      host.findings = [];
+    }
+    var now = new Date().toISOString();
+    var source = payload && typeof payload === "object" ? payload : {};
+    var probability = typeof source.probability === "number" ? source.probability : 0;
+    if (probability < 0) {
+      probability = 0;
+    }
+    if (probability > 1) {
+      probability = 1;
+    }
+    var finding = {
+      id: source.id || uuid(),
+      type: source.type || "待分类",
+      probability: probability,
+      group: source.group || null,
+      status: source.status || "manual",
+      bounds: source.bounds || null,
+      metrics: source.metrics || null,
+      probabilities: source.probabilities || null,
+      notes: typeof source.notes === "string" ? source.notes : "",
+      createdAt: safeDateString(source.createdAt, now),
+      createdBy: typeof source.createdBy === "string" ? source.createdBy : (currentUser ? currentUser.username : "")
+    };
+    host.findings.push(finding);
+    host.updatedAt = now;
+    saveState();
+    emitVisionChange();
+    try {
+      return JSON.parse(JSON.stringify(finding));
+    } catch (err) {
+      return finding;
+    }
+  }
+
+  function removeVisionFinding(inferenceId, findingId) {
+    ensureVisionStore();
+    if (!inferenceId || !findingId) {
+      return false;
+    }
+    for (var i = 0; i < state.tools.visionHistory.length; i += 1) {
+      var record = state.tools.visionHistory[i];
+      if (record.id !== inferenceId || !Array.isArray(record.findings)) {
+        continue;
+      }
+      for (var j = 0; j < record.findings.length; j += 1) {
+        if (record.findings[j].id === findingId) {
+          record.findings.splice(j, 1);
+          record.updatedAt = new Date().toISOString();
+          saveState();
+          emitVisionChange();
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   function updateVisionInference(inferenceId, patch) {
     ensureVisionStore();
     if (!inferenceId || !patch) {
@@ -7038,7 +7112,9 @@
         getGroups: getContaminationGroups,
         getCorrections: getVisionCorrections,
         recordInference: recordVisionInference,
+        addFinding: addVisionFinding,
         updateFinding: updateVisionFinding,
+        removeFinding: removeVisionFinding,
         updateInference: updateVisionInference,
         recordCorrection: recordVisionCorrection,
         subscribe: subscribeVision,
