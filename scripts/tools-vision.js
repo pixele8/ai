@@ -27,6 +27,8 @@
   var isSelecting = false;
   var historyFilter = "";
   var activeInference = null;
+  var canvasMetrics = null;
+  var resizeTimer = null;
 
   function makeId(prefix) {
     var base = Date.now().toString(36) + Math.random().toString(36).substr(2, 6);
@@ -112,7 +114,15 @@
       selectionLayer.innerHTML = "";
       selectionLayer.classList.add("hidden");
     }
+    try {
+      var params = new URLSearchParams(window.location.search);
+      var target = params.get("inference");
+      if (target) {
+        activeInferenceId = target;
+      }
+    } catch (err) {}
     bindEvents();
+    window.addEventListener("resize", handleResize);
     renderEmptyState();
     if (typeof api.subscribe === "function") {
       unsubscribe = api.subscribe(handleSnapshot);
@@ -206,6 +216,96 @@
     document.addEventListener("keydown", handleKeyDown);
   }
 
+  function handleResize() {
+    if (resizeTimer) {
+      window.clearTimeout(resizeTimer);
+    }
+    resizeTimer = window.setTimeout(function () {
+      resizeTimer = null;
+      syncOverlayGeometry();
+    }, 120);
+  }
+
+  function computeCanvasMetrics() {
+    if (!dropzone || !canvas) {
+      return null;
+    }
+    if (!canvas.width || !canvas.height) {
+      return null;
+    }
+    var dropRect = dropzone.getBoundingClientRect();
+    var canvasRect = canvas.getBoundingClientRect();
+    if (!canvasRect.width || !canvasRect.height) {
+      return null;
+    }
+    return {
+      offsetX: canvasRect.left - dropRect.left,
+      offsetY: canvasRect.top - dropRect.top,
+      width: canvasRect.width,
+      height: canvasRect.height,
+      scaleX: canvasRect.width / canvas.width,
+      scaleY: canvasRect.height / canvas.height
+    };
+  }
+
+  function syncOverlayGeometry() {
+    if (!dropzone || !canvas) {
+      return;
+    }
+    canvasMetrics = computeCanvasMetrics();
+    if (!canvasMetrics) {
+      return;
+    }
+    if (overlay) {
+      overlay.style.left = canvasMetrics.offsetX + "px";
+      overlay.style.top = canvasMetrics.offsetY + "px";
+      overlay.style.width = canvasMetrics.width + "px";
+      overlay.style.height = canvasMetrics.height + "px";
+      overlay.style.pointerEvents = "none";
+    }
+    if (selectionLayer) {
+      selectionLayer.style.left = canvasMetrics.offsetX + "px";
+      selectionLayer.style.top = canvasMetrics.offsetY + "px";
+      selectionLayer.style.width = canvasMetrics.width + "px";
+      selectionLayer.style.height = canvasMetrics.height + "px";
+      selectionLayer.style.pointerEvents = "none";
+    }
+    realignOverlayBoxes();
+    realignSelectionBox();
+  }
+
+  function realignOverlayBoxes() {
+    if (!overlay || !canvasMetrics) {
+      return;
+    }
+    var nodes = overlay.querySelectorAll(".overlay-box");
+    for (var i = 0; i < nodes.length; i += 1) {
+      var node = nodes[i];
+      var rawX = parseFloat(node.getAttribute("data-x") || "0");
+      var rawY = parseFloat(node.getAttribute("data-y") || "0");
+      var rawWidth = parseFloat(node.getAttribute("data-width") || "0");
+      var rawHeight = parseFloat(node.getAttribute("data-height") || "0");
+      node.style.left = rawX * canvasMetrics.scaleX + "px";
+      node.style.top = rawY * canvasMetrics.scaleY + "px";
+      node.style.width = rawWidth * canvasMetrics.scaleX + "px";
+      node.style.height = rawHeight * canvasMetrics.scaleY + "px";
+    }
+  }
+
+  function realignSelectionBox() {
+    if (!selectionBox || !canvasMetrics) {
+      return;
+    }
+    var rawX = parseFloat(selectionBox.getAttribute("data-x") || "0");
+    var rawY = parseFloat(selectionBox.getAttribute("data-y") || "0");
+    var rawWidth = parseFloat(selectionBox.getAttribute("data-width") || "0");
+    var rawHeight = parseFloat(selectionBox.getAttribute("data-height") || "0");
+    selectionBox.style.left = rawX * canvasMetrics.scaleX + "px";
+    selectionBox.style.top = rawY * canvasMetrics.scaleY + "px";
+    selectionBox.style.width = rawWidth * canvasMetrics.scaleX + "px";
+    selectionBox.style.height = rawHeight * canvasMetrics.scaleY + "px";
+  }
+
   function scheduleDragReset() {
     if (draggingTimer) {
       window.clearTimeout(draggingTimer);
@@ -247,9 +347,14 @@
       return;
     }
     evt.preventDefault();
+    if (!canvasMetrics) {
+      syncOverlayGeometry();
+    }
     var rect = canvas.getBoundingClientRect();
-    var x = clamp(evt.clientX - rect.left, 0, canvas.width);
-    var y = clamp(evt.clientY - rect.top, 0, canvas.height);
+    var scaleX = rect.width ? canvas.width / rect.width : 1;
+    var scaleY = rect.height ? canvas.height / rect.height : 1;
+    var x = clamp((evt.clientX - rect.left) * scaleX, 0, canvas.width);
+    var y = clamp((evt.clientY - rect.top) * scaleY, 0, canvas.height);
     selectionStart = { x: x, y: y };
     isSelecting = true;
     if (selectionLayer) {
@@ -263,9 +368,14 @@
     if (!isSelecting || !selectionStart || !canvas || !selectionBox) {
       return;
     }
+    if (!canvasMetrics) {
+      syncOverlayGeometry();
+    }
     var rect = canvas.getBoundingClientRect();
-    var x = clamp(evt.clientX - rect.left, 0, canvas.width);
-    var y = clamp(evt.clientY - rect.top, 0, canvas.height);
+    var scaleX = rect.width ? canvas.width / rect.width : 1;
+    var scaleY = rect.height ? canvas.height / rect.height : 1;
+    var x = clamp((evt.clientX - rect.left) * scaleX, 0, canvas.width);
+    var y = clamp((evt.clientY - rect.top) * scaleY, 0, canvas.height);
     updateSelectionBox(selectionStart.x, selectionStart.y, x, y);
   }
 
@@ -291,14 +401,24 @@
     var top = Math.min(y1, y2);
     var width = Math.abs(x2 - x1);
     var height = Math.abs(y2 - y1);
-    selectionBox.style.left = left + "px";
-    selectionBox.style.top = top + "px";
-    selectionBox.style.width = width + "px";
-    selectionBox.style.height = height + "px";
     selectionBox.setAttribute("data-x", left);
     selectionBox.setAttribute("data-y", top);
     selectionBox.setAttribute("data-width", width);
     selectionBox.setAttribute("data-height", height);
+    if (!canvasMetrics) {
+      syncOverlayGeometry();
+    }
+    if (canvasMetrics) {
+      selectionBox.style.left = left * canvasMetrics.scaleX + "px";
+      selectionBox.style.top = top * canvasMetrics.scaleY + "px";
+      selectionBox.style.width = width * canvasMetrics.scaleX + "px";
+      selectionBox.style.height = height * canvasMetrics.scaleY + "px";
+    } else {
+      selectionBox.style.left = left + "px";
+      selectionBox.style.top = top + "px";
+      selectionBox.style.width = width + "px";
+      selectionBox.style.height = height + "px";
+    }
   }
 
   function finalizeSelection() {
@@ -365,6 +485,7 @@
     selectionMode = { inferenceId: inferenceId, findingId: findingId, finding: snapshot };
     isSelecting = false;
     selectionStart = null;
+    syncOverlayGeometry();
     if (selectionLayer) {
       selectionLayer.innerHTML = "";
       selectionLayer.classList.remove("hidden");
@@ -629,6 +750,8 @@
       canvas.height = dimensions.height;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(image, 0, 0, dimensions.width, dimensions.height);
+      syncOverlayGeometry();
+      window.requestAnimationFrame(syncOverlayGeometry);
       if (placeholder) {
         placeholder.classList.add("hidden");
       }
@@ -722,7 +845,7 @@
 
   function analyzeCanvas(width, height, corrections) {
     var data = ctx.getImageData(0, 0, width, height).data;
-    var cell = Math.max(18, Math.round(Math.min(width, height) / 24));
+    var cell = Math.max(12, Math.round(Math.min(width, height) / 32));
     var cols = Math.ceil(width / cell);
     var rows = Math.ceil(height / cell);
     var cells = [];
@@ -741,12 +864,13 @@
       }
     }
     var stats = computeStats(heatValues);
-    var threshold = stats.mean + stats.std * 0.65;
-    if (threshold < stats.mean * 1.2) {
-      threshold = stats.mean * 1.2;
+    var threshold = stats.mean + stats.std * 0.55;
+    if (threshold < stats.mean * 1.05) {
+      threshold = stats.mean * 1.05;
     }
-    if (threshold > maxHeat * 0.92) {
-      threshold = maxHeat * 0.92;
+    var upperBound = maxHeat * 0.88;
+    if (threshold > upperBound) {
+      threshold = upperBound;
     }
     var hotCells = [];
     for (var i = 0; i < cells.length; i += 1) {
@@ -915,6 +1039,11 @@
         maxY = bottom;
       }
     }
+    var padding = Math.max(4, Math.round(cellSize * 0.6));
+    minX = Math.max(0, minX - padding);
+    minY = Math.max(0, minY - padding);
+    maxX = Math.min(width, maxX + padding);
+    maxY = Math.min(height, maxY + padding);
     return {
       x: minX,
       y: minY,
@@ -1029,6 +1158,8 @@
       canvas.height = inference.image.height || image.height;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+      syncOverlayGeometry();
+      window.requestAnimationFrame(syncOverlayGeometry);
       canvas.classList.remove("hidden");
       overlay.classList.remove("hidden");
       if (placeholder) {
@@ -1063,10 +1194,24 @@
     var box = document.createElement("div");
     box.className = "overlay-box";
     box.setAttribute("data-id", finding.id);
-    box.style.left = x + "px";
-    box.style.top = y + "px";
-    box.style.width = width + "px";
-    box.style.height = height + "px";
+    box.setAttribute("data-x", x);
+    box.setAttribute("data-y", y);
+    box.setAttribute("data-width", width);
+    box.setAttribute("data-height", height);
+    if (!canvasMetrics) {
+      syncOverlayGeometry();
+    }
+    if (canvasMetrics) {
+      box.style.left = x * canvasMetrics.scaleX + "px";
+      box.style.top = y * canvasMetrics.scaleY + "px";
+      box.style.width = width * canvasMetrics.scaleX + "px";
+      box.style.height = height * canvasMetrics.scaleY + "px";
+    } else {
+      box.style.left = x + "px";
+      box.style.top = y + "px";
+      box.style.width = width + "px";
+      box.style.height = height + "px";
+    }
     var label = document.createElement("div");
     label.textContent = finding.type;
     var score = document.createElement("span");
@@ -1090,6 +1235,7 @@
       resultsContainer.appendChild(buildFindingCard(inference, inference.findings[i], i));
     }
     focusOverlay(null);
+    realignOverlayBoxes();
   }
 
   function buildFindingCard(inference, finding, index) {

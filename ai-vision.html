@@ -15,9 +15,7 @@
       <a class="nav-link" href="kb.html">知识库</a>
       <a class="nav-link" href="faq.html">FAQ</a>
       <a class="nav-link" href="decision.html">决策链</a>
-      <a class="nav-link" href="decision-history.html">决策历史</a>
       <a class="nav-link" href="ai-tools.html">AI 工具箱</a>
-      <a class="nav-link active" href="ai-vision.html">热脏污识别</a>
       <a class="nav-link" href="admin.html">系统</a>
     </div>
     <div class="sidebar-section">
@@ -60,7 +58,7 @@
         <aside class="vision-side">
           <div class="vision-side-header">
             <div class="vision-side-title">识别结果</div>
-            <button type="button" class="ghost-button" id="visionHistoryToggle">历史</button>
+            <a class="ghost-button" id="visionHistoryToggle" href="ai-vision-history.html">历史中心</a>
           </div>
           <div class="vision-summary" id="visionSummary">
             <div class="vision-summary-status">待命</div>
@@ -75,18 +73,6 @@
             </div>
           </form>
         </aside>
-      </div>
-      <div class="vision-history hidden" id="visionHistory">
-        <div class="vision-history-header">
-          <div>
-            <div class="vision-side-title">识别记录</div>
-            <div class="vision-history-meta">最近 20 次检测，可查看导出和备注</div>
-          </div>
-          <div class="vision-history-actions">
-            <input type="search" id="visionHistorySearch" placeholder="按类型或备注筛选">
-          </div>
-        </div>
-        <div id="visionHistoryList" class="vision-history-list"></div>
       </div>
     </section>
   </main>

@@ -1149,6 +1149,17 @@
     }
   }
 
+  function safeDateString(value, fallback) {
+    if (!value) {
+      return fallback;
+    }
+    var date = new Date(value);
+    if (isNaN(date.getTime())) {
+      return fallback;
+    }
+    return date.toISOString();
+  }
+
   function getVisionCorrections() {
     return cloneVisionCorrections();
   }
@@ -1193,51 +1204,88 @@
     };
   }
 
-  function recordVisionInference(entry) {
+  function recordVisionInference(entry, options) {
     ensureVisionStore();
     if (!entry) {
       return null;
     }
+    options = options || {};
+    var silent = !!options.silent;
+    var append = !!options.append;
     var now = new Date().toISOString();
+    var runSource = entry.runAt || entry.createdAt || now;
+    var runAt = safeDateString(runSource, now);
+    var createdAt = safeDateString(entry.createdAt, runAt);
+    var updatedAt = safeDateString(entry.updatedAt, now);
+    var analyst = typeof entry.analyst === "string" && entry.analyst ? entry.analyst : (currentUser ? currentUser.username : "");
+    var activeBank = getActiveBank();
+    var bankId = entry.bankId || (state.activeBankId || null);
+    var bankName = typeof entry.bankName === "string" && entry.bankName ? entry.bankName : (activeBank ? activeBank.name : "");
+    var sanitizedModel = { name: "虹小聊·ThermoClean", version: "", inferenceMs: 0, source: "" };
+    if (entry.model && typeof entry.model === "object") {
+      if (typeof entry.model.name === "string" && entry.model.name) {
+        sanitizedModel.name = entry.model.name;
+      }
+      if (typeof entry.model.version === "string") {
+        sanitizedModel.version = entry.model.version;
+      }
+      if (typeof entry.model.inferenceMs === "number") {
+        sanitizedModel.inferenceMs = entry.model.inferenceMs;
+      } else if (entry.model.inferenceMs) {
+        var parsedMs = parseInt(entry.model.inferenceMs, 10);
+        if (!isNaN(parsedMs)) {
+          sanitizedModel.inferenceMs = parsedMs;
+        }
+      }
+      if (typeof entry.model.source === "string") {
+        sanitizedModel.source = entry.model.source;
+      }
+    }
+    var sanitizedImage = null;
+    if (entry.image && typeof entry.image === "object") {
+      sanitizedImage = {
+        dataUrl: typeof entry.image.dataUrl === "string" ? entry.image.dataUrl : "",
+        width: typeof entry.image.width === "number" ? entry.image.width : (entry.image.width ? parseInt(entry.image.width, 10) || 0 : 0),
+        height: typeof entry.image.height === "number" ? entry.image.height : (entry.image.height ? parseInt(entry.image.height, 10) || 0 : 0),
+        originalWidth: typeof entry.image.originalWidth === "number" ? entry.image.originalWidth : (entry.image.width ? parseInt(entry.image.width, 10) || 0 : 0),
+        originalHeight: typeof entry.image.originalHeight === "number" ? entry.image.originalHeight : (entry.image.height ? parseInt(entry.image.height, 10) || 0 : 0),
+        name: typeof entry.image.name === "string" ? entry.image.name : ""
+      };
+    }
     var sanitized = {
       id: entry.id || uuid(),
-      runAt: entry.runAt || now,
-      analyst: entry.analyst || (currentUser ? currentUser.username : ""),
-      bankId: entry.bankId || (state.activeBankId || null),
-      bankName: entry.bankName || (getActiveBank() ? getActiveBank().name : ""),
-      model: entry.model || {},
-      image: entry.image || null,
+      runAt: runAt,
+      analyst: analyst,
+      bankId: bankId,
+      bankName: bankName,
+      model: sanitizedModel,
+      image: sanitizedImage,
       findings: [],
       summary: entry.summary || null,
       notes: typeof entry.notes === "string" ? entry.notes : "",
-      exports: Array.isArray(entry.exports) ? entry.exports.slice() : [],
+      exports: [],
       lastExportedAt: entry.lastExportedAt || null,
-      lastExportFile: entry.lastExportFile || "",
-      createdAt: now,
-      updatedAt: now
+      lastExportFile: typeof entry.lastExportFile === "string" ? entry.lastExportFile : "",
+      createdAt: createdAt,
+      updatedAt: updatedAt
     };
-    if (Array.isArray(sanitized.exports)) {
-      var normalizedExports = [];
-      for (var ex = 0; ex < sanitized.exports.length; ex += 1) {
-        var rawExport = sanitized.exports[ex];
-        if (!rawExport || typeof rawExport !== "object") {
-          continue;
-        }
-        normalizedExports.push({
-          id: rawExport.id || uuid(),
-          createdAt: rawExport.createdAt || now,
-          fileName: typeof rawExport.fileName === "string" ? rawExport.fileName : "",
-          createdBy: typeof rawExport.createdBy === "string" ? rawExport.createdBy : (currentUser ? currentUser.username : "")
-        });
+    var rawExports = Array.isArray(entry.exports) ? entry.exports : [];
+    for (var ex = 0; ex < rawExports.length; ex += 1) {
+      var rawExport = rawExports[ex];
+      if (!rawExport || typeof rawExport !== "object") {
+        continue;
       }
-      sanitized.exports = normalizedExports;
-    } else {
-      sanitized.exports = [];
+      sanitized.exports.push({
+        id: rawExport.id || uuid(),
+        createdAt: safeDateString(rawExport.createdAt, now),
+        fileName: typeof rawExport.fileName === "string" ? rawExport.fileName : "",
+        createdBy: typeof rawExport.createdBy === "string" && rawExport.createdBy ? rawExport.createdBy : analyst
+      });
     }
     if (entry.findings && Array.isArray(entry.findings)) {
       for (var i = 0; i < entry.findings.length; i += 1) {
         var finding = entry.findings[i];
-        if (!finding) {
+        if (!finding || typeof finding !== "object") {
           continue;
         }
         sanitized.findings.push({
@@ -1249,17 +1297,30 @@
           bounds: finding.bounds || null,
           metrics: finding.metrics || null,
           probabilities: finding.probabilities || null,
-          notes: finding.notes || "",
-          createdAt: finding.createdAt || now
+          notes: typeof finding.notes === "string" ? finding.notes : "",
+          createdAt: safeDateString(finding.createdAt, runAt)
         });
       }
     }
-    state.tools.visionHistory.unshift(sanitized);
-    if (state.tools.visionHistory.length > 20) {
-      state.tools.visionHistory = state.tools.visionHistory.slice(0, 20);
+    for (var existing = state.tools.visionHistory.length - 1; existing >= 0; existing -= 1) {
+      if (state.tools.visionHistory[existing].id === sanitized.id) {
+        state.tools.visionHistory.splice(existing, 1);
+      }
     }
-    saveState();
-    emitVisionChange();
+    if (append) {
+      state.tools.visionHistory.push(sanitized);
+    } else {
+      state.tools.visionHistory.unshift(sanitized);
+    }
+    state.tools.visionHistory.sort(function (a, b) {
+      var at = new Date(a.runAt || a.createdAt || 0).getTime();
+      var bt = new Date(b.runAt || b.createdAt || 0).getTime();
+      return bt - at;
+    });
+    if (!silent) {
+      saveState();
+      emitVisionChange();
+    }
     return JSON.parse(JSON.stringify(sanitized));
   }
 
@@ -1373,6 +1434,39 @@
     saveState();
     emitVisionChange();
     return JSON.parse(JSON.stringify(payload));
+  }
+
+  function importVisionHistoryRecords(records) {
+    ensureVisionStore();
+    if (!records) {
+      return { imported: 0, total: 0 };
+    }
+    var list = [];
+    if (Array.isArray(records)) {
+      list = records;
+    } else if (records && Array.isArray(records.records)) {
+      list = records.records;
+    } else if (records && typeof records === "object") {
+      list = [records];
+    }
+    var imported = 0;
+    for (var i = 0; i < list.length; i += 1) {
+      var item = list[i];
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+      try {
+        recordVisionInference(item, { append: true, silent: true });
+        imported += 1;
+      } catch (err) {
+        console.warn("import vision record failed", err);
+      }
+    }
+    if (imported > 0) {
+      saveState();
+      emitVisionChange();
+    }
+    return { imported: imported, total: list.length };
   }
 
   function renderBankList() {
@@ -6904,6 +6998,35 @@
     }
   }
 
+  function initVisionHistoryPage() {
+    requireAuth();
+    setNavUserInfo();
+    ensureActiveBank();
+    renderBankList();
+    updateBankBadge();
+    var createBankBtn = document.getElementById("createBank");
+    if (createBankBtn) {
+      createBankBtn.addEventListener("click", createBank);
+    }
+    var logoutBtn = document.getElementById("logoutButton");
+    if (logoutBtn) {
+      logoutBtn.addEventListener("click", logout);
+    }
+    if (window.AIToolsVisionHistory && typeof window.AIToolsVisionHistory.mount === "function") {
+      window.AIToolsVisionHistory.mount({
+        getSnapshot: getVisionSnapshot,
+        subscribe: subscribeVision,
+        getGroups: getContaminationGroups,
+        updateInference: updateVisionInference,
+        importRecords: importVisionHistoryRecords,
+        getUser: function () {
+          return currentUser ? { username: currentUser.username, role: currentUser.role } : null;
+        },
+        toast: showToast
+      });
+    }
+  }
+
   function initVisionPage() {
     requireAuth();
     setNavUserInfo();
@@ -6988,6 +7111,8 @@
         initAdminPage();
       } else if (page === "tools") {
         initToolsPage();
+      } else if (page === "vision-history") {
+        initVisionHistoryPage();
       } else if (page === "vision") {
         initVisionPage();
       } else {
