@@ -33,11 +33,31 @@
       </div>
       <div class="user-info" id="userInfo"></div>
     </header>
+    <section class="favorites-hero">
+      <div class="hero-primary">
+        <h1>收藏指挥台</h1>
+        <p id="favoriteHeroSummary">将高价值会话沉淀为知识卡片，便于随时引用与分享。</p>
+        <div class="hero-metrics">
+          <div class="metric-tile">
+            <span class="metric-label">收藏总数</span>
+            <span class="metric-value" id="favoriteCount">0</span>
+          </div>
+          <div class="metric-tile">
+            <span class="metric-label">最近更新</span>
+            <span class="metric-value" id="favoriteUpdated">--</span>
+          </div>
+        </div>
+      </div>
+      <div class="hero-actions">
+        <label class="search-label" for="favoriteSearch">快速检索</label>
+        <input type="text" id="favoriteSearch" class="favorite-search" placeholder="输入标题、摘要或关键词">
+        <div class="hero-hint">支持右键会话收藏，或在对话中收藏精彩问答。</div>
+      </div>
+    </section>
     <section class="favorites-board">
       <div class="panel favorites-column">
         <div class="panel-header">
           <h2>收藏列表</h2>
-          <input type="text" id="favoriteSearch" class="favorite-search" placeholder="搜索收藏标题或内容">
         </div>
         <div id="favoriteList" class="favorite-list"></div>
       </div>

@@ -150,12 +150,9 @@
       window.location.href = "index.html";
       return;
     }
-    var snippet = "引用《" + (favorite.title || "收藏对话") + "》
-" + (favorite.content || "");
+    var snippet = "引用《" + (favorite.title || "收藏对话") + "》\n" + (favorite.content || "");
     if (input.value && input.value.trim().length > 0) {
-      input.value = input.value + "
-
-" + snippet;
+      input.value = input.value + "\n\n" + snippet;
     } else {
       input.value = snippet;
     }
@@ -493,17 +490,50 @@
       return;
     }
     list.innerHTML = "";
+    var countEl = document.getElementById("favoriteCount");
+    var updatedEl = document.getElementById("favoriteUpdated");
+    var summaryEl = document.getElementById("favoriteHeroSummary");
     var bank = getActiveBank();
     if (!bank) {
       list.innerHTML = '<div class="panel-hint">请选择记忆库</div>';
       activeFavoriteId = null;
       renderFavoriteDetail();
       renderFloatingFavorite();
+      if (countEl) {
+        countEl.textContent = "0";
+      }
+      if (updatedEl) {
+        updatedEl.textContent = "--";
+      }
+      if (summaryEl) {
+        summaryEl.textContent = "尚未选择记忆库，请先在左侧挑选或创建新的记忆库。";
+      }
       return;
     }
-    var favorites = ensureBankFavorites(bank).filter(function (fav) {
+    var allFavorites = ensureBankFavorites(bank).filter(function (fav) {
       return fav.scope === "session";
     });
+    var latestUpdate = "";
+    for (var li = 0; li < allFavorites.length; li += 1) {
+      var stamp = allFavorites[li].updatedAt || allFavorites[li].createdAt || "";
+      if (stamp && (!latestUpdate || stamp.localeCompare(latestUpdate) > 0)) {
+        latestUpdate = stamp;
+      }
+    }
+    if (countEl) {
+      countEl.textContent = String(allFavorites.length);
+    }
+    if (updatedEl) {
+      updatedEl.textContent = latestUpdate ? formatDateTime(latestUpdate) : "--";
+    }
+    if (summaryEl) {
+      if (allFavorites.length === 0) {
+        summaryEl.textContent = "还没有收藏内容，试着在对话或会话列表中收藏重要片段。";
+      } else {
+        summaryEl.textContent = "共整理 " + allFavorites.length + " 条高价值会话，可随时引用或浮窗对比。";
+      }
+    }
+    var favorites = allFavorites;
     if (favoriteSearchTerm) {
       var term = favoriteSearchTerm.toLowerCase();
       favorites = favorites.filter(function (fav) {
@@ -511,7 +541,7 @@
       });
     }
     if (favorites.length === 0) {
-      list.innerHTML = '<div class="panel-hint">暂无收藏会话</div>';
+      list.innerHTML = '<div class="panel-hint">暂无符合条件的收藏</div>';
       activeFavoriteId = null;
       renderFavoriteDetail();
       renderFloatingFavorite();
