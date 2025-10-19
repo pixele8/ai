@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>决策历史 · 虹小聊</title>
+<link rel="stylesheet" href="styles/app.css">
+</head>
+<body data-page="decision-history">
+<div class="app-shell">
+  <aside class="sidebar" id="bankSidebar">
+    <div class="brand">虹小聊</div>
+    <div class="nav-group">
+      <a class="nav-link" href="index.html">对话</a>
+      <a class="nav-link" href="kb.html">知识库</a>
+      <a class="nav-link" href="faq.html">FAQ</a>
+      <a class="nav-link" href="decision.html">决策链</a>
+      <a class="nav-link active" href="decision-history.html">决策历史</a>
+      <a class="nav-link" href="admin.html">系统</a>
+    </div>
+    <div class="sidebar-section">
+      <div class="section-title">记忆库</div>
+      <div class="badge-list" id="bankList"></div>
+      <button class="ghost-button" id="createBank">新建记忆库</button>
+    </div>
+    <button class="ghost-button" id="logoutButton">退出登录</button>
+  </aside>
+  <main class="main-panel history-main">
+    <header class="main-header">
+      <div class="header-info">
+        <div class="header-title">决策历史库</div>
+        <div class="header-sub">浏览、检索并管理所有已归档的决策链</div>
+      </div>
+      <div class="user-info" id="userInfo"></div>
+    </header>
+    <section class="panel history-controls">
+      <div class="control-row">
+        <label class="search-field">
+          <span>检索</span>
+          <input type="search" id="historySearch" placeholder="按项目、结论、标签检索">
+        </label>
+        <label class="select-field">
+          <span>分组方式</span>
+          <select id="historyGrouping">
+            <option value="group">按分组</option>
+            <option value="year">按年份</option>
+          </select>
+        </label>
+        <label class="select-field">
+          <span>筛选分组</span>
+          <select id="historyGroupFilter">
+            <option value="all">全部</option>
+          </select>
+        </label>
+        <div class="history-actions">
+          <button class="ghost-button" type="button" id="historyImportBtn">导入</button>
+          <button class="primary-button" type="button" id="historyExportBtn">导出</button>
+          <input type="file" id="historyImportInput" class="hidden" accept="application/json">
+        </div>
+      </div>
+    </section>
+    <section class="panel history-content">
+      <div id="historyGroups" class="history-group-list"></div>
+    </section>
+  </main>
+</div>
+<footer class="global-footer">©️吴嘉辉</footer>
+<div class="modal hidden" id="historyPreviewModal">
+  <div class="modal-content wide">
+    <h3 id="historyPreviewTitle">预览</h3>
+    <pre id="historyPreviewBody" class="history-preview"></pre>
+    <div class="form-row inline">
+      <span class="row-spacer"></span>
+      <button type="button" class="primary-button" id="closeHistoryPreview">关闭</button>
+    </div>
+  </div>
+</div>
+<script src="scripts/app.js"></script>
+</body>
+</html>
