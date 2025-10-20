@@ -4356,19 +4356,151 @@
     return copy;
   }
 
+  function collectSimilarityTokens(text) {
+    if (!text) {
+      return [];
+    }
+    var lowered = text.toLowerCase();
+    var tokens = [];
+    var wordMatches = lowered.match(/[a-z0-9]+/g);
+    if (wordMatches) {
+      for (var i = 0; i < wordMatches.length; i += 1) {
+        if (wordMatches[i]) {
+          tokens.push(wordMatches[i]);
+        }
+      }
+    }
+    var condensed = lowered.replace(/[a-z0-9\s]+/g, "");
+    for (var j = 0; j < condensed.length; j += 1) {
+      var ch = condensed.charAt(j);
+      if (!ch) {
+        continue;
+      }
+      var next = condensed.charAt(j + 1);
+      if (next) {
+        tokens.push(ch + next);
+      } else {
+        tokens.push(ch);
+      }
+    }
+    if (tokens.length === 0 && lowered.length > 0) {
+      for (var k = 0; k < lowered.length; k += 2) {
+        var slice = lowered.substr(k, 2);
+        if (slice) {
+          tokens.push(slice);
+        }
+      }
+    }
+    var unique = [];
+    var seen = {};
+    for (var n = 0; n < tokens.length; n += 1) {
+      var token = tokens[n];
+      if (!token) {
+        continue;
+      }
+      if (!seen[token]) {
+        seen[token] = true;
+        unique.push(token);
+      }
+    }
+    return unique;
+  }
+
+  function similarityScore(tokensA, tokensB) {
+    if (!tokensA || !tokensB || tokensA.length === 0 || tokensB.length === 0) {
+      return 0;
+    }
+    var mapA = {};
+    var uniqueA = [];
+    for (var i = 0; i < tokensA.length; i += 1) {
+      var tokA = tokensA[i];
+      if (!tokA) {
+        continue;
+      }
+      if (!mapA[tokA]) {
+        mapA[tokA] = true;
+        uniqueA.push(tokA);
+      }
+    }
+    if (uniqueA.length === 0) {
+      return 0;
+    }
+    var mapB = {};
+    var uniqueB = [];
+    for (var j = 0; j < tokensB.length; j += 1) {
+      var tokB = tokensB[j];
+      if (!tokB) {
+        continue;
+      }
+      if (!mapB[tokB]) {
+        mapB[tokB] = true;
+        uniqueB.push(tokB);
+      }
+    }
+    if (uniqueB.length === 0) {
+      return 0;
+    }
+    var intersection = 0;
+    for (var a = 0; a < uniqueA.length; a += 1) {
+      if (mapB[uniqueA[a]]) {
+        intersection += 1;
+      }
+    }
+    if (intersection === 0) {
+      return 0;
+    }
+    var union = uniqueA.length;
+    for (var b = 0; b < uniqueB.length; b += 1) {
+      if (!mapA[uniqueB[b]]) {
+        union += 1;
+      }
+    }
+    if (union === 0) {
+      return 0;
+    }
+    return intersection / union;
+  }
+
+  function appendDuplicate(target, duplicate) {
+    if (!target.duplicates) {
+      target.duplicates = [];
+    }
+    if (!duplicate) {
+      return;
+    }
+    var inserted = false;
+    var dupScore = typeof duplicate.score === "number" ? duplicate.score : -Infinity;
+    for (var i = 0; i < target.duplicates.length; i += 1) {
+      var existing = target.duplicates[i];
+      var existingScore = typeof existing.score === "number" ? existing.score : -Infinity;
+      if (dupScore > existingScore) {
+        target.duplicates.splice(i, 0, duplicate);
+        inserted = true;
+        break;
+      }
+    }
+    if (!inserted) {
+      target.duplicates.push(duplicate);
+    }
+  }
+
   function collapseEvidenceList(list) {
     if (!list || list.length === 0) {
       return [];
     }
-    var grouped = {};
-    var ordered = [];
+    var identityMap = {};
+    var groups = [];
+    var threshold = 0.82;
     for (var i = 0; i < list.length; i += 1) {
       var item = list[i];
       if (!item) {
         continue;
       }
+      var copy = cloneEvidenceEntry(item);
+      copy.duplicates = [];
       var typeKey = item.type || "knowledge";
-      var normalized = item.text ? String(item.text).replace(/\s+/g, " ").trim() : "";
+      var normalized = copy.text ? String(copy.text).replace(/\s+/g, " ").trim() : "";
+      var tokens = normalized ? collectSimilarityTokens(normalized) : null;
       var sourceKey = item.source ? String(item.source).replace(/\s+/g, " ").trim() : "";
       var identity = null;
       if (normalized) {
@@ -4392,14 +4524,69 @@
         identity = typeKey + "::index-" + i;
       }
       var key = typeKey + "::" + identity;
-      if (grouped[key]) {
-        grouped[key].duplicates.push(cloneEvidenceEntry(item));
+      var group = key && identityMap[key] ? identityMap[key] : null;
+      if (!group && normalized && tokens && tokens.length > 0) {
+        var best = null;
+        var bestScore = 0;
+        for (var g = 0; g < groups.length; g += 1) {
+          var candidate = groups[g];
+          if (!candidate || candidate.type !== typeKey) {
+            continue;
+          }
+          if (!candidate.tokens || candidate.tokens.length === 0) {
+            continue;
+          }
+          var score = similarityScore(candidate.tokens, tokens);
+          if (score > bestScore) {
+            bestScore = score;
+            best = candidate;
+          }
+        }
+        if (best && bestScore >= threshold) {
+          group = best;
+        }
+      }
+      if (group) {
+        var primary = group.entry;
+        var primaryScore = typeof primary.score === "number" ? primary.score : -Infinity;
+        var candidateScore = typeof copy.score === "number" ? copy.score : -Infinity;
+        if (candidateScore > primaryScore) {
+          var carry = [];
+          carry.push(cloneEvidenceEntry(primary));
+          if (primary.duplicates && primary.duplicates.length > 0) {
+            for (var d = 0; d < primary.duplicates.length; d += 1) {
+              carry.push(cloneEvidenceEntry(primary.duplicates[d]));
+            }
+          }
+          copy.duplicates = copy.duplicates || [];
+          for (var c = 0; c < carry.length; c += 1) {
+            appendDuplicate(copy, carry[c]);
+          }
+          group.entry = copy;
+          group.normalized = normalized;
+          group.tokens = tokens;
+        } else {
+          appendDuplicate(primary, copy);
+        }
+        if (key && !identityMap[key]) {
+          identityMap[key] = group;
+        }
         continue;
       }
-      var primary = cloneEvidenceEntry(item);
-      primary.duplicates = [];
-      grouped[key] = primary;
-      ordered.push(primary);
+      var record = {
+        entry: copy,
+        type: typeKey,
+        normalized: normalized,
+        tokens: tokens
+      };
+      groups.push(record);
+      if (key) {
+        identityMap[key] = record;
+      }
+    }
+    var ordered = [];
+    for (var idx = 0; idx < groups.length; idx += 1) {
+      ordered.push(groups[idx].entry);
     }
     return ordered;
   }
