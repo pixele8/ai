@@ -4289,9 +4289,9 @@
   }
 
   function collectFavoriteEvidence(bank, tokens, limit) {
-    var results = [];
+    var pool = [];
     if (!bank || !tokens || tokens.length === 0) {
-      return results;
+      return pool;
     }
     var favorites = bank.favorites || [];
     for (var i = 0; i < favorites.length; i += 1) {
@@ -4314,7 +4314,7 @@
         if (entry.id) {
           url += "#message-" + encodeURIComponent(entry.id);
         }
-        results.push({
+        pool.push({
           type: "knowledge",
           source: baseSource + " · " + roleLabel,
           chunk: j + 1,
@@ -4323,14 +4323,15 @@
           favoriteId: favorite.id,
           favoriteMessageId: entry.id || null,
           favoriteBankId: favorite.bankId || bank.id,
-          url: url
+          url: url,
+          origin: "favorite"
         });
       }
     }
-    if (results.length === 0) {
-      return results;
+    if (pool.length === 0) {
+      return pool;
     }
-    results.sort(function (a, b) {
+    pool.sort(function (a, b) {
       var aScore = typeof a.score === "number" ? a.score : 0;
       var bScore = typeof b.score === "number" ? b.score : 0;
       if (bScore !== aScore) {
@@ -4338,10 +4339,11 @@
       }
       return 0;
     });
-    if (typeof limit === "number" && limit > 0 && results.length > limit) {
-      return results.slice(0, limit);
+    var cap = pool.length;
+    if (typeof limit === "number" && limit > 0) {
+      cap = Math.min(pool.length, Math.max(limit * 3, limit));
     }
-    return results;
+    return pool.slice(0, cap);
   }
 
   function cloneEvidenceEntry(item) {
@@ -4402,6 +4404,35 @@
     return ordered;
   }
 
+  function entryHasOrigin(entry, origin) {
+    if (!entry || !origin) {
+      return false;
+    }
+    if (entry.origin === origin) {
+      return true;
+    }
+    if (entry.duplicates && entry.duplicates.length > 0) {
+      for (var i = 0; i < entry.duplicates.length; i += 1) {
+        if (entry.duplicates[i] && entry.duplicates[i].origin === origin) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function hasOriginInList(list, origin) {
+    if (!list || list.length === 0) {
+      return false;
+    }
+    for (var i = 0; i < list.length; i += 1) {
+      if (entryHasOrigin(list[i], origin)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   function reasoningSummary(texts, level) {
     var points = [];
     for (var i = 0; i < texts.length; i += 1) {
@@ -4443,10 +4474,12 @@
       var expanded = expandTerms(tokens);
       var knowledgeScores = computeBM25(bank, expanded);
       var knowledgeCandidates = [];
+      var kbCandidates = [];
+      var limit = state.settings.topN;
+      var kbLimit = limit > 0 ? Math.max(limit * 3, limit) : knowledgeScores.length;
       var decisionEvidenceRaw = collectDecisionEvidence(tokens);
       var topScore = knowledgeScores.length > 0 ? knowledgeScores[0].score : 0;
-      var limit = state.settings.topN;
-      for (var k = 0; k < knowledgeScores.length && knowledgeCandidates.length < limit; k += 1) {
+      for (var k = 0; k < knowledgeScores.length && kbCandidates.length < kbLimit; k += 1) {
         var entry = knowledgeScores[k];
         if (entry.score <= 0) {
           continue;
@@ -4458,7 +4491,7 @@
         if (!chunk) {
           continue;
         }
-        knowledgeCandidates.push({
+        kbCandidates.push({
           type: "knowledge",
           source: chunk.file,
           chunk: chunk.order,
@@ -4466,14 +4499,18 @@
           score: entry.score,
           fileId: chunk.fileId,
           chunkId: chunk.id,
-          url: "kb.html?file=" + encodeURIComponent(chunk.fileId) + "&chunk=" + encodeURIComponent(chunk.id)
+          url: "kb.html?file=" + encodeURIComponent(chunk.fileId) + "&chunk=" + encodeURIComponent(chunk.id),
+          origin: "kb"
         });
       }
       var favoriteEvidence = collectFavoriteEvidence(bank, expanded, limit);
+      var decisionKnowledge = [];
+      if (kbCandidates.length > 0) {
+        knowledgeCandidates = knowledgeCandidates.concat(kbCandidates);
+      }
       if (favoriteEvidence.length > 0) {
         knowledgeCandidates = knowledgeCandidates.concat(favoriteEvidence);
       }
-      var decisionKnowledge = [];
       if (decisionEvidenceRaw.length > 0) {
         for (var d = 0; d < decisionEvidenceRaw.length; d += 1) {
           var decisionEntry = decisionEvidenceRaw[d];
@@ -4488,15 +4525,17 @@
             projectId: decisionEntry.projectId || null,
             nodeId: decisionEntry.nodeId || null,
             linkId: decisionEntry.linkId || null,
-            url: decisionEntry.url || null
+            url: decisionEntry.url || null,
+            origin: "decision-history"
           });
         }
         if (decisionKnowledge.length > 0) {
           knowledgeCandidates = knowledgeCandidates.concat(decisionKnowledge);
         }
       }
-      if (knowledgeCandidates.length > 1) {
-        knowledgeCandidates.sort(function (a, b) {
+      var knowledgeEvidencePool = collapseEvidenceList(knowledgeCandidates);
+      if (knowledgeEvidencePool.length > 1) {
+        knowledgeEvidencePool.sort(function (a, b) {
           var aScore = typeof a.score === "number" ? a.score : 0;
           var bScore = typeof b.score === "number" ? b.score : 0;
           if (bScore !== aScore) {
@@ -4504,13 +4543,42 @@
           }
           return 0;
         });
-        var extraAllowance = decisionKnowledge.length > 0 ? decisionKnowledge.length : 0;
-        var effectiveLimit = typeof limit === "number" && limit > 0 ? limit + extraAllowance : limit;
-        if (typeof effectiveLimit === "number" && effectiveLimit > 0 && knowledgeCandidates.length > effectiveLimit) {
-          knowledgeCandidates = knowledgeCandidates.slice(0, effectiveLimit);
+      }
+      var knowledgeEvidence = [];
+      var extraAllowance = decisionKnowledge.length > 0 ? decisionKnowledge.length : 0;
+      var effectiveLimit = typeof limit === "number" && limit > 0 ? limit + extraAllowance : knowledgeEvidencePool.length;
+      if (effectiveLimit <= 0) {
+        effectiveLimit = knowledgeEvidencePool.length;
+      }
+      for (var keIdx = 0; keIdx < knowledgeEvidencePool.length && knowledgeEvidence.length < effectiveLimit; keIdx += 1) {
+        knowledgeEvidence.push(knowledgeEvidencePool[keIdx]);
+      }
+      var REQUIRED_ORIGINS = ["kb", "favorite", "decision-history"];
+      for (var ro = 0; ro < REQUIRED_ORIGINS.length; ro += 1) {
+        var originKey = REQUIRED_ORIGINS[ro];
+        if (!hasOriginInList(knowledgeEvidence, originKey)) {
+          for (var poolIdx = 0; poolIdx < knowledgeEvidencePool.length; poolIdx += 1) {
+            var candidate = knowledgeEvidencePool[poolIdx];
+            if (knowledgeEvidence.indexOf(candidate) >= 0) {
+              continue;
+            }
+            if (entryHasOrigin(candidate, originKey)) {
+              knowledgeEvidence.push(candidate);
+              break;
+            }
+          }
         }
       }
-      var knowledgeEvidence = collapseEvidenceList(knowledgeCandidates);
+      if (knowledgeEvidence.length > 1) {
+        knowledgeEvidence.sort(function (a, b) {
+          var aScore = typeof a.score === "number" ? a.score : 0;
+          var bScore = typeof b.score === "number" ? b.score : 0;
+          if (bScore !== aScore) {
+            return bScore - aScore;
+          }
+          return 0;
+        });
+      }
       var decisionEvidence = collapseEvidenceList(decisionEvidenceRaw);
       var bestKnowledgeEvidence = knowledgeEvidence.length > 0 ? knowledgeEvidence[0] : null;
       var bestDecisionEvidence = decisionEvidence.length > 0 ? decisionEvidence[0] : null;
