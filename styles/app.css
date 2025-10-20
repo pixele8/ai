@@ -633,6 +633,20 @@ textarea:focus {
   white-space: nowrap;
   max-width: 240px;
 }
+.evidence-source-button {
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: #1d4ed8;
+  cursor: pointer;
+  text-decoration: none;
+}
+.evidence-source-button:hover {
+  color: #312e81;
+  text-decoration: underline;
+}
 .evidence-score {
   background: #e0e7ff;
   color: #312e81;

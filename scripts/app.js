@@ -440,6 +440,56 @@
     return null;
   }
 
+  function findFavoriteWithBank(favoriteId, bankId) {
+    if (!favoriteId) {
+      return { favorite: null, bank: null };
+    }
+    var bank = null;
+    if (bankId) {
+      bank = findBankById(bankId);
+      if (bank) {
+        var favoriteInBank = findFavoriteById(bank, favoriteId);
+        if (favoriteInBank) {
+          return { favorite: favoriteInBank, bank: bank };
+        }
+      }
+    }
+    if (state && state.banks) {
+      for (var i = 0; i < state.banks.length; i += 1) {
+        var candidateBank = state.banks[i];
+        if (!candidateBank) {
+          continue;
+        }
+        var candidateFavorite = findFavoriteById(candidateBank, favoriteId);
+        if (candidateFavorite) {
+          return { favorite: candidateFavorite, bank: candidateBank };
+        }
+      }
+    }
+    var activeBank = getActiveBank();
+    if (activeBank) {
+      var activeFavorite = findFavoriteById(activeBank, favoriteId);
+      if (activeFavorite) {
+        return { favorite: activeFavorite, bank: activeBank };
+      }
+    }
+    return { favorite: null, bank: null };
+  }
+
+  function openFavoriteEvidence(favoriteId, bankId, messageId) {
+    var resolved = findFavoriteWithBank(favoriteId, bankId);
+    if (!resolved.favorite) {
+      showToast("收藏不存在或已被删除");
+      return;
+    }
+    if (messageId) {
+      resolved.favorite.highlightId = messageId;
+      resolved.favorite.kind = "message";
+    }
+    showFloatingFavorite(resolved.favorite);
+    saveState();
+  }
+
   function insertFavoriteIntoComposer(favorite) {
     if (!favorite) {
       return;
@@ -3443,19 +3493,34 @@
         card.className = "evidence-card" + (embedded ? " embedded" : "");
         var header = document.createElement("div");
         header.className = "evidence-title";
-        var source = document.createElement(info.url ? "a" : "span");
-        source.className = "evidence-source";
-        if (info.url) {
+        var label = info.source;
+        if (type !== "decision" && info.chunk && !info.favoriteId) {
+          label = info.source + " · 段 " + info.chunk;
+        }
+        var source;
+        if (info.favoriteId) {
+          source = document.createElement("button");
+          source.type = "button";
+          source.className = "evidence-source evidence-source-button";
+          source.textContent = label;
+          source.addEventListener("click", (function (favoriteId, bankId, messageId) {
+            return function (evt) {
+              evt.preventDefault();
+              evt.stopPropagation();
+              openFavoriteEvidence(favoriteId, bankId, messageId);
+            };
+          })(info.favoriteId, info.favoriteBankId || null, info.favoriteMessageId || null));
+        } else if (info.url) {
+          source = document.createElement("a");
+          source.className = "evidence-source";
           source.href = info.url;
           source.target = "_blank";
           source.rel = "noopener";
-        }
-        if (type === "decision") {
-          source.textContent = info.source;
-        } else if (info.chunk) {
-          source.textContent = info.source + " · 段 " + info.chunk;
+          source.textContent = label;
         } else {
-          source.textContent = info.source;
+          source = document.createElement("span");
+          source.className = "evidence-source";
+          source.textContent = label;
         }
         header.appendChild(source);
         if (typeof info.score === "number") {
@@ -3490,19 +3555,34 @@
             dupCard.className = "evidence-duplicate";
             var dupHeader = document.createElement("div");
             dupHeader.className = "evidence-duplicate-header";
-            var dupSource = document.createElement(dup.url ? "a" : "span");
-            dupSource.className = "evidence-duplicate-source";
-            if (dup.url) {
+            var dupLabel = dup.source || info.source;
+            if (type !== "decision" && dup.chunk && !dup.favoriteId) {
+              dupLabel = (dup.source || info.source) + " · 段 " + dup.chunk;
+            }
+            var dupSource;
+            if (dup.favoriteId) {
+              dupSource = document.createElement("button");
+              dupSource.type = "button";
+              dupSource.className = "evidence-duplicate-source evidence-source-button";
+              dupSource.textContent = dupLabel;
+              dupSource.addEventListener("click", (function (favoriteId, bankId, messageId) {
+                return function (evt) {
+                  evt.preventDefault();
+                  evt.stopPropagation();
+                  openFavoriteEvidence(favoriteId, bankId, messageId);
+                };
+              })(dup.favoriteId, dup.favoriteBankId || info.favoriteBankId || null, dup.favoriteMessageId || null));
+            } else if (dup.url) {
+              dupSource = document.createElement("a");
+              dupSource.className = "evidence-duplicate-source";
               dupSource.href = dup.url;
               dupSource.target = "_blank";
               dupSource.rel = "noopener";
-            }
-            if (type === "decision") {
-              dupSource.textContent = dup.source || info.source;
-            } else if (dup.chunk) {
-              dupSource.textContent = (dup.source || info.source) + " · 段 " + dup.chunk;
+              dupSource.textContent = dupLabel;
             } else {
-              dupSource.textContent = dup.source || info.source;
+              dupSource = document.createElement("span");
+              dupSource.className = "evidence-duplicate-source";
+              dupSource.textContent = dupLabel;
             }
             dupHeader.appendChild(dupSource);
             if (typeof dup.score === "number") {
@@ -4242,6 +4322,7 @@
           score: score * 0.04,
           favoriteId: favorite.id,
           favoriteMessageId: entry.id || null,
+          favoriteBankId: favorite.bankId || bank.id,
           url: url
         });
       }
@@ -4263,11 +4344,21 @@
     return results;
   }
 
+  function cloneEvidenceEntry(item) {
+    var copy = {};
+    for (var key in item) {
+      if (item.hasOwnProperty(key) && key !== "duplicates") {
+        copy[key] = item[key];
+      }
+    }
+    return copy;
+  }
+
   function collapseEvidenceList(list) {
     if (!list || list.length === 0) {
       return [];
     }
-    var map = {};
+    var grouped = {};
     var ordered = [];
     for (var i = 0; i < list.length; i += 1) {
       var item = list[i];
@@ -4275,24 +4366,38 @@
         continue;
       }
       var typeKey = item.type || "knowledge";
-      var textKey = item.text ? String(item.text).replace(/\s+/g, " ").trim() : "";
-      if (!textKey) {
-        textKey = (item.source || "") + "::" + (item.chunkId || item.favoriteMessageId || item.projectId || item.nodeId || item.linkId || i);
+      var normalized = item.text ? String(item.text).replace(/\s+/g, " ").trim() : "";
+      var sourceKey = item.source ? String(item.source).replace(/\s+/g, " ").trim() : "";
+      var identity = null;
+      if (normalized) {
+        identity = "text:" + normalized;
+        if (typeKey === "decision" && item.projectId) {
+          identity += "::project-" + item.projectId;
+        }
+      } else if (item.favoriteId) {
+        identity = "favorite:" + item.favoriteId + (item.favoriteMessageId ? "#" + item.favoriteMessageId : "");
+      } else if (item.chunkId) {
+        identity = "chunk:" + item.chunkId;
+      } else if (item.projectId && item.nodeId) {
+        identity = "node:" + item.projectId + ":" + item.nodeId;
+      } else if (item.projectId && item.linkId) {
+        identity = "link:" + item.projectId + ":" + item.linkId;
+      } else if (item.projectId) {
+        identity = "project:" + item.projectId;
+      } else if (sourceKey) {
+        identity = "source:" + sourceKey;
+      } else {
+        identity = typeKey + "::index-" + i;
       }
-      var key = typeKey + "::" + textKey;
-      if (map[key]) {
-        map[key].duplicates.push(item);
+      var key = typeKey + "::" + identity;
+      if (grouped[key]) {
+        grouped[key].duplicates.push(cloneEvidenceEntry(item));
         continue;
       }
-      var clone = {};
-      for (var prop in item) {
-        if (item.hasOwnProperty(prop) && prop !== "duplicates") {
-          clone[prop] = item[prop];
-        }
-      }
-      clone.duplicates = [];
-      map[key] = clone;
-      ordered.push(clone);
+      var primary = cloneEvidenceEntry(item);
+      primary.duplicates = [];
+      grouped[key] = primary;
+      ordered.push(primary);
     }
     return ordered;
   }
