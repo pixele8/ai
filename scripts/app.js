@@ -4288,6 +4288,80 @@
     return results.slice(0, 5);
   }
 
+  function looksLikeQuestion(text) {
+    if (!text) {
+      return false;
+    }
+    var trimmed = String(text).trim();
+    if (!trimmed) {
+      return false;
+    }
+    if (/[？?]$/.test(trimmed)) {
+      return true;
+    }
+    if (trimmed.length <= 16) {
+      var cues = ["如何", "怎样", "为什么", "原因", "什么", "多少", "能否", "可以", "是否", "哪", "需不需要", "应不应该"];
+      for (var i = 0; i < cues.length; i += 1) {
+        if (trimmed.indexOf(cues[i]) >= 0) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function deriveChunkQa(chunk) {
+    var qa = { question: "", answer: "" };
+    if (!chunk || !chunk.text) {
+      return qa;
+    }
+    var text = String(chunk.text).trim();
+    if (!text) {
+      return qa;
+    }
+    var lines = text.split(/\n+/);
+    if (lines.length > 1) {
+      var firstLine = lines[0].trim();
+      var rest = lines.slice(1).join("\n").trim();
+      if (rest && looksLikeQuestion(firstLine)) {
+        qa.question = firstLine;
+        qa.answer = rest;
+      }
+    }
+    if (!qa.answer) {
+      qa.answer = text;
+    }
+    var fileTitle = chunk.file ? String(chunk.file).trim() : "";
+    if (!qa.question && fileTitle) {
+      if (looksLikeQuestion(fileTitle)) {
+        qa.question = fileTitle;
+      } else if (text.indexOf(fileTitle) === 0) {
+        var remainder = text.slice(fileTitle.length).replace(/^\s+/, "");
+        if (remainder) {
+          qa.question = fileTitle;
+          qa.answer = remainder;
+        }
+      }
+    }
+    return qa;
+  }
+
+  function getEvidenceAnswer(entry) {
+    if (!entry) {
+      return "";
+    }
+    if (entry.qaAnswer) {
+      return entry.qaAnswer;
+    }
+    if (entry.type === "decision") {
+      return entry.text || "";
+    }
+    if (entry.origin === "favorite" && entry.favoriteRole === "user") {
+      return "";
+    }
+    return entry.text || "";
+  }
+
   function collectFavoriteEvidence(bank, tokens, limit) {
     var pool = [];
     if (!bank || !tokens || tokens.length === 0) {
@@ -4300,29 +4374,59 @@
         continue;
       }
       var baseSource = "收藏《" + (favorite.title || "收藏对话") + "》";
+      var lastQuestion = favorite.title || "";
       for (var j = 0; j < favorite.transcript.length; j += 1) {
         var entry = favorite.transcript[j];
         if (!entry || !entry.text) {
           continue;
         }
-        var score = scoreDecisionText(entry.text, tokens);
-        if (score < 35) {
+        var text = String(entry.text).trim();
+        if (!text) {
           continue;
         }
-        var roleLabel = entry.role === "user" ? "用户" : "助理";
+        var score = scoreDecisionText(text, tokens);
+        if (score < 35) {
+          if (entry.role === "user") {
+            lastQuestion = text;
+          }
+          continue;
+        }
         var url = "favorite-viewer.html?bank=" + encodeURIComponent(favorite.bankId || bank.id) + "&favorite=" + encodeURIComponent(favorite.id);
         if (entry.id) {
           url += "#message-" + encodeURIComponent(entry.id);
         }
+        if (entry.role === "user") {
+          pool.push({
+            type: "knowledge",
+            source: baseSource + " · 用户", 
+            chunk: j + 1,
+            text: text,
+            score: score * 0.02,
+            favoriteId: favorite.id,
+            favoriteMessageId: entry.id || null,
+            favoriteBankId: favorite.bankId || bank.id,
+            favoriteRole: "user",
+            qaQuestion: text,
+            qaAnswer: "",
+            url: url,
+            origin: "favorite"
+          });
+          lastQuestion = text;
+          continue;
+        }
+        var qaQuestion = lastQuestion || favorite.title || "";
         pool.push({
           type: "knowledge",
-          source: baseSource + " · " + roleLabel,
+          source: baseSource + " · 助理",
           chunk: j + 1,
-          text: entry.text,
+          text: text,
           score: score * 0.04,
           favoriteId: favorite.id,
           favoriteMessageId: entry.id || null,
           favoriteBankId: favorite.bankId || bank.id,
+          favoriteRole: "assistant",
+          qaQuestion: qaQuestion,
+          qaAnswer: text,
           url: url,
           origin: "favorite"
         });
@@ -4620,21 +4724,6 @@
     return false;
   }
 
-  function reasoningSummary(texts, level) {
-    var points = [];
-    for (var i = 0; i < texts.length; i += 1) {
-      var snippet = texts[i];
-      if (snippet.length > 100) {
-        snippet = snippet.slice(0, 100);
-      }
-      points.push((i + 1) + ". " + snippet);
-      if (points.length >= level * 2) {
-        break;
-      }
-    }
-    return points.join("\n");
-  }
-
   function logConversation(bank, question, answer, evidence) {
     var entry = {
       id: uuid(),
@@ -4678,6 +4767,7 @@
         if (!chunk) {
           continue;
         }
+        var qaInfo = deriveChunkQa(chunk);
         kbCandidates.push({
           type: "knowledge",
           source: chunk.file,
@@ -4687,7 +4777,9 @@
           fileId: chunk.fileId,
           chunkId: chunk.id,
           url: "kb.html?file=" + encodeURIComponent(chunk.fileId) + "&chunk=" + encodeURIComponent(chunk.id),
-          origin: "kb"
+          origin: "kb",
+          qaQuestion: qaInfo.question,
+          qaAnswer: qaInfo.answer
         });
       }
       var favoriteEvidence = collectFavoriteEvidence(bank, expanded, limit);
@@ -4767,60 +4859,63 @@
         });
       }
       var decisionEvidence = collapseEvidenceList(decisionEvidenceRaw);
-      var bestKnowledgeEvidence = knowledgeEvidence.length > 0 ? knowledgeEvidence[0] : null;
-      var bestDecisionEvidence = decisionEvidence.length > 0 ? decisionEvidence[0] : null;
       evidence = decisionEvidence.concat(knowledgeEvidence);
       for (var idx = 0; idx < evidence.length; idx += 1) {
         evidence[idx].ref = idx + 1;
       }
-      var summaryLines = [];
-      if (bestKnowledgeEvidence) {
-        summaryLines.push("知识库提示：" + snippetText(bestKnowledgeEvidence.text, 80) + "（资料" + bestKnowledgeEvidence.ref + "）");
-      }
-      if (bestDecisionEvidence) {
-        summaryLines.push("决策链洞察：" + snippetText(bestDecisionEvidence.text, 80) + "（资料" + bestDecisionEvidence.ref + "）");
-      }
-      if (summaryLines.length === 0) {
-        summaryLines.push("当前资料中未找到高相关答案，请补充更多上下文信息。");
-      }
-      var sections = [];
-      if (decisionEvidence.length > 0) {
-        var decisionLines = [];
-        for (var de = 0; de < decisionEvidence.length; de += 1) {
-          decisionLines.push("- （资料" + decisionEvidence[de].ref + "）" + snippetText(decisionEvidence[de].text, 120) + " —— " + decisionEvidence[de].source);
-        }
-        sections.push("决策链依据：\n" + decisionLines.join("\n"));
-      }
+      var primaryEntry = null;
       if (knowledgeEvidence.length > 0) {
-        var knowledgeLines = [];
-        for (var ke = 0; ke < knowledgeEvidence.length; ke += 1) {
-          var baseLine = "- （资料" + knowledgeEvidence[ke].ref + "）" + snippetText(knowledgeEvidence[ke].text, 120) + " —— " + knowledgeEvidence[ke].source;
-          if (knowledgeEvidence[ke].chunk) {
-            baseLine += " · 段 " + knowledgeEvidence[ke].chunk;
-          }
-          if (knowledgeEvidence[ke].duplicates && knowledgeEvidence[ke].duplicates.length > 0) {
-            baseLine += "（含" + knowledgeEvidence[ke].duplicates.length + "条重复来源）";
-          }
-          knowledgeLines.push(baseLine);
-        }
-        var reasoningEnabled = state.adminFlags.reasoning;
-        var pageToggle = document.getElementById("reasoningToggle");
-        if (pageToggle && pageToggle.checked && currentUser && currentUser.role === "admin") {
-          reasoningEnabled = true;
-        }
-        if (reasoningEnabled) {
-          var reasoning = reasoningSummary(knowledgeEvidence.map(function (item) { return item.text; }), state.adminFlags.reasoningLevel || 1);
-          if (reasoning) {
-            var refs = knowledgeEvidence.map(function (item) { return "资料" + item.ref; }).join("、");
-            knowledgeLines.push("- 要点整理（基于" + refs + "）：\n  " + reasoning.split("\n").join("\n  "));
+        for (var kePrimary = 0; kePrimary < knowledgeEvidence.length; kePrimary += 1) {
+          if (getEvidenceAnswer(knowledgeEvidence[kePrimary])) {
+            primaryEntry = knowledgeEvidence[kePrimary];
+            break;
           }
         }
-        sections.push("知识库依据：\n" + knowledgeLines.join("\n"));
       }
-      replyText = "结论：\n" + summaryLines.map(function (line) { return "- " + line; }).join("\n");
-      for (var s = 0; s < sections.length; s += 1) {
-        replyText += "\n\n" + sections[s];
+      if (!primaryEntry && knowledgeEvidence.length > 0) {
+        primaryEntry = knowledgeEvidence[0];
       }
+      if (!primaryEntry && decisionEvidence.length > 0) {
+        primaryEntry = decisionEvidence[0];
+      }
+      var primaryAnswer = primaryEntry ? getEvidenceAnswer(primaryEntry) : "";
+      var primaryHasAnswer = primaryAnswer && primaryAnswer.length > 0;
+      if (primaryAnswer) {
+        primaryAnswer = snippetText(primaryAnswer, 200);
+      }
+      if (!primaryHasAnswer && primaryEntry && primaryEntry.origin === "favorite" && primaryEntry.favoriteRole === "user") {
+        primaryAnswer = "";
+      }
+      if (!primaryAnswer && primaryEntry && primaryEntry.text) {
+        primaryAnswer = snippetText(primaryEntry.text, 200);
+      }
+      if (!primaryAnswer) {
+        primaryAnswer = "当前资料中未找到高相关答案，请补充更多上下文信息。";
+      }
+      var replyLines = ["**" + primaryAnswer + "**"];
+      var supplement = [];
+      for (var evIdx = 0; evIdx < evidence.length; evIdx += 1) {
+        var evItem = evidence[evIdx];
+        if (!evItem || evItem === primaryEntry) {
+          continue;
+        }
+        var evAnswer = getEvidenceAnswer(evItem);
+        if (!evAnswer && evItem.type !== "decision") {
+          continue;
+        }
+        var snippet = snippetText(evAnswer || evItem.text, 120);
+        if (!snippet) {
+          continue;
+        }
+        supplement.push("- 资料" + evItem.ref + "：" + snippet);
+        if (supplement.length >= 3) {
+          break;
+        }
+      }
+      if (supplement.length > 0) {
+        replyLines.push("补充依据：\n" + supplement.join("\n"));
+      }
+      replyText = replyLines.join("\n\n");
       renderEvidence(evidence, highlightTokens);
     }
     var reply = {
