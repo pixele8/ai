@@ -569,10 +569,18 @@
 
     var header = document.createElement("div");
     header.className = "favorite-overlay-header";
+    var overlayKind = favorite.kind === "message" ? "message" : "session";
+    var headline = document.createElement("div");
+    headline.className = "favorite-overlay-headline";
     var title = document.createElement("div");
     title.className = "favorite-overlay-title";
     title.textContent = favorite.title || "收藏会话";
-    header.appendChild(title);
+    headline.appendChild(title);
+    var kindBadge = document.createElement("span");
+    kindBadge.className = "favorite-overlay-kind" + (overlayKind === "message" ? " message" : "");
+    kindBadge.textContent = overlayKind === "message" ? "消息收藏" : "会话收藏";
+    headline.appendChild(kindBadge);
+    header.appendChild(headline);
 
     var tools = document.createElement("div");
     tools.className = "favorite-overlay-tools";
@@ -660,7 +668,12 @@
       return null;
     }
     var favorites = ensureBankFavorites(bank);
-    var summary = favoriteSummaryFromSession(session);
+    var focusMessage = options && options.message ? options.message : null;
+    var now = new Date().toISOString();
+    var summary = focusMessage && focusMessage.text ? String(focusMessage.text).trim() : favoriteSummaryFromSession(session);
+    if (!summary) {
+      summary = focusMessage && focusMessage.text ? String(focusMessage.text) : favoriteSummaryFromSession(session);
+    }
     var existing = null;
     for (var i = 0; i < favorites.length; i += 1) {
       var fav = favorites[i];
@@ -669,33 +682,50 @@
         break;
       }
     }
-    var title = options && options.title ? options.title : favoriteTitleFromSession(session);
+    var title;
+    if (options && typeof options.title === "string") {
+      title = options.title;
+    } else if (focusMessage) {
+      title = favoriteTitleFromText(focusMessage.text || "");
+    } else {
+      title = favoriteTitleFromSession(session);
+    }
     if (existing) {
       existing.title = title;
       existing.sessionTitle = session.title || existing.sessionTitle;
-      existing.content = summary || existing.content;
       existing.transcript = cloneTranscript(session.messages || []);
-      existing.updatedAt = new Date().toISOString();
-      if (options && options.message) {
-        existing.highlightId = options.message.id;
+      existing.updatedAt = now;
+      if (typeof existing.pinToComposer !== "boolean") {
+        existing.pinToComposer = false;
+      }
+      if (focusMessage) {
+        existing.highlightId = focusMessage.id;
+        existing.kind = "message";
+        existing.content = summary || existing.content;
+      } else {
+        existing.highlightId = null;
+        existing.kind = "session";
+        existing.content = summary || existing.content;
       }
       return { favorite: existing, created: false };
     }
     var favorite = {
       id: uuid(),
       scope: "session",
+      kind: focusMessage ? "message" : "session",
       sessionId: session.id,
       sessionTitle: session.title || "未命名会话",
       bankId: bank.id,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
       title: title,
-      content: summary,
+      content: summary || "",
       transcript: cloneTranscript(session.messages || []),
-      note: ""
+      note: "",
+      pinToComposer: false
     };
-    if (options && options.message) {
-      favorite.highlightId = options.message.id;
+    if (focusMessage) {
+      favorite.highlightId = focusMessage.id;
     }
     favorites.unshift(favorite);
     return { favorite: favorite, created: true };
@@ -749,7 +779,17 @@
         break;
       }
     }
-    var result = createSessionFavorite(bank, session, { title: null, message: target });
+    if (!target) {
+      showToast("未找到消息");
+      return;
+    }
+    var defaultTitle = favoriteTitleFromText(target.text || session.title || "收藏对话");
+    var title = window.prompt("收藏标题", defaultTitle);
+    if (title === null) {
+      return;
+    }
+    var trimmed = title.trim() || defaultTitle;
+    var result = createSessionFavorite(bank, session, { title: trimmed, message: target });
     if (!result) {
       return;
     }
@@ -785,24 +825,25 @@
   }
 
   function renderFavoriteChips() {
+    var row = document.getElementById("favoriteRow");
     var bar = document.getElementById("favoriteChips");
-    if (!bar) {
+    if (!bar || !row) {
       return;
     }
     bar.innerHTML = "";
     var bank = getActiveBank();
     if (!bank || !bank.favorites || bank.favorites.length === 0) {
-      bar.classList.add("hidden");
+      row.classList.add("hidden");
       return;
     }
     var sessions = bank.favorites.filter(function (fav) {
-      return fav.scope === "session";
+      return fav.scope === "session" && fav.pinToComposer;
     });
     if (sessions.length === 0) {
-      bar.classList.add("hidden");
+      row.classList.add("hidden");
       return;
     }
-    bar.classList.remove("hidden");
+    row.classList.remove("hidden");
     sessions.sort(function (a, b) {
       return (b.updatedAt || b.createdAt || "").localeCompare(a.updatedAt || a.createdAt || "");
     });
@@ -893,6 +934,20 @@
       (function (favorite) {
         var card = document.createElement("div");
         card.className = "favorite-card" + (favorite.id === activeFavoriteId ? " active" : "");
+        var kind = favorite.kind === "message" ? "message" : "session";
+        var flagRow = document.createElement("div");
+        flagRow.className = "favorite-card-flags";
+        var badge = document.createElement("span");
+        badge.className = "favorite-card-badge" + (kind === "message" ? " message" : "");
+        badge.textContent = kind === "message" ? "消息收藏" : "会话收藏";
+        flagRow.appendChild(badge);
+        if (favorite.pinToComposer) {
+          var quickTag = document.createElement("span");
+          quickTag.className = "favorite-card-quick";
+          quickTag.textContent = "快捷";
+          flagRow.appendChild(quickTag);
+        }
+        card.appendChild(flagRow);
         var title = document.createElement("div");
         title.className = "favorite-card-title";
         title.textContent = favorite.title;
@@ -908,7 +963,8 @@
         meta.textContent = parts.join(" · ");
         var preview = document.createElement("div");
         preview.className = "favorite-card-preview";
-        preview.textContent = snippetText(favorite.content || "", 80);
+        var previewLimit = kind === "message" ? 120 : 80;
+        preview.textContent = snippetText(favorite.content || "", previewLimit);
         card.appendChild(title);
         card.appendChild(meta);
         card.appendChild(preview);
@@ -940,6 +996,12 @@
       panel.innerHTML = '<div class="panel-hint">从左侧选择收藏查看详情</div>';
       return;
     }
+    if (typeof favorite.pinToComposer !== "boolean") {
+      favorite.pinToComposer = false;
+    }
+    if (!favorite.kind) {
+      favorite.kind = favorite.highlightId ? "message" : "session";
+    }
     var header = document.createElement("div");
     header.className = "favorite-detail-header";
     var titleLabel = document.createElement("label");
@@ -951,6 +1013,7 @@
     titleInput.addEventListener("change", function () {
       var next = titleInput.value.trim() || favoriteTitleFromText(favorite.content);
       favorite.title = next;
+      favorite.updatedAt = new Date().toISOString();
       saveState();
       renderFavoriteChips();
       renderFavoritesList();
@@ -970,6 +1033,32 @@
     meta.textContent = metaParts.join(" · ");
     header.appendChild(meta);
     panel.appendChild(header);
+
+    var flagRow = document.createElement("div");
+    flagRow.className = "favorite-detail-flags";
+    var kindBadge = document.createElement("span");
+    kindBadge.className = "favorite-card-badge" + (favorite.kind === "message" ? " message" : "");
+    kindBadge.textContent = favorite.kind === "message" ? "消息收藏" : "会话收藏";
+    flagRow.appendChild(kindBadge);
+    var quickToggle = document.createElement("label");
+    quickToggle.className = "favorite-quick-toggle";
+    var quickInput = document.createElement("input");
+    quickInput.type = "checkbox";
+    quickInput.checked = !!favorite.pinToComposer;
+    quickInput.addEventListener("change", function () {
+      favorite.pinToComposer = quickInput.checked;
+      favorite.updatedAt = new Date().toISOString();
+      saveState();
+      renderFavoriteChips();
+      renderFavoritesList();
+      showToast(quickInput.checked ? "已加入快捷收藏栏" : "已从快捷收藏栏移除");
+    });
+    var quickText = document.createElement("span");
+    quickText.textContent = "显示在对话快捷收藏栏";
+    quickToggle.appendChild(quickInput);
+    quickToggle.appendChild(quickText);
+    flagRow.appendChild(quickToggle);
+    panel.appendChild(flagRow);
 
     var summaryBox = document.createElement("div");
     summaryBox.className = "favorite-content";
@@ -1006,7 +1095,9 @@
     noteArea.value = favorite.note || "";
     noteArea.addEventListener("change", function () {
       favorite.note = noteArea.value.trim();
+      favorite.updatedAt = new Date().toISOString();
       saveState();
+      renderFavoritesList();
     });
     noteLabel.appendChild(noteArea);
     panel.appendChild(noteLabel);
@@ -1753,6 +1844,31 @@
         }
         if (typeof fav.note !== "string") {
           fav.note = "";
+        }
+        if (typeof fav.pinToComposer !== "boolean") {
+          fav.pinToComposer = false;
+        }
+        if (!fav.kind) {
+          fav.kind = fav.highlightId ? "message" : "session";
+        }
+        if (fav.kind === "message" && fav.highlightId) {
+          var highlightMessage = null;
+          for (var hm = 0; hm < fav.transcript.length; hm += 1) {
+            if (fav.transcript[hm] && fav.transcript[hm].id === fav.highlightId) {
+              highlightMessage = fav.transcript[hm];
+              break;
+            }
+          }
+          if (highlightMessage && highlightMessage.text) {
+            var highlightText = String(highlightMessage.text).trim();
+            if (!highlightText) {
+              highlightText = String(highlightMessage.text);
+            }
+            var fallbackSummary = favoriteSummaryFromSession({ messages: fav.transcript || [] });
+            if (!fav.content || fav.content.trim().length === 0 || fav.content === fallbackSummary) {
+              fav.content = highlightText;
+            }
+          }
         }
       }
       for (var m = 0; m < bank.common.length; m += 1) {
@@ -3218,18 +3334,30 @@
       area.appendChild(wrapper);
     }
     area.scrollTop = area.scrollHeight;
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(function () {
+        area.scrollTop = area.scrollHeight;
+      });
+    } else {
+      setTimeout(function () {
+        area.scrollTop = area.scrollHeight;
+      }, 0);
+    }
   }
 
   function renderCommonChips() {
+    var row = document.getElementById("commonRow");
     var bar = document.getElementById("commonChips");
-    if (!bar) {
+    if (!bar || !row) {
       return;
     }
     bar.innerHTML = "";
     var bank = getActiveBank();
-    if (!bank) {
+    if (!bank || !bank.common || bank.common.length === 0) {
+      row.classList.add("hidden");
       return;
     }
+    row.classList.remove("hidden");
     for (var i = 0; i < bank.common.length; i += 1) {
       (function (item) {
         var chip = document.createElement("div");

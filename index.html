@@ -42,8 +42,14 @@
     </header>
     <section class="chat-area" id="chatArea"></section>
     <section class="chat-input">
-      <div class="chips-bar" id="commonChips"></div>
-      <div class="chips-bar" id="favoriteChips"></div>
+      <div class="chips-row hidden" id="commonRow">
+        <span class="chips-label">常用问题：</span>
+        <div class="chips-bar" id="commonChips"></div>
+      </div>
+      <div class="chips-row hidden" id="favoriteRow">
+        <span class="chips-label">收藏夹：</span>
+        <div class="chips-bar" id="favoriteChips"></div>
+      </div>
       <textarea id="chatInput" placeholder="请输入问题…" rows="3"></textarea>
       <div class="chat-actions">
         <label class="switch"><input type="checkbox" id="reasoningToggle"><span>启用推理</span></label>
