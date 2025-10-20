@@ -3293,7 +3293,7 @@
         }
         var msgId = container.dataset.messageId;
         var sessId = container.dataset.sessionId;
-        openMessageMenu(sessId, msgId, evt.pageX, evt.pageY);
+        openMessageMenu(sessId, msgId, evt.clientX + 4, evt.clientY + 4);
       });
       var meta = document.createElement("div");
       meta.className = "meta";
@@ -3452,8 +3452,10 @@
         }
         if (type === "decision") {
           source.textContent = info.source;
-        } else {
+        } else if (info.chunk) {
           source.textContent = info.source + " · 段 " + info.chunk;
+        } else {
+          source.textContent = info.source;
         }
         header.appendChild(source);
         if (typeof info.score === "number") {
@@ -3473,6 +3475,70 @@
           var limit = embedded ? 140 : 200;
           body.innerHTML = highlightKeywords(snippetText(info.text, limit), highlightKeys);
           card.appendChild(body);
+        }
+        if (info.duplicates && info.duplicates.length > 0) {
+          var duplicateCount = info.duplicates.length;
+          var toggle = document.createElement("button");
+          toggle.type = "button";
+          toggle.className = "evidence-toggle";
+          toggle.textContent = "显示重复来源 (" + duplicateCount + ")";
+          var dupList = document.createElement("div");
+          dupList.className = "evidence-duplicates hidden";
+          for (var d = 0; d < info.duplicates.length; d += 1) {
+            var dup = info.duplicates[d];
+            var dupCard = document.createElement("div");
+            dupCard.className = "evidence-duplicate";
+            var dupHeader = document.createElement("div");
+            dupHeader.className = "evidence-duplicate-header";
+            var dupSource = document.createElement(dup.url ? "a" : "span");
+            dupSource.className = "evidence-duplicate-source";
+            if (dup.url) {
+              dupSource.href = dup.url;
+              dupSource.target = "_blank";
+              dupSource.rel = "noopener";
+            }
+            if (type === "decision") {
+              dupSource.textContent = dup.source || info.source;
+            } else if (dup.chunk) {
+              dupSource.textContent = (dup.source || info.source) + " · 段 " + dup.chunk;
+            } else {
+              dupSource.textContent = dup.source || info.source;
+            }
+            dupHeader.appendChild(dupSource);
+            if (typeof dup.score === "number") {
+              var dupScore = document.createElement("span");
+              dupScore.className = "evidence-score";
+              if (type === "knowledge") {
+                dupScore.textContent = dup.score.toFixed(2);
+              } else {
+                dupScore.textContent = Math.round(dup.score) + "%";
+              }
+              dupHeader.appendChild(dupScore);
+            }
+            dupCard.appendChild(dupHeader);
+            if (dup.text) {
+              var dupBody = document.createElement("div");
+              dupBody.className = "evidence-body";
+              var dupLimit = embedded ? 140 : 200;
+              dupBody.innerHTML = highlightKeywords(snippetText(dup.text, dupLimit), highlightKeys);
+              dupCard.appendChild(dupBody);
+            }
+            dupList.appendChild(dupCard);
+          }
+          toggle.addEventListener("click", (function (button, panel, count) {
+            return function () {
+              var hidden = panel.classList.contains("hidden");
+              if (hidden) {
+                panel.classList.remove("hidden");
+                button.textContent = "隐藏重复来源";
+              } else {
+                panel.classList.add("hidden");
+                button.textContent = "显示重复来源 (" + count + ")";
+              }
+            };
+          })(toggle, dupList, duplicateCount));
+          card.appendChild(toggle);
+          card.appendChild(dupList);
         }
         block.appendChild(card);
       }
@@ -4142,6 +4208,95 @@
     return results.slice(0, 5);
   }
 
+  function collectFavoriteEvidence(bank, tokens, limit) {
+    var results = [];
+    if (!bank || !tokens || tokens.length === 0) {
+      return results;
+    }
+    var favorites = bank.favorites || [];
+    for (var i = 0; i < favorites.length; i += 1) {
+      var favorite = favorites[i];
+      if (!favorite || !favorite.transcript || favorite.transcript.length === 0) {
+        continue;
+      }
+      var baseSource = "收藏《" + (favorite.title || "收藏对话") + "》";
+      for (var j = 0; j < favorite.transcript.length; j += 1) {
+        var entry = favorite.transcript[j];
+        if (!entry || !entry.text) {
+          continue;
+        }
+        var score = scoreDecisionText(entry.text, tokens);
+        if (score < 35) {
+          continue;
+        }
+        var roleLabel = entry.role === "user" ? "用户" : "助理";
+        var url = "favorite-viewer.html?bank=" + encodeURIComponent(favorite.bankId || bank.id) + "&favorite=" + encodeURIComponent(favorite.id);
+        if (entry.id) {
+          url += "#message-" + encodeURIComponent(entry.id);
+        }
+        results.push({
+          type: "knowledge",
+          source: baseSource + " · " + roleLabel,
+          chunk: j + 1,
+          text: entry.text,
+          score: score * 0.04,
+          favoriteId: favorite.id,
+          favoriteMessageId: entry.id || null,
+          url: url
+        });
+      }
+    }
+    if (results.length === 0) {
+      return results;
+    }
+    results.sort(function (a, b) {
+      var aScore = typeof a.score === "number" ? a.score : 0;
+      var bScore = typeof b.score === "number" ? b.score : 0;
+      if (bScore !== aScore) {
+        return bScore - aScore;
+      }
+      return 0;
+    });
+    if (typeof limit === "number" && limit > 0 && results.length > limit) {
+      return results.slice(0, limit);
+    }
+    return results;
+  }
+
+  function collapseEvidenceList(list) {
+    if (!list || list.length === 0) {
+      return [];
+    }
+    var map = {};
+    var ordered = [];
+    for (var i = 0; i < list.length; i += 1) {
+      var item = list[i];
+      if (!item) {
+        continue;
+      }
+      var typeKey = item.type || "knowledge";
+      var textKey = item.text ? String(item.text).replace(/\s+/g, " ").trim() : "";
+      if (!textKey) {
+        textKey = (item.source || "") + "::" + (item.chunkId || item.favoriteMessageId || item.projectId || item.nodeId || item.linkId || i);
+      }
+      var key = typeKey + "::" + textKey;
+      if (map[key]) {
+        map[key].duplicates.push(item);
+        continue;
+      }
+      var clone = {};
+      for (var prop in item) {
+        if (item.hasOwnProperty(prop) && prop !== "duplicates") {
+          clone[prop] = item[prop];
+        }
+      }
+      clone.duplicates = [];
+      map[key] = clone;
+      ordered.push(clone);
+    }
+    return ordered;
+  }
+
   function reasoningSummary(texts, level) {
     var points = [];
     for (var i = 0; i < texts.length; i += 1) {
@@ -4182,11 +4337,10 @@
     if (!replyText) {
       var expanded = expandTerms(tokens);
       var knowledgeScores = computeBM25(bank, expanded);
-      var knowledgeEvidence = [];
-      var bestKnowledgeEvidence = null;
+      var knowledgeCandidates = [];
       var topScore = knowledgeScores.length > 0 ? knowledgeScores[0].score : 0;
       var limit = state.settings.topN;
-      for (var k = 0; k < knowledgeScores.length && knowledgeEvidence.length < limit; k += 1) {
+      for (var k = 0; k < knowledgeScores.length && knowledgeCandidates.length < limit; k += 1) {
         var entry = knowledgeScores[k];
         if (entry.score <= 0) {
           continue;
@@ -4198,7 +4352,7 @@
         if (!chunk) {
           continue;
         }
-        var knowledgeEntry = {
+        knowledgeCandidates.push({
           type: "knowledge",
           source: chunk.file,
           chunk: chunk.order,
@@ -4207,13 +4361,26 @@
           fileId: chunk.fileId,
           chunkId: chunk.id,
           url: "kb.html?file=" + encodeURIComponent(chunk.fileId) + "&chunk=" + encodeURIComponent(chunk.id)
-        };
-        if (!bestKnowledgeEvidence) {
-          bestKnowledgeEvidence = knowledgeEntry;
-        }
-        knowledgeEvidence.push(knowledgeEntry);
+        });
       }
-      var decisionEvidence = collectDecisionEvidence(tokens);
+      var favoriteEvidence = collectFavoriteEvidence(bank, expanded, limit);
+      if (favoriteEvidence.length > 0) {
+        knowledgeCandidates = knowledgeCandidates.concat(favoriteEvidence);
+        knowledgeCandidates.sort(function (a, b) {
+          var aScore = typeof a.score === "number" ? a.score : 0;
+          var bScore = typeof b.score === "number" ? b.score : 0;
+          if (bScore !== aScore) {
+            return bScore - aScore;
+          }
+          return 0;
+        });
+        if (knowledgeCandidates.length > limit) {
+          knowledgeCandidates = knowledgeCandidates.slice(0, limit);
+        }
+      }
+      var knowledgeEvidence = collapseEvidenceList(knowledgeCandidates);
+      var decisionEvidence = collapseEvidenceList(collectDecisionEvidence(tokens));
+      var bestKnowledgeEvidence = knowledgeEvidence.length > 0 ? knowledgeEvidence[0] : null;
       var bestDecisionEvidence = decisionEvidence.length > 0 ? decisionEvidence[0] : null;
       evidence = decisionEvidence.concat(knowledgeEvidence);
       for (var idx = 0; idx < evidence.length; idx += 1) {
@@ -4240,7 +4407,14 @@
       if (knowledgeEvidence.length > 0) {
         var knowledgeLines = [];
         for (var ke = 0; ke < knowledgeEvidence.length; ke += 1) {
-          knowledgeLines.push("- （资料" + knowledgeEvidence[ke].ref + "）" + snippetText(knowledgeEvidence[ke].text, 120) + " —— " + knowledgeEvidence[ke].source + " · 段 " + knowledgeEvidence[ke].chunk);
+          var baseLine = "- （资料" + knowledgeEvidence[ke].ref + "）" + snippetText(knowledgeEvidence[ke].text, 120) + " —— " + knowledgeEvidence[ke].source;
+          if (knowledgeEvidence[ke].chunk) {
+            baseLine += " · 段 " + knowledgeEvidence[ke].chunk;
+          }
+          if (knowledgeEvidence[ke].duplicates && knowledgeEvidence[ke].duplicates.length > 0) {
+            baseLine += "（含" + knowledgeEvidence[ke].duplicates.length + "条重复来源）";
+          }
+          knowledgeLines.push(baseLine);
         }
         var reasoningEnabled = state.adminFlags.reasoning;
         var pageToggle = document.getElementById("reasoningToggle");

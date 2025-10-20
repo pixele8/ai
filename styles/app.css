@@ -218,6 +218,16 @@ textarea:focus {
   color: #1a2b4c;
   box-shadow: 0 10px 20px rgba(79, 111, 217, 0.15);
 }
+.session-remove {
+  color: #b91c1c;
+  border-color: rgba(220, 38, 38, 0.38);
+  background: linear-gradient(180deg, #fff7f7 0%, #fee7e7 100%);
+}
+.session-remove:hover {
+  border-color: rgba(185, 28, 28, 0.6);
+  color: #991b1b;
+  box-shadow: 0 10px 24px rgba(220, 38, 38, 0.18);
+}
 .session-title {
   font-size: 14px;
   color: #1f2a3d;
@@ -633,6 +643,58 @@ textarea:focus {
 .evidence-body {
   font-size: 12px;
   line-height: 1.6;
+  color: #475569;
+}
+.evidence-toggle {
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: rgba(99, 102, 241, 0.08);
+  border: none;
+  color: #3730a3;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+.evidence-toggle:hover {
+  background: rgba(79, 70, 229, 0.18);
+  color: #312e81;
+}
+.evidence-duplicates {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed #c7d2fe;
+}
+.evidence-duplicate {
+  background: #f8faff;
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+}
+.evidence-duplicate-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 500;
+  color: #334155;
+}
+.evidence-duplicate-source {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+  color: #1d4ed8;
+}
+.evidence-duplicate .evidence-body {
+  font-size: 12px;
+  line-height: 1.5;
   color: #475569;
 }
 .settings-drawer {
