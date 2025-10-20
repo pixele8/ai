@@ -4443,6 +4443,7 @@
       var expanded = expandTerms(tokens);
       var knowledgeScores = computeBM25(bank, expanded);
       var knowledgeCandidates = [];
+      var decisionEvidenceRaw = collectDecisionEvidence(tokens);
       var topScore = knowledgeScores.length > 0 ? knowledgeScores[0].score : 0;
       var limit = state.settings.topN;
       for (var k = 0; k < knowledgeScores.length && knowledgeCandidates.length < limit; k += 1) {
@@ -4471,6 +4472,30 @@
       var favoriteEvidence = collectFavoriteEvidence(bank, expanded, limit);
       if (favoriteEvidence.length > 0) {
         knowledgeCandidates = knowledgeCandidates.concat(favoriteEvidence);
+      }
+      var decisionKnowledge = [];
+      if (decisionEvidenceRaw.length > 0) {
+        for (var d = 0; d < decisionEvidenceRaw.length; d += 1) {
+          var decisionEntry = decisionEvidenceRaw[d];
+          if (!decisionEntry || !decisionEntry.text) {
+            continue;
+          }
+          decisionKnowledge.push({
+            type: "knowledge",
+            source: (decisionEntry.source || "决策链") + " · 决策链历史",
+            text: decisionEntry.text,
+            score: typeof decisionEntry.score === "number" ? decisionEntry.score : 0,
+            projectId: decisionEntry.projectId || null,
+            nodeId: decisionEntry.nodeId || null,
+            linkId: decisionEntry.linkId || null,
+            url: decisionEntry.url || null
+          });
+        }
+        if (decisionKnowledge.length > 0) {
+          knowledgeCandidates = knowledgeCandidates.concat(decisionKnowledge);
+        }
+      }
+      if (knowledgeCandidates.length > 1) {
         knowledgeCandidates.sort(function (a, b) {
           var aScore = typeof a.score === "number" ? a.score : 0;
           var bScore = typeof b.score === "number" ? b.score : 0;
@@ -4479,12 +4504,14 @@
           }
           return 0;
         });
-        if (knowledgeCandidates.length > limit) {
-          knowledgeCandidates = knowledgeCandidates.slice(0, limit);
+        var extraAllowance = decisionKnowledge.length > 0 ? decisionKnowledge.length : 0;
+        var effectiveLimit = typeof limit === "number" && limit > 0 ? limit + extraAllowance : limit;
+        if (typeof effectiveLimit === "number" && effectiveLimit > 0 && knowledgeCandidates.length > effectiveLimit) {
+          knowledgeCandidates = knowledgeCandidates.slice(0, effectiveLimit);
         }
       }
       var knowledgeEvidence = collapseEvidenceList(knowledgeCandidates);
-      var decisionEvidence = collapseEvidenceList(collectDecisionEvidence(tokens));
+      var decisionEvidence = collapseEvidenceList(decisionEvidenceRaw);
       var bestKnowledgeEvidence = knowledgeEvidence.length > 0 ? knowledgeEvidence[0] : null;
       var bestDecisionEvidence = decisionEvidence.length > 0 ? decisionEvidence[0] : null;
       evidence = decisionEvidence.concat(knowledgeEvidence);
