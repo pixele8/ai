@@ -1282,7 +1282,12 @@
     var meta = document.getElementById("chunkMeta");
     var content = document.getElementById("chunkContent");
     if (meta) {
-      meta.textContent = chunk.file + " · 段 " + chunk.order;
+      var infoTitle = chunk.title || chunk.file || "分段";
+      var origin = chunk.file || "";
+      if (chunk.order) {
+        origin += (origin ? " · " : "") + "第" + chunk.order + "段";
+      }
+      meta.textContent = infoTitle + (origin ? "（来源：" + origin + "）" : "");
     }
     if (content) {
       content.value = chunk.text || "";
@@ -1385,6 +1390,62 @@
       .toLowerCase()
       .replace(/[\s\u3000]+/g, "")
       .replace(/[，,。\.？\?！!、:：;]/g, "");
+  }
+
+  function escapeHtml(text) {
+    if (text === null || text === undefined) {
+      return "";
+    }
+    return String(text)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function cleanLeadingMarker(text) {
+    if (!text) {
+      return "";
+    }
+    var normalized = String(text).replace(/^[\s\u3000]+/, "");
+    normalized = normalized.replace(/^[\-–—•·\u2022]+\s*/, "");
+    normalized = normalized.replace(/^[0-9０-９一二三四五六七八九十百千]+[\.．、\)\s]+/, "");
+    return normalized.trim();
+  }
+
+  function extractChunkTitle(text, fallback) {
+    var content = text ? String(text).replace(/\r\n/g, "\n") : "";
+    var lines = content.split(/\n+/);
+    for (var i = 0; i < lines.length; i += 1) {
+      var candidate = cleanLeadingMarker(lines[i]);
+      if (candidate) {
+        return candidate;
+      }
+    }
+    if (fallback) {
+      return cleanLeadingMarker(fallback);
+    }
+    return "";
+  }
+
+  function extractChunkBody(text) {
+    var content = text ? String(text).replace(/\r\n/g, "\n") : "";
+    var lines = content.split(/\n+/);
+    var started = false;
+    var body = [];
+    for (var i = 0; i < lines.length; i += 1) {
+      var current = cleanLeadingMarker(lines[i]);
+      if (!current) {
+        continue;
+      }
+      if (!started) {
+        started = true;
+        continue;
+      }
+      body.push(current);
+    }
+    return body.join("\n").trim();
   }
 
   function snippetText(text, limit) {
@@ -3493,9 +3554,16 @@
         card.className = "evidence-card" + (embedded ? " embedded" : "");
         var header = document.createElement("div");
         header.className = "evidence-title";
-        var label = info.source;
-        if (type !== "decision" && info.chunk && !info.favoriteId) {
-          label = info.source + " · 段 " + info.chunk;
+        var label = info.source || "";
+        if (!label) {
+          label = type === "decision" ? "决策链记录" : (info.origin === "favorite" ? "收藏内容" : "知识库段落");
+        }
+        var sourceTooltip = "";
+        if (type !== "decision" && info.fileName) {
+          sourceTooltip = info.fileName;
+          if (info.chunkOrder && info.chunkOrder > 0) {
+            sourceTooltip += " · 第" + info.chunkOrder + "段";
+          }
         }
         var source;
         if (info.favoriteId) {
@@ -3522,6 +3590,9 @@
           source.className = "evidence-source";
           source.textContent = label;
         }
+        if (sourceTooltip) {
+          source.title = sourceTooltip;
+        }
         header.appendChild(source);
         if (typeof info.score === "number") {
           var score = document.createElement("span");
@@ -3534,6 +3605,12 @@
           header.appendChild(score);
         }
         card.appendChild(header);
+        if (sourceTooltip) {
+          var subtitle = document.createElement("div");
+          subtitle.className = "evidence-subtitle";
+          subtitle.textContent = "来源：" + sourceTooltip;
+          card.appendChild(subtitle);
+        }
         if (info.text) {
           var body = document.createElement("div");
           body.className = "evidence-body";
@@ -3556,8 +3633,14 @@
             var dupHeader = document.createElement("div");
             dupHeader.className = "evidence-duplicate-header";
             var dupLabel = dup.source || info.source;
-            if (type !== "decision" && dup.chunk && !dup.favoriteId) {
-              dupLabel = (dup.source || info.source) + " · 段 " + dup.chunk;
+            if (type !== "decision" && dup.fileName) {
+              var dupInfo = dup.fileName;
+              if (dup.chunkOrder && dup.chunkOrder > 0) {
+                dupInfo += " · 第" + dup.chunkOrder + "段";
+              }
+              if (dupLabel && dupInfo.indexOf(dupLabel) === -1) {
+                dupLabel += "（" + dupInfo + "）";
+              }
             }
             var dupSource;
             if (dup.favoriteId) {
@@ -3733,6 +3816,13 @@
       if (!chunk.fileId) {
         chunk.fileId = uuid();
       }
+      if (chunk.text) {
+        chunk.text = String(chunk.text).replace(/\r\n/g, "\n").trim();
+      } else {
+        chunk.text = "";
+      }
+      chunk.title = extractChunkTitle(chunk.text, chunk.file);
+      chunk.body = extractChunkBody(chunk.text);
       if (!fileMap[chunk.fileId]) {
         var newFile = { id: chunk.fileId, name: chunk.file || "导入文件", chunks: 0, size: 0 };
         bank.files.push(newFile);
@@ -3790,13 +3880,16 @@
     }
     var added = 0;
     for (var i = 0; i < chunks.length; i += 1) {
+      var rawText = chunks[i] ? String(chunks[i]).replace(/\r\n/g, "\n").trim() : "";
       var chunkId = fileId + "#" + (bank.chunks.length + 1 + i);
       bank.chunks.push({
         id: chunkId,
         file: fileName,
         fileId: fileId,
         order: 0,
-        text: chunks[i]
+        text: rawText,
+        title: extractChunkTitle(rawText, fileName),
+        body: extractChunkBody(rawText)
       });
       added += 1;
     }
@@ -3969,9 +4062,20 @@
         ccard.id = "chunk-" + chunk.id;
         var header = document.createElement("div");
         header.className = "chunk-header";
+        var infoWrap = document.createElement("div");
+        infoWrap.className = "chunk-header-info";
+        var titleNode = document.createElement("div");
+        titleNode.className = "chunk-title";
+        titleNode.textContent = chunk.title || chunk.file || "分段";
         var meta = document.createElement("div");
-        meta.className = "meta";
-        meta.textContent = chunk.file + " · 段 " + chunk.order;
+        meta.className = "chunk-source";
+        var sourceText = chunk.file || "";
+        if (chunk.order) {
+          sourceText += (sourceText ? " · " : "") + "第" + chunk.order + "段";
+        }
+        meta.textContent = sourceText ? "来源：" + sourceText : "来源：知识库";
+        infoWrap.appendChild(titleNode);
+        infoWrap.appendChild(meta);
         var actions = document.createElement("div");
         actions.className = "card-actions";
         var editBtn = document.createElement("button");
@@ -3997,11 +4101,11 @@
         }(chunk.id));
         actions.appendChild(editBtn);
         actions.appendChild(delBtn);
-        header.appendChild(meta);
+        header.appendChild(infoWrap);
         header.appendChild(actions);
         var body = document.createElement("div");
         body.className = "content";
-        body.textContent = chunk.text;
+        body.textContent = chunk.body ? chunk.body : chunk.text;
         ccard.appendChild(header);
         ccard.appendChild(body);
         preview.appendChild(ccard);
@@ -4312,37 +4416,53 @@
 
   function deriveChunkQa(chunk) {
     var qa = { question: "", answer: "" };
-    if (!chunk || !chunk.text) {
+    if (!chunk) {
       return qa;
     }
-    var text = String(chunk.text).trim();
+    var text = chunk.text ? String(chunk.text).trim() : "";
     if (!text) {
       return qa;
     }
-    var lines = text.split(/\n+/);
-    if (lines.length > 1) {
-      var firstLine = lines[0].trim();
-      var rest = lines.slice(1).join("\n").trim();
-      if (rest && looksLikeQuestion(firstLine)) {
+    var title = cleanLeadingMarker(chunk.title || "");
+    if (!title) {
+      title = extractChunkTitle(text, chunk.file || "");
+    }
+    var body = chunk.body ? String(chunk.body) : "";
+    if (!body) {
+      body = extractChunkBody(text);
+    }
+    var fileTitle = cleanLeadingMarker(chunk.file || "");
+    if (title && looksLikeQuestion(title)) {
+      qa.question = title;
+    } else if (fileTitle && looksLikeQuestion(fileTitle)) {
+      qa.question = fileTitle;
+    }
+    if (!qa.question) {
+      var firstLine = cleanLeadingMarker(text.split(/\n+/)[0] || "");
+      if (firstLine && looksLikeQuestion(firstLine)) {
         qa.question = firstLine;
-        qa.answer = rest;
       }
     }
-    if (!qa.answer) {
-      qa.answer = text;
+    var answer = body || "";
+    if (!answer && qa.question && text.indexOf(qa.question) === 0) {
+      answer = text.slice(qa.question.length).trim();
     }
-    var fileTitle = chunk.file ? String(chunk.file).trim() : "";
-    if (!qa.question && fileTitle) {
-      if (looksLikeQuestion(fileTitle)) {
-        qa.question = fileTitle;
-      } else if (text.indexOf(fileTitle) === 0) {
-        var remainder = text.slice(fileTitle.length).replace(/^\s+/, "");
-        if (remainder) {
-          qa.question = fileTitle;
-          qa.answer = remainder;
-        }
+    if (!answer) {
+      var remaining = text.split(/\n+/);
+      if (remaining.length > 1) {
+        answer = cleanLeadingMarker(remaining.slice(1).join("\n"));
       }
     }
+    if (!answer) {
+      answer = cleanLeadingMarker(text);
+    }
+    if (qa.question && answer && answer.indexOf(qa.question) === 0) {
+      answer = cleanLeadingMarker(answer.slice(qa.question.length));
+    }
+    if (!answer) {
+      answer = cleanLeadingMarker(text);
+    }
+    qa.answer = answer;
     return qa;
   }
 
@@ -4396,37 +4516,44 @@
           url += "#message-" + encodeURIComponent(entry.id);
         }
         if (entry.role === "user") {
+          var cleanedUser = cleanLeadingMarker(text);
+          if (!cleanedUser) {
+            lastQuestion = text;
+            continue;
+          }
           pool.push({
             type: "knowledge",
-            source: baseSource + " · 用户", 
+            source: cleanedUser || baseSource + " · 用户",
             chunk: j + 1,
-            text: text,
+            text: cleanedUser,
             score: score * 0.02,
             favoriteId: favorite.id,
             favoriteMessageId: entry.id || null,
             favoriteBankId: favorite.bankId || bank.id,
             favoriteRole: "user",
-            qaQuestion: text,
+            qaQuestion: cleanedUser,
             qaAnswer: "",
             url: url,
             origin: "favorite"
           });
-          lastQuestion = text;
+          lastQuestion = cleanedUser || text;
           continue;
         }
         var qaQuestion = lastQuestion || favorite.title || "";
+        var cleanQuestion = cleanLeadingMarker(qaQuestion);
+        var cleanAnswer = cleanLeadingMarker(text);
         pool.push({
           type: "knowledge",
-          source: baseSource + " · 助理",
+          source: cleanQuestion || baseSource + " · 助理",
           chunk: j + 1,
-          text: text,
+          text: cleanAnswer || text,
           score: score * 0.04,
           favoriteId: favorite.id,
           favoriteMessageId: entry.id || null,
           favoriteBankId: favorite.bankId || bank.id,
           favoriteRole: "assistant",
-          qaQuestion: qaQuestion,
-          qaAnswer: text,
+          qaQuestion: cleanQuestion,
+          qaAnswer: cleanAnswer || text,
           url: url,
           origin: "favorite"
         });
@@ -4768,18 +4895,22 @@
           continue;
         }
         var qaInfo = deriveChunkQa(chunk);
+        var answerText = qaInfo.answer || chunk.body || chunk.text;
+        var displayLabel = qaInfo.question || chunk.title || chunk.file;
         kbCandidates.push({
           type: "knowledge",
-          source: chunk.file,
+          source: displayLabel || chunk.file,
+          fileName: chunk.file,
+          chunkOrder: chunk.order,
           chunk: chunk.order,
-          text: chunk.text,
+          text: answerText || chunk.text,
           score: entry.score,
           fileId: chunk.fileId,
           chunkId: chunk.id,
           url: "kb.html?file=" + encodeURIComponent(chunk.fileId) + "&chunk=" + encodeURIComponent(chunk.id),
           origin: "kb",
           qaQuestion: qaInfo.question,
-          qaAnswer: qaInfo.answer
+          qaAnswer: answerText || qaInfo.answer || chunk.text
         });
       }
       var favoriteEvidence = collectFavoriteEvidence(bank, expanded, limit);
@@ -4892,8 +5023,10 @@
       if (!primaryAnswer) {
         primaryAnswer = "当前资料中未找到高相关答案，请补充更多上下文信息。";
       }
-      var replyLines = ["**" + primaryAnswer + "**"];
-      var supplement = [];
+      var replySections = [];
+      var coreAnswer = escapeHtml(primaryAnswer);
+      replySections.push('<p class="reply-core"><strong>' + coreAnswer + '</strong></p>');
+      var supplementItems = [];
       for (var evIdx = 0; evIdx < evidence.length; evIdx += 1) {
         var evItem = evidence[evIdx];
         if (!evItem || evItem === primaryEntry) {
@@ -4907,15 +5040,25 @@
         if (!snippet) {
           continue;
         }
-        supplement.push("- 资料" + evItem.ref + "：" + snippet);
-        if (supplement.length >= 3) {
+        var supParts = [];
+        supParts.push('<span class="reply-supp-label">资料' + evItem.ref + '</span>');
+        var sourceLabel = evItem.source || "";
+        if (sourceLabel) {
+          supParts.push('<span class="reply-supp-source">' + escapeHtml(sourceLabel) + '</span>');
+        }
+        if (evItem.fileName && (!sourceLabel || evItem.fileName !== sourceLabel)) {
+          supParts.push('<span class="reply-supp-meta">来源：' + escapeHtml(evItem.fileName) + '</span>');
+        }
+        supParts.push('<span class="reply-supp-text">' + escapeHtml(snippet) + '</span>');
+        supplementItems.push('<li>' + supParts.join(' ') + '</li>');
+        if (supplementItems.length >= 3) {
           break;
         }
       }
-      if (supplement.length > 0) {
-        replyLines.push("补充依据：\n" + supplement.join("\n"));
+      if (supplementItems.length > 0) {
+        replySections.push('<div class="reply-supp-title">补充依据</div><ul class="reply-supp-list">' + supplementItems.join("") + '</ul>');
       }
-      replyText = replyLines.join("\n\n");
+      replyText = replySections.join("");
       renderEvidence(evidence, highlightTokens);
     }
     var reply = {
@@ -7730,6 +7873,8 @@
           return;
         }
         chunk.text = newText;
+        chunk.title = extractChunkTitle(newText, chunk.file);
+        chunk.body = extractChunkBody(newText);
         rebuildIndex(bank);
         saveState();
         renderKnowledge();

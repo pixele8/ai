@@ -524,6 +524,61 @@ textarea:focus {
   white-space: pre-wrap;
   word-break: break-word;
 }
+.message-bubble .reply-core {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.7;
+  color: #0f172a;
+}
+.message-bubble .reply-core strong {
+  font-weight: 700;
+}
+.message-bubble .reply-supp-title {
+  margin-top: 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+}
+.message-bubble .reply-supp-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.message-bubble .reply-supp-list li {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #1f2937;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.reply-supp-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.12);
+  color: #1d4ed8;
+  font-weight: 600;
+  font-size: 12px;
+}
+.reply-supp-source {
+  font-weight: 600;
+  color: #0f172a;
+}
+.reply-supp-meta {
+  color: #64748b;
+  font-size: 12px;
+}
+.reply-supp-text {
+  flex: 1 1 auto;
+  min-width: 180px;
+  color: #1f2937;
+}
 .message.user .highlight {
   background: rgba(148, 163, 184, 0.18);
   box-shadow: none;
@@ -658,6 +713,10 @@ textarea:focus {
   font-size: 12px;
   line-height: 1.6;
   color: #475569;
+}
+.evidence-subtitle {
+  font-size: 11px;
+  color: #64748b;
 }
 .evidence-toggle {
   align-self: flex-start;
@@ -1052,6 +1111,24 @@ textarea:focus {
   align-items: flex-start;
   gap: 12px;
   margin-bottom: 10px;
+}
+.chunk-header-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.chunk-title {
+  font-weight: 600;
+  font-size: 15px;
+  color: #0f172a;
+  line-height: 1.4;
+  word-break: break-word;
+}
+.chunk-source {
+  font-size: 12px;
+  color: #64748b;
 }
 .chunk-card .content {
   white-space: pre-wrap;
