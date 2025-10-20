@@ -3101,6 +3101,42 @@
     return result;
   }
 
+  function closeMessageMenu() {
+    var menu = document.getElementById("messageMenu");
+    if (menu) {
+      menu.classList.add("hidden");
+    }
+    messageMenuInfo = null;
+  }
+
+  function openMessageMenu(sessionId, messageId, x, y) {
+    var menu = document.getElementById("messageMenu");
+    if (!menu) {
+      return;
+    }
+    closeMessageMenu();
+    messageMenuInfo = {
+      sessionId: sessionId,
+      messageId: messageId
+    };
+    menu.style.left = x + "px";
+    menu.style.top = y + "px";
+    menu.classList.remove("hidden");
+    window.requestAnimationFrame(function () {
+      var rect = menu.getBoundingClientRect();
+      var left = rect.left;
+      var top = rect.top;
+      if (rect.right > window.innerWidth) {
+        left = Math.max(8, window.innerWidth - rect.width - 8);
+      }
+      if (rect.bottom > window.innerHeight) {
+        top = Math.max(8, window.innerHeight - rect.height - 8);
+      }
+      menu.style.left = left + "px";
+      menu.style.top = top + "px";
+    });
+  }
+
   function renderChat() {
     var area = document.getElementById("chatArea");
     if (!area) {
