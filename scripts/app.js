@@ -43,6 +43,10 @@
   var floatingFavoriteExpanded = false;
   var floatingFavoritePosition = null;
   var FAVORITE_OVERLAY_STATE_KEY = "aiFavoriteOverlayState";
+  var SESSION_LIST_MIN = 7;
+  var SESSION_LIST_STEP = 5;
+  var sessionListDisplayLimit = SESSION_LIST_MIN;
+  var sessionListRenderedBankId = null;
   var SHA256_K = [
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
     0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
@@ -1446,6 +1450,80 @@
       body.push(current);
     }
     return body.join("\n").trim();
+  }
+
+  function stripQuestionLines(question, text) {
+    if (!text) {
+      return "";
+    }
+    var cleaned = cleanLeadingMarker(text);
+    if (!cleaned) {
+      return "";
+    }
+    if (!question) {
+      return cleaned;
+    }
+    var normalizedQuestion = normalizeQuestionText(question);
+    if (!normalizedQuestion) {
+      return cleaned;
+    }
+    var questionClean = cleanLeadingMarker(question);
+    if (questionClean && cleaned.indexOf(questionClean) === 0) {
+      cleaned = cleanLeadingMarker(cleaned.slice(questionClean.length));
+    }
+    var segments = cleaned.split(/\n+/);
+    var preserved = [];
+    for (var i = 0; i < segments.length; i += 1) {
+      var part = cleanLeadingMarker(segments[i]);
+      if (!part) {
+        continue;
+      }
+      var normalizedPart = normalizeQuestionText(part);
+      if (normalizedPart && normalizedPart === normalizedQuestion) {
+        continue;
+      }
+      preserved.push(part);
+    }
+    if (preserved.length === 0) {
+      return "";
+    }
+    return preserved.join(" ");
+  }
+
+  function sanitizeAnswer(question, candidate, fallback) {
+    var normalizedQuestion = question ? normalizeQuestionText(question) : "";
+    var result = stripQuestionLines(question, candidate);
+    if (!result && fallback && fallback !== candidate) {
+      result = stripQuestionLines(question, fallback);
+    }
+    if (!result && candidate) {
+      var trimmedCandidate = cleanLeadingMarker(candidate);
+      if (trimmedCandidate) {
+        var normalizedCandidate = normalizeQuestionText(trimmedCandidate);
+        if (!normalizedQuestion || normalizedCandidate !== normalizedQuestion) {
+          result = trimmedCandidate;
+        }
+      }
+    }
+    if (!result && fallback) {
+      var trimmedFallback = cleanLeadingMarker(fallback);
+      if (trimmedFallback) {
+        var normalizedFallback = normalizeQuestionText(trimmedFallback);
+        if (!normalizedQuestion || normalizedFallback !== normalizedQuestion) {
+          result = trimmedFallback;
+        }
+      }
+    }
+    if (!result) {
+      return "";
+    }
+    if (normalizedQuestion) {
+      var normalizedResult = normalizeQuestionText(result);
+      if (normalizedResult === normalizedQuestion) {
+        return "";
+      }
+    }
+    return result;
   }
 
   function snippetText(text, limit) {
@@ -3180,9 +3258,23 @@
     container.innerHTML = "";
     var bank = getActiveBank();
     if (!bank) {
+      sessionListRenderedBankId = null;
       return;
     }
-    for (var i = 0; i < bank.sessions.length; i += 1) {
+    if (sessionListRenderedBankId !== bank.id) {
+      sessionListRenderedBankId = bank.id;
+      sessionListDisplayLimit = SESSION_LIST_MIN;
+    }
+    var totalSessions = bank.sessions.length;
+    var limit = sessionListDisplayLimit;
+    if (!limit || limit < SESSION_LIST_MIN) {
+      limit = SESSION_LIST_MIN;
+    }
+    if (totalSessions < limit) {
+      limit = totalSessions;
+    }
+    sessionListDisplayLimit = limit;
+    for (var i = 0; i < bank.sessions.length && i < limit; i += 1) {
       (function (session) {
         var card = document.createElement("div");
         card.className = "session-card" + (session.id === state.activeSessionId ? " active" : "");
@@ -3242,6 +3334,18 @@
         });
         container.appendChild(card);
       })(bank.sessions[i]);
+    }
+    if (bank.sessions.length > limit) {
+      var loadMore = document.createElement("button");
+      loadMore.type = "button";
+      loadMore.className = "session-load-more";
+      loadMore.textContent = "加载更多会话";
+      loadMore.addEventListener("click", function (evt) {
+        evt.preventDefault();
+        sessionListDisplayLimit = Math.min(bank.sessions.length, limit + SESSION_LIST_STEP);
+        renderSessionList();
+      });
+      container.appendChild(loadMore);
     }
   }
 
@@ -4459,10 +4563,24 @@
     if (qa.question && answer && answer.indexOf(qa.question) === 0) {
       answer = cleanLeadingMarker(answer.slice(qa.question.length));
     }
-    if (!answer) {
-      answer = cleanLeadingMarker(text);
+    var sanitized = sanitizeAnswer(qa.question, answer, body || text);
+    if (!sanitized && body) {
+      var cleanBody = cleanLeadingMarker(body);
+      if (cleanBody) {
+        var normalizedBody = normalizeQuestionText(cleanBody);
+        var normalizedQuestion = qa.question ? normalizeQuestionText(qa.question) : "";
+        if (!normalizedQuestion || normalizedBody !== normalizedQuestion) {
+          sanitized = cleanBody;
+        }
+      }
     }
-    qa.answer = answer;
+    if (!sanitized && text) {
+      var fallback = stripQuestionLines(qa.question, text);
+      if (fallback) {
+        sanitized = fallback;
+      }
+    }
+    qa.answer = sanitized || "";
     return qa;
   }
 
@@ -4480,6 +4598,39 @@
       return "";
     }
     return entry.text || "";
+  }
+
+  function getDisplayAnswer(entry) {
+    if (!entry) {
+      return "";
+    }
+    var question = entry.qaQuestion || "";
+    var answer = getEvidenceAnswer(entry);
+    var fallback = entry.text || "";
+    if (entry.origin === "favorite" && entry.favoriteRole === "user") {
+      return "";
+    }
+    var cleaned = sanitizeAnswer(question, answer, fallback);
+    if (!cleaned && entry.origin === "favorite" && entry.favoriteRole === "assistant" && fallback) {
+      cleaned = sanitizeAnswer(question, fallback, fallback);
+    }
+    if (!cleaned && entry.type === "decision") {
+      cleaned = cleanLeadingMarker(answer || fallback);
+    }
+    if (!cleaned && answer) {
+      cleaned = cleanLeadingMarker(answer);
+    }
+    if (!cleaned && fallback) {
+      cleaned = cleanLeadingMarker(fallback);
+    }
+    if (question && cleaned) {
+      var normalizedQuestion = normalizeQuestionText(question);
+      var normalizedCleaned = normalizeQuestionText(cleaned);
+      if (normalizedQuestion && normalizedCleaned === normalizedQuestion) {
+        return "";
+      }
+    }
+    return cleaned || "";
   }
 
   function collectFavoriteEvidence(bank, tokens, limit) {
@@ -4517,43 +4668,32 @@
         }
         if (entry.role === "user") {
           var cleanedUser = cleanLeadingMarker(text);
-          if (!cleanedUser) {
+          if (cleanedUser) {
+            lastQuestion = cleanedUser;
+          } else {
             lastQuestion = text;
-            continue;
           }
-          pool.push({
-            type: "knowledge",
-            source: cleanedUser || baseSource + " · 用户",
-            chunk: j + 1,
-            text: cleanedUser,
-            score: score * 0.02,
-            favoriteId: favorite.id,
-            favoriteMessageId: entry.id || null,
-            favoriteBankId: favorite.bankId || bank.id,
-            favoriteRole: "user",
-            qaQuestion: cleanedUser,
-            qaAnswer: "",
-            url: url,
-            origin: "favorite"
-          });
-          lastQuestion = cleanedUser || text;
           continue;
         }
         var qaQuestion = lastQuestion || favorite.title || "";
         var cleanQuestion = cleanLeadingMarker(qaQuestion);
         var cleanAnswer = cleanLeadingMarker(text);
+        var sanitizedAnswer = sanitizeAnswer(cleanQuestion, cleanAnswer, cleanAnswer);
+        if (!sanitizedAnswer) {
+          continue;
+        }
         pool.push({
           type: "knowledge",
           source: cleanQuestion || baseSource + " · 助理",
           chunk: j + 1,
-          text: cleanAnswer || text,
+          text: sanitizedAnswer,
           score: score * 0.04,
           favoriteId: favorite.id,
           favoriteMessageId: entry.id || null,
           favoriteBankId: favorite.bankId || bank.id,
           favoriteRole: "assistant",
           qaQuestion: cleanQuestion,
-          qaAnswer: cleanAnswer || text,
+          qaAnswer: sanitizedAnswer,
           url: url,
           origin: "favorite"
         });
@@ -4895,7 +5035,19 @@
           continue;
         }
         var qaInfo = deriveChunkQa(chunk);
-        var answerText = qaInfo.answer || chunk.body || chunk.text;
+        var answerText = qaInfo.answer;
+        if (!answerText && chunk.body) {
+          answerText = sanitizeAnswer(qaInfo.question, chunk.body, chunk.body);
+        }
+        if (!answerText) {
+          answerText = sanitizeAnswer(qaInfo.question, chunk.text, chunk.text);
+        }
+        if (!answerText) {
+          answerText = qaInfo.answer || "";
+        }
+        if (!answerText) {
+          continue;
+        }
         var displayLabel = qaInfo.question || chunk.title || chunk.file;
         kbCandidates.push({
           type: "knowledge",
@@ -4903,14 +5055,14 @@
           fileName: chunk.file,
           chunkOrder: chunk.order,
           chunk: chunk.order,
-          text: answerText || chunk.text,
+          text: answerText || "",
           score: entry.score,
           fileId: chunk.fileId,
           chunkId: chunk.id,
           url: "kb.html?file=" + encodeURIComponent(chunk.fileId) + "&chunk=" + encodeURIComponent(chunk.id),
           origin: "kb",
           qaQuestion: qaInfo.question,
-          qaAnswer: answerText || qaInfo.answer || chunk.text
+          qaAnswer: answerText || ""
         });
       }
       var favoriteEvidence = collectFavoriteEvidence(bank, expanded, limit);
@@ -5009,16 +5161,9 @@
       if (!primaryEntry && decisionEvidence.length > 0) {
         primaryEntry = decisionEvidence[0];
       }
-      var primaryAnswer = primaryEntry ? getEvidenceAnswer(primaryEntry) : "";
-      var primaryHasAnswer = primaryAnswer && primaryAnswer.length > 0;
+      var primaryAnswer = primaryEntry ? getDisplayAnswer(primaryEntry) : "";
       if (primaryAnswer) {
         primaryAnswer = snippetText(primaryAnswer, 200);
-      }
-      if (!primaryHasAnswer && primaryEntry && primaryEntry.origin === "favorite" && primaryEntry.favoriteRole === "user") {
-        primaryAnswer = "";
-      }
-      if (!primaryAnswer && primaryEntry && primaryEntry.text) {
-        primaryAnswer = snippetText(primaryEntry.text, 200);
       }
       if (!primaryAnswer) {
         primaryAnswer = "当前资料中未找到高相关答案，请补充更多上下文信息。";
@@ -5032,7 +5177,7 @@
         if (!evItem || evItem === primaryEntry) {
           continue;
         }
-        var evAnswer = getEvidenceAnswer(evItem);
+        var evAnswer = getDisplayAnswer(evItem);
         if (!evAnswer && evItem.type !== "decision") {
           continue;
         }

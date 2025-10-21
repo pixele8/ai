@@ -164,9 +164,7 @@ textarea:focus {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 200px;
-  overflow-y: auto;
-  padding-right: 4px;
+  padding-right: 0;
 }
 .session-card {
   background: #ffffff;
@@ -214,6 +212,24 @@ textarea:focus {
 }
 .session-favorite:hover,
 .session-remove:hover {
+  border-color: rgba(79, 111, 217, 0.55);
+  color: #1a2b4c;
+  box-shadow: 0 10px 20px rgba(79, 111, 217, 0.15);
+}
+.session-load-more {
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+  background: linear-gradient(180deg, #ffffff 0%, #f5f8ff 100%);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  color: #1f2a3d;
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08);
+  transition: border 0.2s ease, color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+  margin-top: 4px;
+}
+.session-load-more:hover {
   border-color: rgba(79, 111, 217, 0.55);
   color: #1a2b4c;
   box-shadow: 0 10px 20px rgba(79, 111, 217, 0.15);
