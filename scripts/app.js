@@ -1393,7 +1393,18 @@
     return String(text)
       .toLowerCase()
       .replace(/[\s\u3000]+/g, "")
-      .replace(/[，,。\.？\?！!、:：;]/g, "");
+      .replace(/[，,。\.？\?！!、:：;]/g, "")
+      .replace(/[（）()\[\]【】〔〕〈〉<>『』「」]/g, "");
+  }
+
+  function refineQuestionLabel(label) {
+    if (!label) {
+      return "";
+    }
+    var refined = cleanLeadingMarker(label);
+    refined = refined.replace(/[（(][^（）()]*?(问题|question)[)）]$/i, "");
+    refined = refined.replace(/[（(][^（）()]*?(答案|answer)[)）]$/i, "");
+    return refined.trim();
   }
 
   function escapeHtml(text) {
@@ -1452,7 +1463,7 @@
     return body.join("\n").trim();
   }
 
-  function stripQuestionLines(question, text) {
+  function stripQuestionContent(question, text) {
     if (!text) {
       return "";
     }
@@ -1460,29 +1471,66 @@
     if (!cleaned) {
       return "";
     }
-    if (!question) {
-      return cleaned;
+    var normalizedQuestion = question ? normalizeQuestionText(question) : "";
+    if (question) {
+      var questionClean = cleanLeadingMarker(question);
+      var questionRefined = refineQuestionLabel(question);
+      var variants = [];
+      if (questionClean) {
+        variants.push(questionClean);
+      }
+      if (questionRefined && variants.indexOf(questionRefined) === -1) {
+        variants.push(questionRefined);
+      }
+      for (var v = 0; v < variants.length; v += 1) {
+        var variant = variants[v];
+        if (!variant) {
+          continue;
+        }
+        var escaped = variant.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        var leading = new RegExp("^" + escaped + "[\\s\u3000]*", "g");
+        cleaned = cleaned.replace(leading, "");
+        var anywhere = new RegExp(escaped, "g");
+        cleaned = cleaned.replace(anywhere, " ");
+      }
     }
-    var normalizedQuestion = normalizeQuestionText(question);
-    if (!normalizedQuestion) {
-      return cleaned;
+    if (normalizedQuestion && cleaned) {
+      var tokens = cleaned.split(/\s+/);
+      var kept = [];
+      for (var i = 0; i < tokens.length; i += 1) {
+        var token = tokens[i];
+        if (!token) {
+          continue;
+        }
+        if (normalizeQuestionText(token) === normalizedQuestion) {
+          continue;
+        }
+        kept.push(token);
+      }
+      if (kept.length > 0) {
+        cleaned = kept.join(" ");
+      } else {
+        cleaned = "";
+      }
     }
-    var questionClean = cleanLeadingMarker(question);
-    if (questionClean && cleaned.indexOf(questionClean) === 0) {
-      cleaned = cleanLeadingMarker(cleaned.slice(questionClean.length));
+    cleaned = cleaned.replace(/[\s\u3000]+/g, " ").trim();
+    if (normalizedQuestion && cleaned && normalizeQuestionText(cleaned) === normalizedQuestion) {
+      return "";
     }
-    var segments = cleaned.split(/\n+/);
+    return cleaned;
+  }
+
+  function stripQuestionLines(question, text) {
+    if (!text) {
+      return "";
+    }
+    var lines = String(text).split(/\n+/);
     var preserved = [];
-    for (var i = 0; i < segments.length; i += 1) {
-      var part = cleanLeadingMarker(segments[i]);
-      if (!part) {
-        continue;
+    for (var i = 0; i < lines.length; i += 1) {
+      var cleaned = stripQuestionContent(question, lines[i]);
+      if (cleaned) {
+        preserved.push(cleaned);
       }
-      var normalizedPart = normalizeQuestionText(part);
-      if (normalizedPart && normalizedPart === normalizedQuestion) {
-        continue;
-      }
-      preserved.push(part);
     }
     if (preserved.length === 0) {
       return "";
@@ -1491,39 +1539,17 @@
   }
 
   function sanitizeAnswer(question, candidate, fallback) {
-    var normalizedQuestion = question ? normalizeQuestionText(question) : "";
-    var result = stripQuestionLines(question, candidate);
+    var result = stripQuestionContent(question, candidate);
     if (!result && fallback && fallback !== candidate) {
-      result = stripQuestionLines(question, fallback);
+      result = stripQuestionContent(question, fallback);
     }
     if (!result && candidate) {
-      var trimmedCandidate = cleanLeadingMarker(candidate);
-      if (trimmedCandidate) {
-        var normalizedCandidate = normalizeQuestionText(trimmedCandidate);
-        if (!normalizedQuestion || normalizedCandidate !== normalizedQuestion) {
-          result = trimmedCandidate;
-        }
-      }
+      result = stripQuestionContent("", candidate);
     }
     if (!result && fallback) {
-      var trimmedFallback = cleanLeadingMarker(fallback);
-      if (trimmedFallback) {
-        var normalizedFallback = normalizeQuestionText(trimmedFallback);
-        if (!normalizedQuestion || normalizedFallback !== normalizedQuestion) {
-          result = trimmedFallback;
-        }
-      }
+      result = stripQuestionContent("", fallback);
     }
-    if (!result) {
-      return "";
-    }
-    if (normalizedQuestion) {
-      var normalizedResult = normalizeQuestionText(result);
-      if (normalizedResult === normalizedQuestion) {
-        return "";
-      }
-    }
-    return result;
+    return result || "";
   }
 
   function snippetText(text, limit) {
@@ -3925,7 +3951,7 @@
       } else {
         chunk.text = "";
       }
-      chunk.title = extractChunkTitle(chunk.text, chunk.file);
+      chunk.title = refineQuestionLabel(extractChunkTitle(chunk.text, chunk.file));
       chunk.body = extractChunkBody(chunk.text);
       if (!fileMap[chunk.fileId]) {
         var newFile = { id: chunk.fileId, name: chunk.file || "导入文件", chunks: 0, size: 0 };
@@ -3992,7 +4018,7 @@
         fileId: fileId,
         order: 0,
         text: rawText,
-        title: extractChunkTitle(rawText, fileName),
+        title: refineQuestionLabel(extractChunkTitle(rawText, fileName)),
         body: extractChunkBody(rawText)
       });
       added += 1;
@@ -4527,7 +4553,7 @@
     if (!text) {
       return qa;
     }
-    var title = cleanLeadingMarker(chunk.title || "");
+    var title = refineQuestionLabel(chunk.title || "");
     if (!title) {
       title = extractChunkTitle(text, chunk.file || "");
     }
@@ -4535,18 +4561,19 @@
     if (!body) {
       body = extractChunkBody(text);
     }
-    var fileTitle = cleanLeadingMarker(chunk.file || "");
+    var fileTitle = refineQuestionLabel(chunk.file || "");
     if (title && looksLikeQuestion(title)) {
-      qa.question = title;
+      qa.question = refineQuestionLabel(title);
     } else if (fileTitle && looksLikeQuestion(fileTitle)) {
-      qa.question = fileTitle;
+      qa.question = refineQuestionLabel(fileTitle);
     }
     if (!qa.question) {
-      var firstLine = cleanLeadingMarker(text.split(/\n+/)[0] || "");
+      var firstLine = refineQuestionLabel(text.split(/\n+/)[0] || "");
       if (firstLine && looksLikeQuestion(firstLine)) {
-        qa.question = firstLine;
+        qa.question = refineQuestionLabel(firstLine);
       }
     }
+    qa.question = refineQuestionLabel(qa.question);
     var answer = body || "";
     if (!answer && qa.question && text.indexOf(qa.question) === 0) {
       answer = text.slice(qa.question.length).trim();
@@ -4667,7 +4694,7 @@
           url += "#message-" + encodeURIComponent(entry.id);
         }
         if (entry.role === "user") {
-          var cleanedUser = cleanLeadingMarker(text);
+          var cleanedUser = refineQuestionLabel(text);
           if (cleanedUser) {
             lastQuestion = cleanedUser;
           } else {
@@ -4676,7 +4703,7 @@
           continue;
         }
         var qaQuestion = lastQuestion || favorite.title || "";
-        var cleanQuestion = cleanLeadingMarker(qaQuestion);
+        var cleanQuestion = refineQuestionLabel(qaQuestion);
         var cleanAnswer = cleanLeadingMarker(text);
         var sanitizedAnswer = sanitizeAnswer(cleanQuestion, cleanAnswer, cleanAnswer);
         if (!sanitizedAnswer) {
@@ -4870,7 +4897,14 @@
       var copy = cloneEvidenceEntry(item);
       copy.duplicates = [];
       var typeKey = item.type || "knowledge";
-      var normalized = copy.text ? String(copy.text).replace(/\s+/g, " ").trim() : "";
+      var displayAnswer = getDisplayAnswer(copy);
+      if (!copy.text && displayAnswer) {
+        copy.text = displayAnswer;
+      }
+      var normalized = displayAnswer ? String(displayAnswer).replace(/\s+/g, " ").trim() : "";
+      if (!normalized && copy.text) {
+        normalized = String(copy.text).replace(/\s+/g, " ").trim();
+      }
       var tokens = normalized ? collectSimilarityTokens(normalized) : null;
       var sourceKey = item.source ? String(item.source).replace(/\s+/g, " ").trim() : "";
       var identity = null;
