@@ -4660,6 +4660,57 @@
     return cleaned || "";
   }
 
+  function formatEvidenceSourceLabel(entry) {
+    if (!entry) {
+      return "";
+    }
+    var label = "";
+    if (entry.origin === "favorite") {
+      label = entry.source || entry.fileName || "收藏内容";
+    } else if (entry.origin === "decision-history" || entry.type === "decision") {
+      label = entry.source || "决策链记录";
+    } else {
+      label = entry.fileName || entry.source || "";
+    }
+    if (!label && entry.projectName) {
+      label = entry.projectName;
+    }
+    if (!label && entry.projectTitle) {
+      label = entry.projectTitle;
+    }
+    if (!label) {
+      label = entry.source || "";
+    }
+    label = label ? String(label).replace(/\s+/g, " ").trim() : "";
+    if (label.indexOf(" —— ") >= 0) {
+      label = label.split(" —— ")[0];
+    }
+    if (label.indexOf(" · 第") >= 0) {
+      label = label.replace(/ · 第\d+段/g, "");
+    }
+    if (entry.qaQuestion && label) {
+      var normalizedLabel = normalizeQuestionText(label);
+      var normalizedQuestion = normalizeQuestionText(entry.qaQuestion);
+      if (normalizedLabel && normalizedQuestion && normalizedLabel === normalizedQuestion) {
+        if (entry.fileName && normalizeQuestionText(entry.fileName) !== normalizedQuestion) {
+          label = String(entry.fileName).replace(/\s+/g, " ").trim();
+        } else if (entry.source && normalizeQuestionText(entry.source) !== normalizedQuestion) {
+          label = String(entry.source).replace(/\s+/g, " ").trim();
+        }
+        if (label && label.indexOf(" —— ") >= 0) {
+          label = label.split(" —— ")[0];
+        }
+        if (label && label.indexOf(" · 第") >= 0) {
+          label = label.replace(/ · 第\d+段/g, "");
+        }
+      }
+    }
+    if (!label) {
+      label = "资料";
+    }
+    return label;
+  }
+
   function collectFavoriteEvidence(bank, tokens, limit) {
     var pool = [];
     if (!bank || !tokens || tokens.length === 0) {
@@ -5205,37 +5256,38 @@
       var replySections = [];
       var coreAnswer = escapeHtml(primaryAnswer);
       replySections.push('<p class="reply-core"><strong>' + coreAnswer + '</strong></p>');
-      var supplementItems = [];
+      var duplicateCount = 0;
+      var sourceItems = [];
+      var sourceIndex = 1;
       for (var evIdx = 0; evIdx < evidence.length; evIdx += 1) {
         var evItem = evidence[evIdx];
-        if (!evItem || evItem === primaryEntry) {
+        if (!evItem) {
           continue;
         }
-        var evAnswer = getDisplayAnswer(evItem);
-        if (!evAnswer && evItem.type !== "decision") {
+        if (evItem.duplicates && evItem.duplicates.length > 0) {
+          duplicateCount += evItem.duplicates.length;
+        }
+        var labelText = formatEvidenceSourceLabel(evItem);
+        if (!labelText) {
           continue;
         }
-        var snippet = snippetText(evAnswer || evItem.text, 120);
-        if (!snippet) {
-          continue;
+        var originLabel = "";
+        if (evItem.origin === "decision-history" || evItem.type === "decision") {
+          originLabel = "决策链";
+        } else if (evItem.origin === "favorite") {
+          originLabel = "收藏夹";
+        } else {
+          originLabel = "知识库";
         }
-        var supParts = [];
-        supParts.push('<span class="reply-supp-label">资料' + evItem.ref + '</span>');
-        var sourceLabel = evItem.source || "";
-        if (sourceLabel) {
-          supParts.push('<span class="reply-supp-source">' + escapeHtml(sourceLabel) + '</span>');
-        }
-        if (evItem.fileName && (!sourceLabel || evItem.fileName !== sourceLabel)) {
-          supParts.push('<span class="reply-supp-meta">来源：' + escapeHtml(evItem.fileName) + '</span>');
-        }
-        supParts.push('<span class="reply-supp-text">' + escapeHtml(snippet) + '</span>');
-        supplementItems.push('<li>' + supParts.join(' ') + '</li>');
-        if (supplementItems.length >= 3) {
-          break;
-        }
+        var combined = originLabel ? originLabel + "：" + labelText : labelText;
+        sourceItems.push('<li><span class="reply-source-index">' + sourceIndex + '.</span><span class="reply-source-label">' + escapeHtml(combined) + '</span></li>');
+        sourceIndex += 1;
       }
-      if (supplementItems.length > 0) {
-        replySections.push('<div class="reply-supp-title">补充依据</div><ul class="reply-supp-list">' + supplementItems.join("") + '</ul>');
+      if (duplicateCount > 0) {
+        replySections.push('<p class="reply-note">（已折叠' + duplicateCount + '条相似答案）</p>');
+      }
+      if (sourceItems.length > 0) {
+        replySections.push('<div class="reply-sources"><div class="reply-sources-title">来源：</div><ol class="reply-sources-list">' + sourceItems.join("") + '</ol></div>');
       }
       replyText = replySections.join("");
       renderEvidence(evidence, highlightTokens);
