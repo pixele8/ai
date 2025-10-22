@@ -29,6 +29,11 @@
   var historySearch = null;
   var toolbar = null;
   var toolButtons = [];
+  var toolOptions = null;
+  var brushOptionsPanel = null;
+  var textOptionsPanel = null;
+  var brushWidthButtons = [];
+  var brushColorButtons = [];
   var undoButton = null;
   var draggingTimer = null;
   var selectionBox = null;
@@ -52,6 +57,10 @@
   var magnifierSize = 180;
   var magnifierZoom = 2.4;
   var maxUndo = 60;
+  var defaultBrushColor = "#fa541c";
+  var defaultBrushWidth = 6;
+  var brushColor = defaultBrushColor;
+  var brushWidth = defaultBrushWidth;
 
   function makeId(prefix) {
     var base = Date.now().toString(36) + Math.random().toString(36).substr(2, 6);
@@ -134,6 +143,9 @@
     noteInput = document.getElementById("visionNoteInput");
     historySearch = document.getElementById("visionHistorySearch");
     toolbar = document.getElementById("visionToolbar");
+    toolOptions = document.getElementById("visionToolOptions");
+    brushOptionsPanel = document.getElementById("visionBrushOptions");
+    textOptionsPanel = document.getElementById("visionTextOptions");
     undoButton = document.getElementById("visionUndoBtn");
 
     if (toolbar) {
@@ -141,6 +153,8 @@
     } else {
       toolButtons = [];
     }
+
+    initializeBrushControls();
 
     if (!dropzone || !canvas || !overlay || !resultsContainer) {
       return;
@@ -242,6 +256,13 @@
     }
     if (annotationsLayer) {
       annotationsLayer.addEventListener("click", function (evt) {
+        evt.stopPropagation();
+      });
+    }
+    if (overlay) {
+      overlay.addEventListener("mousedown", handleOverlayPointerDown);
+      overlay.addEventListener("click", function (evt) {
+        evt.preventDefault();
         evt.stopPropagation();
       });
     }
@@ -364,7 +385,6 @@
       overlay.style.top = canvasMetrics.offsetY + "px";
       overlay.style.width = canvasMetrics.width + "px";
       overlay.style.height = canvasMetrics.height + "px";
-      overlay.style.pointerEvents = "none";
     }
     if (selectionLayer) {
       selectionLayer.style.left = canvasMetrics.offsetX + "px";
@@ -388,6 +408,7 @@
     realignOverlayBoxes();
     realignSelectionBox();
     realignAnnotations();
+    updateOverlayPointerEvents();
   }
 
   function realignOverlayBoxes() {
@@ -449,6 +470,148 @@
     }, 160);
   }
 
+  function initializeBrushControls() {
+    if (!brushOptionsPanel) {
+      brushWidthButtons = [];
+      brushColorButtons = [];
+      return;
+    }
+    brushWidthButtons = brushOptionsPanel.querySelectorAll("[data-brush-width]");
+    brushColorButtons = brushOptionsPanel.querySelectorAll("[data-brush-color]");
+    for (var i = 0; i < brushWidthButtons.length; i += 1) {
+      (function (button) {
+        button.addEventListener("click", function (evt) {
+          evt.preventDefault();
+          var raw = parseFloat(button.getAttribute("data-brush-width") || "0");
+          selectBrushWidth(raw || defaultBrushWidth);
+        });
+      })(brushWidthButtons[i]);
+    }
+    for (var j = 0; j < brushColorButtons.length; j += 1) {
+      (function (button) {
+        button.addEventListener("click", function (evt) {
+          evt.preventDefault();
+          var color = button.getAttribute("data-brush-color") || defaultBrushColor;
+          selectBrushColor(color);
+        });
+      })(brushColorButtons[j]);
+    }
+    selectBrushWidth(defaultBrushWidth, { silent: true });
+    selectBrushColor(defaultBrushColor, { silent: true });
+    updateToolOptions();
+  }
+
+  function updateBrushOptionState() {
+    for (var i = 0; i < brushWidthButtons.length; i += 1) {
+      var widthButton = brushWidthButtons[i];
+      var widthValue = parseFloat(widthButton.getAttribute("data-brush-width") || "0");
+      if (!isFinite(widthValue) || widthValue <= 0) {
+        widthValue = defaultBrushWidth;
+      }
+      if (Math.abs(widthValue - brushWidth) < 0.5) {
+        widthButton.classList.add("active");
+        widthButton.setAttribute("aria-pressed", "true");
+      } else {
+        widthButton.classList.remove("active");
+        widthButton.setAttribute("aria-pressed", "false");
+      }
+    }
+    for (var j = 0; j < brushColorButtons.length; j += 1) {
+      var colorButton = brushColorButtons[j];
+      var value = colorButton.getAttribute("data-brush-color") || "";
+      if (value.toLowerCase() === brushColor.toLowerCase()) {
+        colorButton.classList.add("active");
+        colorButton.setAttribute("aria-pressed", "true");
+      } else {
+        colorButton.classList.remove("active");
+        colorButton.setAttribute("aria-pressed", "false");
+      }
+    }
+  }
+
+  function selectBrushWidth(width, options) {
+    options = options || {};
+    var parsed = parseFloat(width || defaultBrushWidth);
+    if (!isFinite(parsed) || parsed <= 0) {
+      parsed = defaultBrushWidth;
+    }
+    if (parsed > 32) {
+      parsed = 32;
+    }
+    brushWidth = parsed;
+    updateBrushOptionState();
+  }
+
+  function selectBrushColor(color, options) {
+    options = options || {};
+    if (typeof color !== "string" || !color) {
+      color = defaultBrushColor;
+    }
+    brushColor = color;
+    updateBrushOptionState();
+  }
+
+  function updateToolOptions() {
+    if (!toolOptions) {
+      return;
+    }
+    var anyActive = false;
+    if (brushOptionsPanel) {
+      var brushActive = activeTool === "brush";
+      if (brushActive) {
+        anyActive = true;
+        brushOptionsPanel.classList.add("active");
+      } else {
+        brushOptionsPanel.classList.remove("active");
+      }
+    }
+    if (textOptionsPanel) {
+      var textActive = activeTool === "text";
+      if (textActive) {
+        anyActive = true;
+        textOptionsPanel.classList.add("active");
+      } else {
+        textOptionsPanel.classList.remove("active");
+      }
+    }
+    if (anyActive) {
+      toolOptions.style.display = "flex";
+    } else {
+      toolOptions.style.display = "none";
+    }
+  }
+
+  function updateOverlayPointerEvents() {
+    if (!overlay) {
+      return;
+    }
+    var interactive = !selectionMode && activeTool === "select";
+    overlay.style.pointerEvents = "none";
+    var nodes = overlay.querySelectorAll(".overlay-box");
+    for (var i = 0; i < nodes.length; i += 1) {
+      nodes[i].style.pointerEvents = interactive ? "auto" : "none";
+    }
+  }
+
+  function updateCanvasCursor() {
+    if (canvas) {
+      canvas.style.cursor = selectionMode ? "crosshair" : "default";
+    }
+    if (sketchCanvas) {
+      var cursor = "default";
+      if (selectionMode) {
+        cursor = "crosshair";
+      } else if (activeTool === "brush") {
+        cursor = "crosshair";
+      } else if (activeTool === "text") {
+        cursor = "text";
+      } else if (activeTool === "magnify") {
+        cursor = "zoom-in";
+      }
+      sketchCanvas.style.cursor = cursor;
+    }
+  }
+
   function ensureSelectionBox() {
     if (!selectionLayer) {
       return null;
@@ -459,6 +622,90 @@
       selectionLayer.appendChild(selectionBox);
     }
     return selectionBox;
+  }
+
+  function handleOverlayPointerDown(evt) {
+    if (!overlay || selectionMode || activeTool !== "select") {
+      return;
+    }
+    var target = evt.target || evt.srcElement;
+    if (!target) {
+      return;
+    }
+    while (target && target !== overlay && (!target.classList || !target.classList.contains("overlay-box"))) {
+      target = target.parentNode;
+    }
+    if (!target || target === overlay) {
+      return;
+    }
+    var findingId = target.getAttribute("data-id");
+    if (!findingId) {
+      return;
+    }
+    evt.preventDefault();
+    evt.stopPropagation();
+    focusOverlay(findingId);
+    var finding = findActiveFinding(findingId);
+    if (activeInference && finding) {
+      enterSelectionMode(activeInference.id, findingId, finding);
+      if (finding.bounds) {
+        showSelectionBounds(finding.bounds);
+      }
+    }
+  }
+
+  function showSelectionBounds(bounds) {
+    if (!bounds || !selectionLayer) {
+      return;
+    }
+    var box = ensureSelectionBox();
+    if (!box) {
+      return;
+    }
+    var clamped = clampBounds(bounds);
+    box.setAttribute("data-x", clamped.x);
+    box.setAttribute("data-y", clamped.y);
+    box.setAttribute("data-width", clamped.width);
+    box.setAttribute("data-height", clamped.height);
+    if (!canvasMetrics) {
+      syncOverlayGeometry();
+    }
+    if (canvasMetrics) {
+      box.style.left = clamped.x * canvasMetrics.scaleX + "px";
+      box.style.top = clamped.y * canvasMetrics.scaleY + "px";
+      box.style.width = clamped.width * canvasMetrics.scaleX + "px";
+      box.style.height = clamped.height * canvasMetrics.scaleY + "px";
+    } else {
+      box.style.left = clamped.x + "px";
+      box.style.top = clamped.y + "px";
+      box.style.width = clamped.width + "px";
+      box.style.height = clamped.height + "px";
+    }
+    selectionLayer.classList.remove("hidden");
+  }
+
+  function clampBounds(bounds) {
+    var safe = {
+      x: clamp(Math.round(bounds.x || 0), 0, canvas ? canvas.width : 0),
+      y: clamp(Math.round(bounds.y || 0), 0, canvas ? canvas.height : 0),
+      width: Math.round(bounds.width || 0),
+      height: Math.round(bounds.height || 0)
+    };
+    if (canvas) {
+      if (safe.x + safe.width > canvas.width) {
+        safe.width = canvas.width - safe.x;
+      }
+      if (safe.y + safe.height > canvas.height) {
+        safe.height = canvas.height - safe.y;
+      }
+    }
+    if (safe.width < 1) {
+      safe.width = 1;
+    }
+    if (safe.height < 1) {
+      safe.height = 1;
+    }
+    return safe;
   }
 
   function exitSelectionMode() {
@@ -473,11 +720,23 @@
     if (dropzone) {
       dropzone.classList.remove("selecting");
     }
+    updateOverlayPointerEvents();
+    updateCanvasCursor();
     refreshPointerLayers();
   }
 
   function handleCanvasMouseDown(evt) {
-    if (!selectionMode || !canvas) {
+    if (!canvas) {
+      return;
+    }
+    if (!selectionMode && activeTool === "select") {
+      if (!activeInference || !activeInference.id) {
+        notify("请先导入图像后再圈选主体区域");
+        return;
+      }
+      enterSelectionMode(activeInference.id, null, null, { createOnFinalize: true });
+    }
+    if (!selectionMode) {
       return;
     }
     evt.preventDefault();
@@ -559,6 +818,8 @@
         annotationsLayer.style.pointerEvents = "auto";
       }
     }
+    updateOverlayPointerEvents();
+    updateCanvasCursor();
   }
 
   function updateToolButtons() {
@@ -592,6 +853,7 @@
       }
       refreshPointerLayers();
       updateToolButtons();
+      updateToolOptions();
       return;
     }
     activeTool = tool;
@@ -600,6 +862,7 @@
     }
     refreshPointerLayers();
     updateToolButtons();
+    updateToolOptions();
   }
 
   function recordUndo(action) {
@@ -716,8 +979,8 @@
     isDrawingStroke = true;
     currentStroke = {
       id: makeId("stroke"),
-      width: 3,
-      color: "rgba(250,84,28,0.92)",
+      width: brushWidth,
+      color: brushColor,
       points: [point]
     };
     redrawSketchLayer();
@@ -776,6 +1039,7 @@
       sketchCanvas.width = canvas.width;
       sketchCanvas.height = canvas.height;
     }
+    sketchCanvas.classList.remove("hidden");
     sketchCtx.clearRect(0, 0, sketchCanvas.width, sketchCanvas.height);
     var renderQueue = [];
     for (var i = 0; i < strokes.length; i += 1) {
@@ -792,8 +1056,8 @@
       sketchCtx.beginPath();
       sketchCtx.lineJoin = "round";
       sketchCtx.lineCap = "round";
-      sketchCtx.lineWidth = stroke.width;
-      sketchCtx.strokeStyle = stroke.color || "rgba(250,84,28,0.92)";
+      sketchCtx.lineWidth = stroke.width || defaultBrushWidth;
+      sketchCtx.strokeStyle = stroke.color || defaultBrushColor;
       sketchCtx.moveTo(stroke.points[0].x, stroke.points[0].y);
       for (var p = 1; p < stroke.points.length; p += 1) {
         var pt = stroke.points[p];
@@ -833,6 +1097,7 @@
     if (!annotationsLayer) {
       return;
     }
+    annotationsLayer.classList.remove("hidden");
     var annotation = { id: makeId("annotation"), x: point.x, y: point.y, text: "" };
     annotations.push(annotation);
     recordUndo({ type: "add-annotation", id: annotation.id });
@@ -1114,29 +1379,53 @@
       width: Math.round(width),
       height: Math.round(height)
     };
+    bounds = clampBounds(bounds);
+    var metrics = estimateBoundsMetrics(bounds);
+    var inferenceId = selectionMode.inferenceId;
+    var findingId = selectionMode.findingId;
+    var base = selectionMode.finding || {};
+    if (!findingId && selectionMode.createOnFinalize) {
+      var created = createManualFindingRecord(inferenceId);
+      if (!created || !created.id) {
+        notify("未能创建新的识别结果，请重试");
+        exitSelectionMode();
+        return;
+      }
+      findingId = created.id;
+      selectionMode.findingId = findingId;
+      selectionMode.finding = created;
+      base = created;
+    }
     var patch = {
       bounds: bounds,
       status: "corrected",
       correctedBy: getCurrentUser(),
       correctedAt: new Date().toISOString()
     };
+    if (base.metrics) {
+      patch.metrics = JSON.parse(JSON.stringify(base.metrics));
+    } else {
+      patch.metrics = {};
+    }
+    patch.metrics.areaRatio = metrics.areaRatio;
+    patch.metrics.aspectRatio = metrics.aspectRatio;
+    patch.metrics.heatScore = metrics.heatScore;
     if (api && typeof api.updateFinding === "function") {
-      api.updateFinding(selectionMode.inferenceId, selectionMode.findingId, patch);
+      api.updateFinding(inferenceId, findingId, patch);
     }
     if (api && typeof api.recordCorrection === "function") {
-      var base = selectionMode.finding || {};
-      var totalArea = canvas.width * canvas.height || 1;
-      var ratio = totalArea > 0 ? bounds.width * bounds.height / totalArea : 0;
       api.recordCorrection({
-        inferenceId: selectionMode.inferenceId,
-        findingId: selectionMode.findingId,
+        inferenceId: inferenceId,
+        findingId: findingId,
         previousType: base.type || "",
         targetType: base.type || "",
         probability: base.probability || 0,
-        areaRatio: ratio,
-        heatScore: base.metrics && base.metrics.heatScore ? base.metrics.heatScore : 0,
+        areaRatio: metrics.areaRatio,
+        heatScore: metrics.heatScore,
+        aspectRatio: metrics.aspectRatio,
         group: base.group || null,
         note: "圈选主体调整",
+        fingerprint: buildVisionFingerprintFromMetrics(metrics),
         correctedBy: getCurrentUser(),
         correctedAt: new Date().toISOString()
       });
@@ -1145,10 +1434,61 @@
     exitSelectionMode();
   }
 
-  function enterSelectionMode(inferenceId, findingId, finding) {
+  function estimateBoundsMetrics(bounds) {
+    var totalArea = canvas && canvas.width && canvas.height ? canvas.width * canvas.height : 0;
+    var areaRatio = 0;
+    if (totalArea > 0) {
+      areaRatio = clamp((bounds.width * bounds.height) / totalArea, 0, 1);
+    }
+    var aspect = 1;
+    if (bounds.width > 0 && bounds.height > 0) {
+      if (bounds.width >= bounds.height) {
+        aspect = bounds.width / Math.max(1, bounds.height);
+      } else {
+        aspect = bounds.height / Math.max(1, bounds.width);
+      }
+    }
+    aspect = clamp(aspect, 1, 8);
+    var heatScore = 0;
+    if (ctx && canvas && bounds.width > 0 && bounds.height > 0) {
+      try {
+        var startX = clamp(Math.round(bounds.x), 0, canvas.width - 1);
+        var startY = clamp(Math.round(bounds.y), 0, canvas.height - 1);
+        var width = clamp(Math.round(bounds.width), 1, canvas.width - startX);
+        var height = clamp(Math.round(bounds.height), 1, canvas.height - startY);
+        var region = ctx.getImageData(startX, startY, width, height);
+        var data = region.data;
+        var stepX = Math.max(1, Math.floor(width / 32));
+        var stepY = Math.max(1, Math.floor(height / 32));
+        var heatSum = 0;
+        var sampleCount = 0;
+        for (var y = 0; y < height; y += stepY) {
+          for (var x = 0; x < width; x += stepX) {
+            var index = (y * width + x) * 4;
+            var r = data[index];
+            var g = data[index + 1];
+            var b = data[index + 2];
+            var heat = r - (g + b) * 0.45;
+            if (heat < 0) {
+              heat = 0;
+            }
+            heatSum += heat;
+            sampleCount += 1;
+          }
+        }
+        if (sampleCount > 0) {
+          heatScore = clamp(heatSum / sampleCount / 255, 0, 1);
+        }
+      } catch (err) {}
+    }
+    return { areaRatio: areaRatio, aspectRatio: aspect, heatScore: heatScore };
+  }
+
+  function enterSelectionMode(inferenceId, findingId, finding, options) {
     if (!dropzone || !canvas) {
       return;
     }
+    options = options || {};
     var snapshot = null;
     if (finding) {
       try {
@@ -1157,7 +1497,12 @@
         snapshot = finding;
       }
     }
-    selectionMode = { inferenceId: inferenceId, findingId: findingId, finding: snapshot };
+    selectionMode = {
+      inferenceId: inferenceId,
+      findingId: findingId || null,
+      finding: snapshot,
+      createOnFinalize: !!options.createOnFinalize
+    };
     isSelecting = false;
     selectionStart = null;
     syncOverlayGeometry();
@@ -1165,8 +1510,14 @@
       selectionLayer.innerHTML = "";
       selectionLayer.classList.remove("hidden");
     }
+    if (finding && finding.bounds) {
+      showSelectionBounds(finding.bounds);
+    } else {
+      selectionBox = null;
+    }
     refreshPointerLayers();
     dropzone.classList.add("selecting");
+    updateCanvasCursor();
     notify("请在图像上拖动框选目标区域，按 Esc 取消");
   }
 
@@ -1231,6 +1582,21 @@
     }
   }
 
+  function createManualFindingRecord(inferenceId) {
+    if (!inferenceId || !api || typeof api.addFinding !== "function") {
+      return null;
+    }
+    return api.addFinding(inferenceId, {
+      type: "待分类",
+      probability: 0,
+      status: "manual",
+      notes: "",
+      metrics: null,
+      createdAt: new Date().toISOString(),
+      createdBy: getCurrentUser()
+    });
+  }
+
   function handleManualFinding() {
     if (addFindingButton && addFindingButton.disabled) {
       notify("请先完成一次识别后再新增结果");
@@ -1240,18 +1606,7 @@
       notify("请先导入图像并完成一次识别");
       return;
     }
-    if (!api || typeof api.addFinding !== "function") {
-      notify("当前环境不支持新增识别结果");
-      return;
-    }
-    var created = api.addFinding(activeInference.id, {
-      type: "待分类",
-      probability: 0,
-      status: "manual",
-      notes: "",
-      createdAt: new Date().toISOString(),
-      createdBy: getCurrentUser()
-    });
+    var created = createManualFindingRecord(activeInference.id);
     if (!created || !created.id) {
       notify("新增识别结果失败，请稍后再试");
       return;
@@ -1506,13 +1861,14 @@
         selectionBox = null;
       }
       clearOverlay();
-      var start = now();
-      var analysis = analyzeCanvas(dimensions.width, dimensions.height, currentSnapshot.corrections);
-      var elapsed = now() - start;
       var bank = null;
       if (api && typeof api.getActiveBank === "function") {
         bank = api.getActiveBank();
       }
+      clearCanvasArtifacts();
+      var start = now();
+      var analysis = analyzeCanvas(dimensions.width, dimensions.height, currentSnapshot.corrections, bank ? bank.id : null);
+      var elapsed = now() - start;
       var runAt = new Date().toISOString();
       var inference = {
         id: makeId("infer"),
@@ -1591,7 +1947,7 @@
     };
   }
 
-  function analyzeCanvas(width, height, corrections) {
+  function analyzeCanvas(width, height, corrections, bankId) {
     var data = ctx.getImageData(0, 0, width, height).data;
     var cell = Math.max(12, Math.round(Math.min(width, height) / 32));
     var cols = Math.ceil(width / cell);
@@ -1637,7 +1993,7 @@
     for (var j = 0; j < clusters.length; j += 1) {
       var cluster = clusters[j];
       var features = buildFeatures(cluster, width, height, maxHeat);
-      var classification = classifyCluster(features, corrections);
+      var classification = classifyCluster(features, corrections, bankId);
       var finding = {
         id: makeId("finding"),
         type: classification.type,
@@ -1818,26 +2174,136 @@
     };
   }
 
-  function classifyCluster(features, corrections) {
+  function computeCorrectionWeight(features, correction) {
+    if (!correction) {
+      return 0;
+    }
+    var areaDiff = Math.abs((correction.areaRatio || 0) - features.areaRatio);
+    var heatDiff = Math.abs((correction.heatScore || 0) - features.heatScore);
+    var aspectDiff = 0;
+    if (typeof correction.aspectRatio === "number") {
+      aspectDiff = Math.abs(correction.aspectRatio - features.aspectRatio) / 6;
+    }
+    var exponent = (areaDiff / 0.12) * (areaDiff / 0.12) + (heatDiff / 0.18) * (heatDiff / 0.18) + aspectDiff * aspectDiff;
+    return Math.exp(-exponent);
+  }
+
+  function buildVisionFingerprintFromMetrics(metrics) {
+    if (!metrics) {
+      return "";
+    }
+    var area = clamp(typeof metrics.areaRatio === "number" ? metrics.areaRatio : 0, 0, 1);
+    var heat = clamp(typeof metrics.heatScore === "number" ? metrics.heatScore : 0, 0, 1);
+    var aspectSource = 1;
+    if (typeof metrics.aspectRatio === "number" && metrics.aspectRatio > 0) {
+      aspectSource = metrics.aspectRatio;
+    }
+    var aspect = clamp(aspectSource, 1, 8);
+    var areaBucket = Math.round(area * 100);
+    var heatBucket = Math.round(heat * 100);
+    var aspectBucket = Math.round((aspect - 1) * 10);
+    return areaBucket + ":" + heatBucket + ":" + aspectBucket;
+  }
+
+  function classifyCluster(features, corrections, bankId) {
     var base = {
       "热斑污染": features.areaRatio * 0.65 + features.heatScore * 0.45,
       "线状污染": Math.min(1, features.aspectRatio / 3) * 0.7 + features.heatScore * 0.35 + features.areaRatio * 0.1,
       "颗粒污染": (1 - features.areaRatio) * 0.45 + (1 - Math.min(1, features.aspectRatio / 2)) * 0.35 + features.heatScore * 0.2
     };
+    var fingerprint = buildVisionFingerprintFromMetrics(features);
+    var bestMatch = null;
+    var profiles = {};
     if (corrections && corrections.length) {
+      var typeBoost = {};
+      var typePenalty = {};
       for (var i = 0; i < corrections.length; i += 1) {
         var corr = corrections[i];
-        var areaDiff = Math.abs((corr.areaRatio || 0) - features.areaRatio);
-        var heatDiff = Math.abs((corr.heatScore || 0) - features.heatScore);
-        var weight = Math.exp(-((areaDiff / 0.12) * (areaDiff / 0.12) + (heatDiff / 0.18) * (heatDiff / 0.18)));
+        if (!corr) {
+          continue;
+        }
+        if (bankId && corr.bankId && corr.bankId !== bankId) {
+          continue;
+        }
+        var corrFingerprint = corr.fingerprint;
+        if (!corrFingerprint) {
+          corrFingerprint = buildVisionFingerprintFromMetrics({
+            areaRatio: corr.areaRatio,
+            heatScore: corr.heatScore,
+            aspectRatio: corr.aspectRatio
+          });
+        }
+        var weight = computeCorrectionWeight(features, corr);
+        var strongMatch = !!corrFingerprint && corrFingerprint === fingerprint;
+        if (strongMatch) {
+          weight += 0.75;
+        }
         if (weight < 0.05) {
           continue;
         }
-        if (corr.targetType && typeof base[corr.targetType] === "number") {
-          base[corr.targetType] += weight * 0.6;
+        var targetType = corr.targetType || corr.previousType || "";
+        if (targetType && typeof base[targetType] === "number") {
+          if (!typeBoost[targetType]) {
+            typeBoost[targetType] = 0;
+          }
+          typeBoost[targetType] += weight * (strongMatch ? 1.4 : 0.9);
         }
-        if (corr.previousType && typeof base[corr.previousType] === "number") {
-          base[corr.previousType] -= weight * 0.25;
+        if (corr.previousType && corr.previousType !== corr.targetType && typeof base[corr.previousType] === "number") {
+          if (!typePenalty[corr.previousType]) {
+            typePenalty[corr.previousType] = 0;
+          }
+          typePenalty[corr.previousType] += weight * 0.7;
+        }
+        if (targetType) {
+          if (!profiles[targetType]) {
+            profiles[targetType] = { area: 0, heat: 0, aspect: 0, weight: 0 };
+          }
+          profiles[targetType].area += (typeof corr.areaRatio === "number" ? corr.areaRatio : 0) * weight;
+          profiles[targetType].heat += (typeof corr.heatScore === "number" ? corr.heatScore : 0) * weight;
+          profiles[targetType].aspect += (typeof corr.aspectRatio === "number" ? corr.aspectRatio : 1) * weight;
+          profiles[targetType].weight += weight;
+        }
+        if (!bestMatch || weight > bestMatch.weight) {
+          bestMatch = { weight: weight, correction: corr, strong: strongMatch };
+        }
+      }
+      for (var key in typeBoost) {
+        if (typeBoost.hasOwnProperty(key) && typeof base[key] === "number") {
+          base[key] += typeBoost[key];
+        }
+      }
+      for (var p in typePenalty) {
+        if (typePenalty.hasOwnProperty(p) && typeof base[p] === "number") {
+          base[p] -= typePenalty[p];
+        }
+      }
+      for (var name in profiles) {
+        if (!profiles.hasOwnProperty(name) || typeof base[name] !== "number") {
+          continue;
+        }
+        var profile = profiles[name];
+        if (!profile.weight) {
+          continue;
+        }
+        var avgArea = profile.area / profile.weight;
+        var avgHeat = profile.heat / profile.weight;
+        var avgAspect = profile.aspect / profile.weight;
+        var areaDiff = Math.abs(avgArea - features.areaRatio) / 0.08;
+        var heatDiff = Math.abs(avgHeat - features.heatScore) / 0.12;
+        var aspectDiff = Math.abs(avgAspect - features.aspectRatio) / 3.2;
+        var similarity = Math.exp(-(areaDiff * areaDiff + heatDiff * heatDiff + aspectDiff * aspectDiff));
+        if (similarity > 0) {
+          base[name] += similarity * 1.1;
+        }
+      }
+      if (bestMatch && bestMatch.correction) {
+        var target = bestMatch.correction.targetType || bestMatch.correction.previousType;
+        if (target && typeof base[target] === "number") {
+          base[target] += Math.max(0.45, bestMatch.weight * (bestMatch.strong ? 1.6 : 1.2));
+        }
+        var previous = bestMatch.correction.previousType;
+        if (previous && previous !== target && typeof base[previous] === "number") {
+          base[previous] *= 0.5;
         }
       }
     }
@@ -1864,6 +2330,13 @@
       if (probability > bestScore) {
         bestScore = probability;
         bestType = name;
+      }
+    }
+    if (bestMatch && bestMatch.correction && bestMatch.correction.targetType) {
+      var targetType = bestMatch.correction.targetType;
+      if (probabilities[targetType] !== undefined && bestMatch.weight >= 0.35) {
+        bestType = targetType;
+        bestScore = probabilities[targetType];
       }
     }
     return { type: bestType, score: clamp(bestScore, 0, 1), all: probabilities };
@@ -1932,6 +2405,7 @@
     }
     overlay.innerHTML = "";
     clearCanvasArtifacts();
+    updateOverlayPointerEvents();
   }
 
   function clearCanvasArtifacts() {
@@ -1990,8 +2464,8 @@
           }
           strokes.push({
             id: stroke.id || makeId("stroke"),
-            width: typeof stroke.width === "number" ? stroke.width : 3,
-            color: stroke.color || "rgba(250,84,28,0.92)",
+            width: typeof stroke.width === "number" ? stroke.width : defaultBrushWidth,
+            color: stroke.color || defaultBrushColor,
             points: normalizedPoints
           });
         }
@@ -2052,8 +2526,8 @@
       }
       result.push({
         id: stroke.id || makeId("stroke"),
-        width: typeof stroke.width === "number" ? stroke.width : 3,
-        color: stroke.color || "rgba(250,84,28,0.92)",
+        width: typeof stroke.width === "number" ? stroke.width : defaultBrushWidth,
+        color: stroke.color || defaultBrushColor,
         points: points
       });
     }
@@ -2112,6 +2586,7 @@
     box.appendChild(label);
     box.appendChild(score);
     overlay.appendChild(box);
+    updateOverlayPointerEvents();
   }
 
   function renderFindings(inference) {
@@ -2263,6 +2738,14 @@
       if (groupSelect.value) {
         patch.group = groupSelect.value;
       }
+      var metricsForFingerprint = null;
+      if (finding.metrics) {
+        metricsForFingerprint = {
+          areaRatio: typeof finding.metrics.areaRatio === "number" ? finding.metrics.areaRatio : 0,
+          heatScore: typeof finding.metrics.heatScore === "number" ? finding.metrics.heatScore : 0,
+          aspectRatio: typeof finding.metrics.aspectRatio === "number" ? finding.metrics.aspectRatio : 1
+        };
+      }
       if (api && typeof api.updateFinding === "function") {
         api.updateFinding(inference.id, finding.id, patch);
       }
@@ -2275,8 +2758,10 @@
           probability: newProb,
           areaRatio: finding.metrics ? finding.metrics.areaRatio : 0,
           heatScore: finding.metrics ? finding.metrics.heatScore : 0,
+          aspectRatio: finding.metrics && typeof finding.metrics.aspectRatio === "number" ? finding.metrics.aspectRatio : 1,
           group: patch.group || null,
           note: notes,
+          fingerprint: buildVisionFingerprintFromMetrics(metricsForFingerprint),
           correctedBy: getCurrentUser(),
           correctedAt: new Date().toISOString()
         });
@@ -2464,6 +2949,18 @@
         cards[i].classList.add("active");
       }
     }
+  }
+
+  function findActiveFinding(id) {
+    if (!activeInference || !id || !Array.isArray(activeInference.findings)) {
+      return null;
+    }
+    for (var i = 0; i < activeInference.findings.length; i += 1) {
+      if (activeInference.findings[i] && activeInference.findings[i].id === id) {
+        return activeInference.findings[i];
+      }
+    }
+    return null;
   }
 
   function focusOverlay(findingId) {

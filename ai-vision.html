@@ -44,6 +44,25 @@
             <button type="button" class="ghost-button" data-tool="magnify">放大镜</button>
             <button type="button" class="ghost-button" id="visionUndoBtn" data-tool="undo" disabled aria-disabled="true">撤回</button>
           </div>
+          <div class="vision-tool-options" id="visionToolOptions" style="display:none;">
+            <div class="vision-tool-panel" id="visionBrushOptions" aria-label="画笔设置">
+              <div class="vision-option-group">
+                <span class="vision-option-label">笔宽</span>
+                <button type="button" class="vision-chip-option" data-brush-width="3">细</button>
+                <button type="button" class="vision-chip-option" data-brush-width="6">中</button>
+                <button type="button" class="vision-chip-option" data-brush-width="10">粗</button>
+              </div>
+              <div class="vision-option-group">
+                <span class="vision-option-label">颜色</span>
+                <button type="button" class="vision-chip-option" data-brush-color="#fa541c" style="--chip-color:#fa541c">暖橙</button>
+                <button type="button" class="vision-chip-option" data-brush-color="#2563eb" style="--chip-color:#2563eb">冷蓝</button>
+                <button type="button" class="vision-chip-option" data-brush-color="#16a34a" style="--chip-color:#16a34a">安全绿</button>
+              </div>
+            </div>
+            <div class="vision-tool-panel" id="visionTextOptions" aria-live="polite">
+              <div class="vision-option-note">单击画布放置文本框，拖动标题可移动位置，输入内容后自动保存并可通过撤回恢复。</div>
+            </div>
+          </div>
           <div class="vision-upload" id="visionUpload" tabindex="0">
             <div class="vision-placeholder" id="visionPlaceholder">
               <strong>粘贴 (Ctrl+V)</strong> 或拖放玻璃检测图到此处

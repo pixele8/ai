@@ -2453,6 +2453,47 @@
     }
   }
 
+  function buildVisionCorrectionFingerprint(source) {
+    if (!source) {
+      return "";
+    }
+    var area = typeof source.areaRatio === "number" ? source.areaRatio : 0;
+    if (area < 0) {
+      area = 0;
+    } else if (area > 1) {
+      area = 1;
+    }
+    var heat = typeof source.heatScore === "number" ? source.heatScore : 0;
+    if (heat < 0) {
+      heat = 0;
+    } else if (heat > 1) {
+      heat = 1;
+    }
+    var aspect = typeof source.aspectRatio === "number" && source.aspectRatio > 0 ? source.aspectRatio : 1;
+    if (aspect < 1) {
+      aspect = 1;
+    } else if (aspect > 8) {
+      aspect = 8;
+    }
+    var areaBucket = Math.round(area * 100);
+    var heatBucket = Math.round(heat * 100);
+    var aspectBucket = Math.round((aspect - 1) * 10);
+    return areaBucket + ":" + heatBucket + ":" + aspectBucket;
+  }
+
+  function findVisionInferenceById(id) {
+    ensureVisionStore();
+    if (!id) {
+      return null;
+    }
+    for (var i = 0; i < state.tools.visionHistory.length; i += 1) {
+      if (state.tools.visionHistory[i] && state.tools.visionHistory[i].id === id) {
+        return state.tools.visionHistory[i];
+      }
+    }
+    return null;
+  }
+
   function safeDateString(value, fallback) {
     if (!value) {
       return fallback;
@@ -2885,6 +2926,7 @@
     if (!correction) {
       return null;
     }
+    var host = correction.inferenceId ? findVisionInferenceById(correction.inferenceId) : null;
     var payload = {
       id: correction.id || uuid(),
       inferenceId: correction.inferenceId || "",
@@ -2894,11 +2936,20 @@
       probability: typeof correction.probability === "number" ? correction.probability : 0,
       areaRatio: typeof correction.areaRatio === "number" ? correction.areaRatio : 0,
       heatScore: typeof correction.heatScore === "number" ? correction.heatScore : 0,
+      aspectRatio: typeof correction.aspectRatio === "number" ? correction.aspectRatio : 0,
       group: correction.group || null,
       note: correction.note || "",
       correctedBy: correction.correctedBy || (currentUser ? currentUser.username : ""),
-      correctedAt: correction.correctedAt || new Date().toISOString()
+      correctedAt: correction.correctedAt || new Date().toISOString(),
+      bankId: host && host.bankId ? host.bankId : (correction.bankId || null)
     };
+    payload.fingerprint = correction.fingerprint || buildVisionCorrectionFingerprint(payload);
+    for (var i = state.tools.visionCorrections.length - 1; i >= 0; i -= 1) {
+      var existing = state.tools.visionCorrections[i];
+      if (existing && existing.inferenceId === payload.inferenceId && existing.findingId === payload.findingId) {
+        state.tools.visionCorrections.splice(i, 1);
+      }
+    }
     state.tools.visionCorrections.push(payload);
     if (state.tools.visionCorrections.length > 200) {
       state.tools.visionCorrections = state.tools.visionCorrections.slice(-200);
@@ -4932,6 +4983,25 @@
       target.duplicates.push(duplicate);
     }
   }
+
+  function formatDuplicateNote(count) {
+    if (!count || count <= 0) {
+      return "";
+    }
+    var numerals = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十"];
+    var label;
+    if (count === 1) {
+      label = "一个";
+    } else if (count === 2) {
+      label = "两个";
+    } else if (count > 2 && count <= 10) {
+      label = numerals[count] + "个";
+    } else {
+      label = count + "个";
+    }
+    return "（" + label + "相似答案已隐藏）";
+  }
+
   function collapseEvidenceList(list) {
     if (!list || list.length === 0) {
       return [];
@@ -5282,8 +5352,9 @@
         sourceItems.push('<li><span class="reply-source-index">' + sourceIndex + '.</span><span class="reply-source-label">' + escapeHtml(combined) + '</span></li>');
         sourceIndex += 1;
       }
-      if (duplicateCount > 0) {
-        replySections.push('<p class="reply-note">（已折叠' + duplicateCount + '条相似答案）</p>');
+      var duplicateNote = formatDuplicateNote(duplicateCount);
+      if (duplicateNote) {
+        replySections.push('<p class="reply-note">' + duplicateNote + "</p>");
       }
       if (sourceItems.length > 0) {
         replySections.push('<div class="reply-sources"><div class="reply-sources-title">来源：</div><ol class="reply-sources-list">' + sourceItems.join("") + '</ol></div>');
