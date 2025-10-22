@@ -646,6 +646,14 @@ textarea:focus {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
+}
+
+.chat-actions-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 .switch {
   display: inline-flex;
@@ -3189,6 +3197,7 @@ textarea:focus {
   height: 100%;
   pointer-events: none;
   font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+  z-index: 5;
 }
 
 .vision-annotation {

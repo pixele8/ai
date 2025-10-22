@@ -2594,7 +2594,8 @@
         height: typeof entry.image.height === "number" ? entry.image.height : (entry.image.height ? parseInt(entry.image.height, 10) || 0 : 0),
         originalWidth: typeof entry.image.originalWidth === "number" ? entry.image.originalWidth : (entry.image.width ? parseInt(entry.image.width, 10) || 0 : 0),
         originalHeight: typeof entry.image.originalHeight === "number" ? entry.image.originalHeight : (entry.image.height ? parseInt(entry.image.height, 10) || 0 : 0),
-        name: typeof entry.image.name === "string" ? entry.image.name : ""
+        name: typeof entry.image.name === "string" ? entry.image.name : "",
+        previewDataUrl: typeof entry.image.previewDataUrl === "string" ? entry.image.previewDataUrl : (typeof entry.image.dataUrl === "string" ? entry.image.dataUrl : "")
       };
     }
     var sanitized = {
@@ -4358,6 +4359,89 @@
     saveState();
     renderSessionList();
     processAssistantReply(bank, session, text);
+  }
+
+  function handleChatImageFile(file) {
+    if (!file || !file.type) {
+      return;
+    }
+    if (file.type.toLowerCase().indexOf("image/") !== 0) {
+      showToast("仅支持 PNG、JPG、WEBP 图像");
+      return;
+    }
+    var reader = new FileReader();
+    reader.onload = function () {
+      queueVisionInference(reader.result, file.name || file.type);
+    };
+    reader.onerror = function () {
+      showToast("读取图像失败");
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function handleChatPasteForVision(evt) {
+    if (!evt || !evt.clipboardData) {
+      return;
+    }
+    var file = pickFirstImage(evt.clipboardData);
+    if (!file) {
+      return;
+    }
+    evt.preventDefault();
+    handleChatImageFile(file);
+  }
+
+  function pickFirstImage(dataTransfer) {
+    if (!dataTransfer) {
+      return null;
+    }
+    if (dataTransfer.files && dataTransfer.files.length > 0) {
+      for (var i = 0; i < dataTransfer.files.length; i += 1) {
+        if (dataTransfer.files[i] && typeof dataTransfer.files[i].type === "string" && dataTransfer.files[i].type.toLowerCase().indexOf("image/") === 0) {
+          return dataTransfer.files[i];
+        }
+      }
+    }
+    if (dataTransfer.items && dataTransfer.items.length > 0) {
+      for (var j = 0; j < dataTransfer.items.length; j += 1) {
+        var item = dataTransfer.items[j];
+        if (!item || item.kind !== "file") {
+          continue;
+        }
+        var blob = item.getAsFile();
+        if (blob && typeof blob.type === "string" && blob.type.toLowerCase().indexOf("image/") === 0) {
+          return blob;
+        }
+      }
+    }
+    return null;
+  }
+
+  function queueVisionInference(dataUrl, name) {
+    if (!dataUrl) {
+      showToast("未获取到有效的图像数据");
+      return;
+    }
+    var key = "visionQueue:" + Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+    var payload = {
+      dataUrl: dataUrl,
+      name: name || "clipboard",
+      createdAt: new Date().toISOString(),
+      bankId: state.activeBankId || null
+    };
+    try {
+      window.localStorage.setItem(key, JSON.stringify(payload));
+    } catch (err) {
+      showToast("无法缓存图像，请重试");
+      return;
+    }
+    var target = "ai-vision.html?queue=" + encodeURIComponent(key);
+    var win = window.open(target, "_blank");
+    if (!win) {
+      window.location.href = target;
+    } else {
+      showToast("图像已发送至热脏污识别工作台");
+    }
   }
 
   function extractTags(text) {
@@ -7897,6 +7981,8 @@
     renderLogs();
     var sendBtn = document.getElementById("sendMessage");
     var input = document.getElementById("chatInput");
+    var imageUploadBtn = document.getElementById("chatImageUpload");
+    var imageInput = document.getElementById("chatImageInput");
     try {
       var pending = sessionStorage.getItem("aiFavoriteDraft");
       if (pending && input) {
@@ -7920,6 +8006,18 @@
           evt.preventDefault();
           handleSendMessage();
         }
+      });
+      input.addEventListener("paste", handleChatPasteForVision);
+    }
+    if (imageUploadBtn && imageInput) {
+      imageUploadBtn.addEventListener("click", function () {
+        imageInput.click();
+      });
+      imageInput.addEventListener("change", function () {
+        if (imageInput.files && imageInput.files[0]) {
+          handleChatImageFile(imageInput.files[0]);
+        }
+        imageInput.value = "";
       });
     }
     var createSessionBtn = document.getElementById("createSession");

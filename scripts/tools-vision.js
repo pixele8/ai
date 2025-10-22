@@ -40,6 +40,7 @@
   var selectionMode = null;
   var selectionStart = null;
   var isSelecting = false;
+  var selectionMemory = {};
   var historyFilter = "";
   var activeInference = null;
   var canvasMetrics = null;
@@ -178,6 +179,13 @@
       var target = params.get("inference");
       if (target) {
         activeInferenceId = target;
+      }
+      var queued = params.get("queue") || params.get("inbox");
+      if (queued) {
+        window.history.replaceState({}, document.title, window.location.pathname + (target ? "?inference=" + encodeURIComponent(target) : ""));
+        window.setTimeout(function () {
+          consumeQueuedImage(queued);
+        }, 60);
       }
     } catch (err) {}
     bindEvents();
@@ -1113,10 +1121,12 @@
     annotationsLayer.innerHTML = "";
     if (!annotations || annotations.length === 0) {
       annotationsLayer.classList.add("hidden");
+      annotationsLayer.style.pointerEvents = "none";
       refreshPointerLayers();
       return;
     }
     annotationsLayer.classList.remove("hidden");
+    annotationsLayer.style.pointerEvents = "auto";
     for (var i = 0; i < annotations.length; i += 1) {
       annotationsLayer.appendChild(buildAnnotationElement(annotations[i]));
     }
@@ -1381,6 +1391,7 @@
     };
     bounds = clampBounds(bounds);
     var metrics = estimateBoundsMetrics(bounds);
+    selectionMemory[selectionMode.inferenceId] = bounds;
     var inferenceId = selectionMode.inferenceId;
     var findingId = selectionMode.findingId;
     var base = selectionMode.finding || {};
@@ -1396,11 +1407,23 @@
       selectionMode.finding = created;
       base = created;
     }
+    var bank = api && typeof api.getActiveBank === "function" ? api.getActiveBank() : null;
+    var previousType = base.type || "";
+    var classification = classifyCluster({
+      areaRatio: metrics.areaRatio,
+      heatScore: metrics.heatScore,
+      aspectRatio: metrics.aspectRatio
+    }, currentSnapshot.corrections, bank ? bank.id : null);
+    var nextType = classification ? classification.type : (base.type || "待分类");
+    var nextProb = classification ? classification.score : (typeof base.probability === "number" ? base.probability : 0);
     var patch = {
       bounds: bounds,
       status: "corrected",
       correctedBy: getCurrentUser(),
-      correctedAt: new Date().toISOString()
+      correctedAt: new Date().toISOString(),
+      type: nextType,
+      probability: nextProb,
+      probabilities: classification ? classification.all : base.probabilities || null
     };
     if (base.metrics) {
       patch.metrics = JSON.parse(JSON.stringify(base.metrics));
@@ -1413,13 +1436,20 @@
     if (api && typeof api.updateFinding === "function") {
       api.updateFinding(inferenceId, findingId, patch);
     }
+    if (selectionMode && selectionMode.finding) {
+      selectionMode.finding.bounds = bounds;
+      selectionMode.finding.type = nextType;
+      selectionMode.finding.probability = nextProb;
+      selectionMode.finding.metrics = patch.metrics;
+      selectionMode.finding.probabilities = patch.probabilities;
+    }
     if (api && typeof api.recordCorrection === "function") {
       api.recordCorrection({
         inferenceId: inferenceId,
         findingId: findingId,
-        previousType: base.type || "",
-        targetType: base.type || "",
-        probability: base.probability || 0,
+        previousType: previousType,
+        targetType: nextType,
+        probability: nextProb,
         areaRatio: metrics.areaRatio,
         heatScore: metrics.heatScore,
         aspectRatio: metrics.aspectRatio,
@@ -1430,8 +1460,14 @@
         correctedAt: new Date().toISOString()
       });
     }
+    refreshPreview();
     notify("主体区域已更新");
     exitSelectionMode();
+    if (findingId) {
+      window.setTimeout(function () {
+        focusOverlay(findingId);
+      }, 80);
+    }
   }
 
   function estimateBoundsMetrics(bounds) {
@@ -1513,7 +1549,12 @@
     if (finding && finding.bounds) {
       showSelectionBounds(finding.bounds);
     } else {
-      selectionBox = null;
+      var remembered = selectionMemory[inferenceId];
+      if (remembered && options.createOnFinalize) {
+        showSelectionBounds(remembered);
+      } else {
+        selectionBox = null;
+      }
     }
     refreshPointerLayers();
     dropzone.classList.add("selecting");
@@ -1831,6 +1872,35 @@
     reader.readAsDataURL(file);
   }
 
+  function consumeQueuedImage(key) {
+    if (!key) {
+      return;
+    }
+    try {
+      var raw = window.localStorage.getItem(key);
+      if (!raw) {
+        notify("未找到待识别的图像");
+        return;
+      }
+      window.localStorage.removeItem(key);
+      var payload = null;
+      try {
+        payload = JSON.parse(raw);
+      } catch (err) {
+        payload = null;
+      }
+      if (!payload || !payload.dataUrl) {
+        notify("图像数据无效");
+        return;
+      }
+      var name = payload.name || "clipboard";
+      processImage(payload.dataUrl, name);
+    } catch (err) {
+      console.error("consume queue failed", err);
+      notify("加载排队图像失败");
+    }
+  }
+
   function processImage(dataUrl, name) {
     var image = new Image();
     image.onload = function () {
@@ -1913,6 +1983,9 @@
         updateAddButtonState(stored);
         updateNoteForm(stored);
       }
+      window.requestAnimationFrame(function () {
+        refreshPreview({ findings: stored.findings, strokes: [], annotations: [] });
+      });
       notify("已完成 AI 识别");
     };
     image.onerror = function () {
@@ -2501,6 +2574,7 @@
     if (api && typeof api.updateInference === "function") {
       api.updateInference(activeInference.id, payload);
     }
+    refreshPreview();
   }
 
   function serializeStrokes(list) {
@@ -2547,6 +2621,134 @@
       result.push({ id: item.id || makeId("annotation"), x: item.x, y: item.y, text: item.text || "" });
     }
     return result;
+  }
+
+  function captureAnnotatedPreview(options) {
+    if (!canvas || !canvas.width || !canvas.height) {
+      return null;
+    }
+    var previewCanvas = document.createElement("canvas");
+    previewCanvas.width = canvas.width;
+    previewCanvas.height = canvas.height;
+    var previewCtx = previewCanvas.getContext("2d");
+    previewCtx.drawImage(canvas, 0, 0);
+    var findings = options && options.findings ? options.findings : (activeInference && activeInference.findings ? activeInference.findings : []);
+    if (findings && findings.length) {
+      previewCtx.lineWidth = 2;
+      for (var i = 0; i < findings.length; i += 1) {
+        var finding = findings[i];
+        if (!finding || !finding.bounds) {
+          continue;
+        }
+        previewCtx.strokeStyle = finding.status === "corrected" ? "rgba(236,72,153,0.9)" : "rgba(79,111,217,0.85)";
+        previewCtx.fillStyle = finding.status === "corrected" ? "rgba(236,72,153,0.18)" : "rgba(79,111,217,0.18)";
+        previewCtx.beginPath();
+        previewCtx.rect(finding.bounds.x, finding.bounds.y, finding.bounds.width, finding.bounds.height);
+        previewCtx.fill();
+        previewCtx.stroke();
+        previewCtx.fillStyle = "rgba(15,23,42,0.92)";
+        previewCtx.font = "bold 13px 'Microsoft YaHei',sans-serif";
+        var label = finding.type || "未分类";
+        if (typeof finding.probability === "number" && finding.probability > 0) {
+          label += " " + percent(finding.probability);
+        }
+        previewCtx.fillText(label, finding.bounds.x + 8, finding.bounds.y + 18);
+      }
+    }
+    var strokeSource = options && options.strokes ? options.strokes : strokes;
+    if (strokeSource && strokeSource.length) {
+      previewCtx.lineJoin = "round";
+      previewCtx.lineCap = "round";
+      for (var s = 0; s < strokeSource.length; s += 1) {
+        var stroke = strokeSource[s];
+        if (!stroke || !Array.isArray(stroke.points) || stroke.points.length === 0) {
+          continue;
+        }
+        previewCtx.beginPath();
+        previewCtx.lineWidth = stroke.width || defaultBrushWidth;
+        previewCtx.strokeStyle = stroke.color || defaultBrushColor;
+        previewCtx.moveTo(stroke.points[0].x, stroke.points[0].y);
+        for (var sp = 1; sp < stroke.points.length; sp += 1) {
+          var pt = stroke.points[sp];
+          previewCtx.lineTo(pt.x, pt.y);
+        }
+        previewCtx.stroke();
+      }
+    }
+    var annotationSource = options && options.annotations ? options.annotations : annotations;
+    if (annotationSource && annotationSource.length) {
+      previewCtx.font = "13px 'Microsoft YaHei',sans-serif";
+      for (var a = 0; a < annotationSource.length; a += 1) {
+        var anno = annotationSource[a];
+        if (!anno || !anno.text) {
+          continue;
+        }
+        var lines = String(anno.text).split(/\n+/);
+        var lineHeight = 18;
+        var maxWidth = 0;
+        for (var li = 0; li < lines.length; li += 1) {
+          var measured = previewCtx.measureText(lines[li]);
+          if (measured.width > maxWidth) {
+            maxWidth = measured.width;
+          }
+        }
+        var padding = 8;
+        var boxX = anno.x;
+        var boxY = anno.y - lineHeight;
+        if (boxY < padding) {
+          boxY = anno.y;
+        }
+        previewCtx.fillStyle = "rgba(255,255,255,0.9)";
+        previewCtx.fillRect(boxX - padding, boxY - padding, maxWidth + padding * 2, lineHeight * lines.length + padding * 2);
+        previewCtx.fillStyle = "rgba(15,23,42,0.92)";
+        for (var ln = 0; ln < lines.length; ln += 1) {
+          previewCtx.fillText(lines[ln], boxX, boxY + padding + lineHeight * ln);
+        }
+      }
+    }
+    try {
+      return previewCanvas.toDataURL("image/png");
+    } catch (err) {
+      console.warn("preview capture failed", err);
+      return null;
+    }
+  }
+
+  function refreshPreview(options) {
+    if (!activeInference || !activeInference.id) {
+      return;
+    }
+    var preview = captureAnnotatedPreview(options);
+    if (!preview) {
+      return;
+    }
+    if (!activeInference.image) {
+      activeInference.image = { dataUrl: "", width: canvas ? canvas.width : 0, height: canvas ? canvas.height : 0 };
+    }
+    if (activeInference.image.previewDataUrl === preview) {
+      return;
+    }
+    activeInference.image.previewDataUrl = preview;
+    if (api && typeof api.updateInference === "function") {
+      var imagePatch = {};
+      try {
+        imagePatch = JSON.parse(JSON.stringify(activeInference.image));
+      } catch (err) {
+        imagePatch = {
+          dataUrl: activeInference.image.dataUrl || "",
+          width: activeInference.image.width || (canvas ? canvas.width : 0),
+          height: activeInference.image.height || (canvas ? canvas.height : 0),
+          originalWidth: activeInference.image.originalWidth || activeInference.image.width || 0,
+          originalHeight: activeInference.image.originalHeight || activeInference.image.height || 0,
+          name: activeInference.image.name || ""
+        };
+        imagePatch.previewDataUrl = preview;
+      }
+      if (!imagePatch.previewDataUrl) {
+        imagePatch.previewDataUrl = preview;
+      }
+      api.updateInference(activeInference.id, { image: imagePatch });
+    }
   }
 
   function renderOverlayBox(finding) {
@@ -2766,6 +2968,7 @@
           correctedAt: new Date().toISOString()
         });
       }
+      refreshPreview();
       notify("订正已提交");
     });
     var deleteBtn = document.createElement("button");

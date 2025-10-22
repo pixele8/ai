@@ -69,6 +69,16 @@
     renderResults();
   }
 
+  function getRecordPreview(record) {
+    if (!record || !record.image) {
+      return "";
+    }
+    if (record.image.previewDataUrl) {
+      return record.image.previewDataUrl;
+    }
+    return record.image.dataUrl || "";
+  }
+
   function collectGroupStats() {
     var counts = {};
     var configured = Array.isArray(currentSnapshot.groups) ? currentSnapshot.groups.slice() : [];
@@ -289,11 +299,12 @@
     }
     card.appendChild(tags);
 
-    if (record.image && record.image.dataUrl) {
+    var previewSrc = getRecordPreview(record);
+    if (previewSrc) {
       var preview = document.createElement("div");
       preview.className = "vision-history-preview";
       var img = document.createElement("img");
-      img.src = record.image.dataUrl;
+      img.src = previewSrc;
       img.alt = "识别图预览";
       preview.appendChild(img);
       card.appendChild(preview);
@@ -413,7 +424,8 @@
   }
 
   function exportAnnotatedImage(record) {
-    if (!record || !record.image || !record.image.dataUrl) {
+    var src = getRecordPreview(record);
+    if (!record || !src) {
       notify("该记录没有图像可导出");
       return;
     }
@@ -455,7 +467,7 @@
     image.onerror = function () {
       notify("图像数据无效，无法导出");
     };
-    image.src = record.image.dataUrl;
+    image.src = src;
   }
 
   function exportRecordJson(record) {

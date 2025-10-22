@@ -52,7 +52,11 @@
       </div>
       <textarea id="chatInput" placeholder="请输入问题…" rows="3"></textarea>
       <div class="chat-actions">
-        <label class="switch"><input type="checkbox" id="reasoningToggle"><span>启用推理</span></label>
+        <div class="chat-actions-left">
+          <label class="switch"><input type="checkbox" id="reasoningToggle"><span>启用推理</span></label>
+          <button type="button" class="ghost-button" id="chatImageUpload">发送至热脏污识别</button>
+          <input type="file" id="chatImageInput" accept="image/png,image/jpeg,image/jpg,image/webp" class="hidden">
+        </div>
         <button class="primary-button" id="sendMessage">发送</button>
       </div>
     </section>
