@@ -4932,7 +4932,6 @@
       target.duplicates.push(duplicate);
     }
   }
-
   function collapseEvidenceList(list) {
     if (!list || list.length === 0) {
       return [];
