@@ -4932,25 +4932,6 @@
       target.duplicates.push(duplicate);
     }
   }
-
-  function formatDuplicateNote(count) {
-    if (!count || count <= 0) {
-      return "";
-    }
-    var numerals = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十"];
-    var label;
-    if (count === 1) {
-      label = "一个";
-    } else if (count === 2) {
-      label = "两个";
-    } else if (count > 2 && count <= 10) {
-      label = numerals[count] + "个";
-    } else {
-      label = count + "个";
-    }
-    return "（" + label + "相似答案已隐藏）";
-  }
-
   function collapseEvidenceList(list) {
     if (!list || list.length === 0) {
       return [];
@@ -5301,9 +5282,8 @@
         sourceItems.push('<li><span class="reply-source-index">' + sourceIndex + '.</span><span class="reply-source-label">' + escapeHtml(combined) + '</span></li>');
         sourceIndex += 1;
       }
-      var duplicateNote = formatDuplicateNote(duplicateCount);
-      if (duplicateNote) {
-        replySections.push('<p class="reply-note">' + duplicateNote + "</p>");
+      if (duplicateCount > 0) {
+        replySections.push('<p class="reply-note">（已折叠' + duplicateCount + '条相似答案）</p>');
       }
       if (sourceItems.length > 0) {
         replySections.push('<div class="reply-sources"><div class="reply-sources-title">来源：</div><ol class="reply-sources-list">' + sourceItems.join("") + '</ol></div>');
