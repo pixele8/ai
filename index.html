@@ -54,7 +54,12 @@
       <div class="chat-actions">
         <div class="chat-actions-left">
           <label class="switch"><input type="checkbox" id="reasoningToggle"><span>启用推理</span></label>
-          <button type="button" class="ghost-button" id="chatImageUpload">发送至热脏污识别</button>
+          <div class="chat-tool-menu">
+            <button type="button" class="ghost-button" id="chatToolMenuToggle">检测工具</button>
+            <div class="chat-tool-dropdown hidden" id="chatToolMenu">
+              <button type="button" class="menu-item" id="chatImageUpload">发送至热脏污识别</button>
+            </div>
+          </div>
           <input type="file" id="chatImageInput" accept="image/png,image/jpeg,image/jpg,image/webp" class="hidden">
         </div>
         <button class="primary-button" id="sendMessage">发送</button>

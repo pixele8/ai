@@ -3518,6 +3518,22 @@
     messageMenuInfo = null;
   }
 
+  function closeChatToolMenu() {
+    var menu = document.getElementById("chatToolMenu");
+    var toggle = document.getElementById("chatToolMenuToggle");
+    if (menu) {
+      menu.classList.add("hidden");
+    }
+    if (toggle) {
+      toggle.classList.remove("active");
+    }
+  }
+
+  function handleGlobalMenuClose() {
+    closeMessageMenu();
+    closeChatToolMenu();
+  }
+
   function openMessageMenu(sessionId, messageId, x, y) {
     var menu = document.getElementById("messageMenu");
     if (!menu) {
@@ -3552,6 +3568,7 @@
       return;
     }
     closeMessageMenu();
+    closeChatToolMenu();
     area.innerHTML = "";
     var bank = getActiveBank();
     if (!bank) {
@@ -7981,6 +7998,8 @@
     renderLogs();
     var sendBtn = document.getElementById("sendMessage");
     var input = document.getElementById("chatInput");
+    var toolMenuToggle = document.getElementById("chatToolMenuToggle");
+    var toolMenu = document.getElementById("chatToolMenu");
     var imageUploadBtn = document.getElementById("chatImageUpload");
     var imageInput = document.getElementById("chatImageInput");
     try {
@@ -8009,8 +8028,25 @@
       });
       input.addEventListener("paste", handleChatPasteForVision);
     }
+    if (toolMenu && toolMenuToggle) {
+      toolMenuToggle.addEventListener("click", function (evt) {
+        evt.stopPropagation();
+        if (toolMenu.classList.contains("hidden")) {
+          closeChatToolMenu();
+          toolMenu.classList.remove("hidden");
+          toolMenuToggle.classList.add("active");
+        } else {
+          toolMenu.classList.add("hidden");
+          toolMenuToggle.classList.remove("active");
+        }
+      });
+      toolMenu.addEventListener("click", function (evt) {
+        evt.stopPropagation();
+      });
+    }
     if (imageUploadBtn && imageInput) {
       imageUploadBtn.addEventListener("click", function () {
+        closeChatToolMenu();
         imageInput.click();
       });
       imageInput.addEventListener("change", function () {
@@ -8046,10 +8082,13 @@
         }
       });
     }
-    document.addEventListener("click", closeMessageMenu);
+    document.addEventListener("click", handleGlobalMenuClose);
     var chatArea = document.getElementById("chatArea");
     if (chatArea) {
-      chatArea.addEventListener("scroll", closeMessageMenu);
+      chatArea.addEventListener("scroll", function () {
+        closeMessageMenu();
+        closeChatToolMenu();
+      });
     }
     var toggle = document.getElementById("settingsToggle");
     var drawer = document.getElementById("settingsDrawer");
