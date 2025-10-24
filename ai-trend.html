@@ -87,6 +87,11 @@
               <label for="trendManualStep">单次标准调整量</label>
               <input id="trendManualStep" name="manualStep" type="number" step="any" placeholder="如：0.5">
             </div>
+            <div class="form-field" id="trendManualImpactField" hidden>
+              <label for="trendManualImpact">受影响节点</label>
+              <select id="trendManualImpact" name="manualImpact" multiple size="4"></select>
+              <p class="form-hint">选择该手动节点会直接影响的监测节点，用于预测关联分析。</p>
+            </div>
             <div class="trend-subnodes">
               <div class="trend-subnodes-header">
                 <h4>子节点</h4>

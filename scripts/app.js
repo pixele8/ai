@@ -2830,6 +2830,17 @@
         }
       }
     }
+    for (var mt = 0; mt < trend.nodes.length; mt += 1) {
+      var manualNode = trend.nodes[mt];
+      if (!manualNode) {
+        continue;
+      }
+      if (!manualNode.manual) {
+        manualNode.manualTargets = [];
+        continue;
+      }
+      manualNode.manualTargets = sanitizeManualTargetsInput(manualNode.manualTargets, manualNode.id);
+    }
     if (trend.streams.length > 2000) {
       trend.streams = trend.streams.slice(trend.streams.length - 2000);
     }
@@ -3138,6 +3149,11 @@
       }
       base.children = nextChildren;
     }
+    if (base.manual) {
+      base.manualTargets = sanitizeManualTargetsInput(payload.manualTargets, base.id);
+    } else {
+      base.manualTargets = [];
+    }
     if (!node) {
       state.tools.trend.nodes.push(base);
     }
@@ -3363,6 +3379,25 @@
     return Math.max(1000, Math.round(total / count));
   }
 
+  function calcMean(points) {
+    if (!points || !points.length) {
+      return null;
+    }
+    var sum = 0;
+    var count = 0;
+    for (var i = 0; i < points.length; i += 1) {
+      if (!points[i] || typeof points[i].value !== "number" || isNaN(points[i].value)) {
+        continue;
+      }
+      sum += points[i].value;
+      count += 1;
+    }
+    if (!count) {
+      return null;
+    }
+    return sum / count;
+  }
+
   function computeTrendForecast(series, options) {
     options = options || {};
     if (!series || series.length < 3) {
@@ -3418,6 +3453,496 @@
     };
   }
 
+  function buildTrendAdjacency(nodes) {
+    var adjacency = {};
+    if (!Array.isArray(nodes)) {
+      return adjacency;
+    }
+    for (var i = 0; i < nodes.length; i += 1) {
+      var node = nodes[i];
+      if (!node || !node.id) {
+        continue;
+      }
+      adjacency[node.id] = adjacency[node.id] || { upstream: [], downstream: [], parallel: [] };
+    }
+    for (var n = 0; n < nodes.length; n += 1) {
+      var current = nodes[n];
+      if (!current || !current.id) {
+        continue;
+      }
+      var upstreamId = null;
+      if (current.positionRef && adjacency[current.positionRef]) {
+        upstreamId = current.positionRef;
+      } else if (n > 0 && nodes[n - 1] && nodes[n - 1].id && nodes[n - 1].id !== current.id) {
+        upstreamId = nodes[n - 1].id;
+      }
+      if (upstreamId && adjacency[current.id]) {
+        if (adjacency[current.id].upstream.indexOf(upstreamId) === -1) {
+          adjacency[current.id].upstream.push(upstreamId);
+        }
+        if (adjacency[upstreamId] && adjacency[upstreamId].downstream.indexOf(current.id) === -1) {
+          adjacency[upstreamId].downstream.push(current.id);
+        }
+      }
+      if (current.positionMode === "same" || current.positionMode === "parallel") {
+        var peerId = current.positionRef || upstreamId;
+        if (peerId && adjacency[peerId]) {
+          if (adjacency[current.id].parallel.indexOf(peerId) === -1) {
+            adjacency[current.id].parallel.push(peerId);
+          }
+          if (adjacency[peerId].parallel.indexOf(current.id) === -1) {
+            adjacency[peerId].parallel.push(current.id);
+          }
+        }
+      }
+    }
+    return adjacency;
+  }
+
+  function collectManualInfluenceTargets(nodes) {
+    var map = {};
+    if (!Array.isArray(nodes)) {
+      return map;
+    }
+    for (var i = 0; i < nodes.length; i += 1) {
+      var node = nodes[i];
+      if (!node || !node.id || !node.manual || !Array.isArray(node.manualTargets)) {
+        continue;
+      }
+      for (var j = 0; j < node.manualTargets.length; j += 1) {
+        var target = node.manualTargets[j];
+        if (!target || !target.nodeId) {
+          continue;
+        }
+        var key = target.subNodeId ? target.nodeId + "::" + target.subNodeId : target.nodeId;
+        if (!map[key]) {
+          map[key] = [];
+        }
+        map[key].push({
+          sourceId: node.id,
+          sourceName: node.name || "手动节点",
+          manualStep: typeof node.manualStep === "number" ? node.manualStep : 1,
+          weight: typeof target.weight === "number" && !isNaN(target.weight) ? target.weight : 1
+        });
+      }
+    }
+    return map;
+  }
+
+  function sanitizeManualTargetsInput(targets, manualNodeId) {
+    if (!Array.isArray(targets)) {
+      return [];
+    }
+    var cleaned = [];
+    var seen = {};
+    for (var i = 0; i < targets.length; i += 1) {
+      var target = targets[i];
+      if (!target || !target.nodeId || target.nodeId === manualNodeId) {
+        continue;
+      }
+      var targetNode = findTrendNodeById(target.nodeId);
+      if (!targetNode) {
+        continue;
+      }
+      var subId = null;
+      if (target.subNodeId) {
+        var child = findTrendChild(targetNode, target.subNodeId);
+        if (child) {
+          subId = child.id;
+        }
+      }
+      var key = targetNode.id + (subId ? "::" + subId : "");
+      if (seen[key]) {
+        continue;
+      }
+      seen[key] = true;
+      var entry = { nodeId: targetNode.id, subNodeId: subId };
+      if (typeof target.weight === "number" && !isNaN(target.weight)) {
+        entry.weight = target.weight;
+      }
+      cleaned.push(entry);
+    }
+    return cleaned;
+  }
+
+  function summarizeManualAdjustments(history, startTimeMs) {
+    var summary = {};
+    if (!Array.isArray(history)) {
+      return summary;
+    }
+    for (var i = 0; i < history.length; i += 1) {
+      var entry = history[i];
+      if (!entry || entry.kind !== "adjustment") {
+        continue;
+      }
+      var ts = new Date(entry.createdAt).getTime();
+      if (startTimeMs && ts < startTimeMs) {
+        continue;
+      }
+      var meta = entry.meta || {};
+      var nodeId = meta.nodeId || entry.nodeId;
+      if (!nodeId) {
+        continue;
+      }
+      if (!summary[nodeId]) {
+        summary[nodeId] = { total: 0, count: 0, lastAmount: null, lastAt: null, lastNote: "" };
+      }
+      var amount = typeof meta.amount === "number" && !isNaN(meta.amount) ? meta.amount : 0;
+      summary[nodeId].total += amount;
+      summary[nodeId].count += 1;
+      if (!summary[nodeId].lastAt || ts >= new Date(summary[nodeId].lastAt).getTime()) {
+        summary[nodeId].lastAt = entry.createdAt;
+        summary[nodeId].lastAmount = amount;
+        summary[nodeId].lastNote = meta.note || "";
+      }
+    }
+    for (var key in summary) {
+      if (Object.prototype.hasOwnProperty.call(summary, key)) {
+        var info = summary[key];
+        info.average = info.count ? info.total / info.count : 0;
+      }
+    }
+    return summary;
+  }
+
+  function extractSeriesMetrics(series, lower, upper, label, unit) {
+    if (!series || !series.length) {
+      return null;
+    }
+    var ordered = series.slice().sort(function (a, b) {
+      return new Date(a.capturedAt).getTime() - new Date(b.capturedAt).getTime();
+    });
+    var latest = ordered[ordered.length - 1];
+    var status = calcRangeStatus(latest.value, lower, upper);
+    var slope = calcSlope(ordered.slice(Math.max(0, ordered.length - 5)));
+    return {
+      label: label || "",
+      unit: unit || "",
+      latestValue: latest.value,
+      capturedAt: latest.capturedAt,
+      status: status,
+      slope: slope,
+      duration: summarizeDuration(ordered, lower, upper),
+      mean: calcMean(ordered),
+      lower: lower,
+      upper: upper
+    };
+  }
+
+  function formatContextLine(prefix, metricsList) {
+    if (!metricsList || !metricsList.length) {
+      return null;
+    }
+    var parts = [];
+    for (var i = 0; i < metricsList.length; i += 1) {
+      var metric = metricsList[i];
+      if (!metric) {
+        continue;
+      }
+      var segment = metric.label || "节点";
+      if (typeof metric.status === "string" && metric.status) {
+        segment += " " + metric.status;
+      }
+      if (typeof metric.latestValue === "number") {
+        segment += "，最新 " + formatTrendValue(metric.latestValue, metric.unit || "");
+      }
+      if (typeof metric.slope === "number" && Math.abs(metric.slope) > 0.01) {
+        segment += "，斜率 " + metric.slope.toFixed(2) + "/分钟";
+      }
+      if (metric.duration) {
+        segment += "，持续 " + metric.duration + " 分钟";
+      }
+      parts.push(segment);
+    }
+    if (!parts.length) {
+      return null;
+    }
+    return prefix + "：" + parts.join("；");
+  }
+
+  function formatManualContextLine(list) {
+    if (!list || !list.length) {
+      return null;
+    }
+    var parts = [];
+    for (var i = 0; i < list.length; i += 1) {
+      var item = list[i];
+      if (!item || !item.sourceName) {
+        continue;
+      }
+      var text = item.sourceName;
+      if (item.summary && typeof item.summary.lastAmount === "number") {
+        text += " 最近调整 " + formatTrendValue(item.summary.lastAmount, item.unit || "");
+        if (item.summary.lastAt) {
+          text += " (" + formatTime(item.summary.lastAt) + ")";
+        }
+      } else if (item.summary && item.summary.count) {
+        text += " 平均调整 " + formatTrendValue(item.summary.average || 0, item.unit || "") + " ×" + item.summary.count;
+      } else {
+        text += " 暂无近期调整";
+      }
+      if (item.summary && item.summary.lastNote) {
+        text += " · " + item.summary.lastNote;
+      }
+      parts.push(text);
+    }
+    if (!parts.length) {
+      return null;
+    }
+    return "手动调整反馈：" + parts.join("；");
+  }
+
+  function buildForecastContext(node, child, series, grouped, adjacency, manualInfluenceMap, manualHistory) {
+    if (!node || !series) {
+      return { current: null, upstream: [], downstream: [], parallel: [], manualInfluence: [], summary: [] };
+    }
+    var context = {
+      current: null,
+      upstream: [],
+      downstream: [],
+      parallel: [],
+      manualInfluence: [],
+      summary: []
+    };
+    var unit = child ? child.unit : node.unit;
+    var lower = child && typeof child.lower === "number" ? child.lower : node.lower;
+    var upper = child && typeof child.upper === "number" ? child.upper : node.upper;
+    var label = child ? node.name + " · " + child.name : node.name;
+    context.current = extractSeriesMetrics(series, lower, upper, label, unit);
+
+    function collectNeighborMetrics(targetId, bucket) {
+      if (!targetId) {
+        return;
+      }
+      var neighborNode = findTrendNodeById(targetId);
+      if (!neighborNode) {
+        return;
+      }
+      var key = targetId + "::root";
+      var raw = grouped[key];
+      if (!raw || !raw.length) {
+        return;
+      }
+      var metrics = extractSeriesMetrics(raw, neighborNode.lower, neighborNode.upper, neighborNode.name, neighborNode.unit);
+      if (metrics) {
+        bucket.push(metrics);
+      }
+    }
+
+    var entry = adjacency && adjacency[node.id] ? adjacency[node.id] : null;
+    if (entry) {
+      if (Array.isArray(entry.upstream)) {
+        for (var u = 0; u < entry.upstream.length; u += 1) {
+          collectNeighborMetrics(entry.upstream[u], context.upstream);
+        }
+      }
+      if (Array.isArray(entry.downstream)) {
+        for (var d = 0; d < entry.downstream.length; d += 1) {
+          collectNeighborMetrics(entry.downstream[d], context.downstream);
+        }
+      }
+      if (Array.isArray(entry.parallel)) {
+        for (var p = 0; p < entry.parallel.length; p += 1) {
+          collectNeighborMetrics(entry.parallel[p], context.parallel);
+        }
+      }
+    }
+
+    var manualKey = child ? node.id + "::" + child.id : node.id;
+    var manualSources = [];
+    if (manualInfluenceMap && manualInfluenceMap[manualKey]) {
+      manualSources = manualSources.concat(manualInfluenceMap[manualKey]);
+    }
+    if (manualInfluenceMap && manualInfluenceMap[node.id]) {
+      manualSources = manualSources.concat(manualInfluenceMap[node.id]);
+    }
+    var seenManual = {};
+    for (var m = 0; m < manualSources.length; m += 1) {
+      var source = manualSources[m];
+      if (!source || !source.sourceId || seenManual[source.sourceId]) {
+        continue;
+      }
+      seenManual[source.sourceId] = true;
+      var manualNode = findTrendNodeById(source.sourceId);
+      context.manualInfluence.push({
+        sourceId: source.sourceId,
+        sourceName: (manualNode && manualNode.name) || source.sourceName || "手动节点",
+        summary: manualHistory ? manualHistory[source.sourceId] : null,
+        manualStep: typeof source.manualStep === "number" ? source.manualStep : (manualNode && typeof manualNode.manualStep === "number" ? manualNode.manualStep : 1),
+        weight: typeof source.weight === "number" ? source.weight : 1,
+        unit: manualNode ? manualNode.unit : ""
+      });
+    }
+
+    var upstreamLine = formatContextLine("上游趋势", context.upstream);
+    if (upstreamLine) {
+      context.summary.push(upstreamLine);
+    }
+    var downstreamLine = formatContextLine("下游趋势", context.downstream);
+    if (downstreamLine) {
+      context.summary.push(downstreamLine);
+    }
+    var parallelLine = formatContextLine("并行节点", context.parallel);
+    if (parallelLine) {
+      context.summary.push(parallelLine);
+    }
+    var manualLine = formatManualContextLine(context.manualInfluence);
+    if (manualLine) {
+      context.summary.push(manualLine);
+    }
+    return context;
+  }
+
+  function applyContextualForecast(baseForecast, context, options) {
+    if (!baseForecast) {
+      return null;
+    }
+    var adjusted = {
+      id: baseForecast.id,
+      nodeId: baseForecast.nodeId,
+      subNodeId: baseForecast.subNodeId,
+      value: baseForecast.value,
+      horizonMinutes: baseForecast.horizonMinutes,
+      confidence: baseForecast.confidence,
+      trendSlope: baseForecast.trendSlope,
+      trendLabel: baseForecast.trendLabel,
+      method: baseForecast.method,
+      samples: baseForecast.samples,
+      intervalMinutes: baseForecast.intervalMinutes,
+      generatedAt: baseForecast.generatedAt,
+      latestValue: baseForecast.latestValue,
+      unit: baseForecast.unit,
+      label: baseForecast.label,
+      status: baseForecast.status
+    };
+    if (!context) {
+      adjusted.context = { summary: [] };
+      return adjusted;
+    }
+    adjusted.context = context;
+    var baseSlope = context.current && typeof context.current.slope === "number" ? context.current.slope : 0;
+    var stepMinutes = Math.max(1, adjusted.intervalMinutes || 1);
+    var horizonSteps = Math.max(1, Math.round((adjusted.horizonMinutes || stepMinutes) / stepMinutes));
+    var slopeTotal = 0;
+    var slopeWeight = 0;
+
+    function accumulateSlope(metrics, weight) {
+      if (!metrics || !metrics.length || !weight) {
+        return;
+      }
+      var sum = 0;
+      var count = 0;
+      for (var i = 0; i < metrics.length; i += 1) {
+        if (!metrics[i] || typeof metrics[i].slope !== "number" || isNaN(metrics[i].slope)) {
+          continue;
+        }
+        sum += metrics[i].slope;
+        count += 1;
+      }
+      if (!count) {
+        return;
+      }
+      slopeTotal += (sum / count) * weight;
+      slopeWeight += weight;
+    }
+
+    accumulateSlope(context.upstream, 0.6);
+    accumulateSlope(context.parallel, 0.4);
+    accumulateSlope(context.downstream, 0.3);
+
+    var blendedSlope = slopeWeight ? slopeTotal / slopeWeight : 0;
+    if (slopeWeight) {
+      adjusted.value += blendedSlope * stepMinutes * horizonSteps * 0.5;
+    }
+
+    if (context.manualInfluence && context.manualInfluence.length) {
+      for (var i = 0; i < context.manualInfluence.length; i += 1) {
+        var influence = context.manualInfluence[i];
+        if (!influence || !influence.summary) {
+          continue;
+        }
+        var baseAmount = null;
+        if (typeof influence.summary.lastAmount === "number" && influence.summary.lastAmount) {
+          baseAmount = influence.summary.lastAmount;
+        } else if (typeof influence.summary.average === "number" && influence.summary.average) {
+          baseAmount = influence.summary.average;
+        }
+        if (baseAmount === null) {
+          continue;
+        }
+        var gain = typeof influence.manualStep === "number" && influence.manualStep !== 0 ? influence.manualStep : 1;
+        var weight = typeof influence.weight === "number" ? influence.weight : 1;
+        adjusted.value += baseAmount * gain * weight * 0.5;
+      }
+    }
+
+    var lower = options && typeof options.lower === "number" ? options.lower : null;
+    var upper = options && typeof options.upper === "number" ? options.upper : null;
+    if (typeof lower === "number" && typeof upper === "number" && lower < upper) {
+      var buffer = (upper - lower) * 0.25 || 1;
+      if (adjusted.value < lower - buffer) {
+        adjusted.value = lower - buffer;
+      }
+      if (adjusted.value > upper + buffer) {
+        adjusted.value = upper + buffer;
+      }
+    } else {
+      if (typeof lower === "number" && adjusted.value < lower) {
+        adjusted.value = lower;
+      }
+      if (typeof upper === "number" && adjusted.value > upper) {
+        adjusted.value = upper;
+      }
+    }
+
+    var effectiveSlope = slopeWeight ? (baseSlope * 0.5 + blendedSlope * 0.5) : baseSlope;
+    adjusted.trendSlope = effectiveSlope;
+    if (effectiveSlope > 0.05) {
+      adjusted.trendLabel = "上升";
+    } else if (effectiveSlope < -0.05) {
+      adjusted.trendLabel = "下降";
+    } else {
+      adjusted.trendLabel = "平稳";
+    }
+
+    var supporters = 0;
+    var conflicts = 0;
+    var neighborLists = [];
+    if (context.upstream) {
+      neighborLists = neighborLists.concat(context.upstream);
+    }
+    if (context.parallel) {
+      neighborLists = neighborLists.concat(context.parallel);
+    }
+    if (context.downstream) {
+      neighborLists = neighborLists.concat(context.downstream);
+    }
+    for (var n = 0; n < neighborLists.length; n += 1) {
+      var metric = neighborLists[n];
+      if (!metric || typeof metric.slope !== "number") {
+        continue;
+      }
+      if (!effectiveSlope) {
+        if (Math.abs(metric.slope) > 0.05) {
+          conflicts += 1;
+        }
+        continue;
+      }
+      if (metric.slope * effectiveSlope >= 0) {
+        supporters += 1;
+      } else {
+        conflicts += 1;
+      }
+    }
+    if (supporters || conflicts) {
+      var ratio = (supporters - conflicts) / Math.max(1, supporters + conflicts);
+      var factor = 1 + Math.max(-0.4, Math.min(0.4, ratio * 0.6));
+      adjusted.confidence = Math.max(0.05, Math.min(0.99, (adjusted.confidence || 0.5) * factor));
+    }
+
+    return adjusted;
+  }
+
   function foldTrendSuggestionsMap() {
     ensureTrendStore();
     var map = {};
@@ -3464,11 +3989,14 @@
     ensureTrendStore();
     var trend = state.tools.trend;
     var nodes = trend.nodes;
+    var adjacency = buildTrendAdjacency(nodes);
+    var manualInfluenceMap = collectManualInfluenceTargets(nodes);
     var newSuggestions = [];
     var newForecasts = [];
     var nowIso = new Date().toISOString();
     var lookbackMs = (trend.settings.lookbackMinutes || 120) * 60000;
     var startTime = Date.now() - lookbackMs;
+    var manualSummary = summarizeManualAdjustments(trend.history, startTime);
     var streams = trend.streams;
     var grouped = {};
     for (var i = 0; i < streams.length; i += 1) {
@@ -3539,6 +4067,18 @@
       if (Math.abs(slope) > 0.05) {
         detail.push("变化速率 " + slope.toFixed(3) + " /分钟");
       }
+      var context = buildForecastContext(node, child, series, grouped, adjacency, manualInfluenceMap, manualSummary);
+      if (context && context.summary && context.summary.length) {
+        for (var ctxIndex = 0; ctxIndex < context.summary.length; ctxIndex += 1) {
+          var ctxLine = context.summary[ctxIndex];
+          if (!ctxLine) {
+            continue;
+          }
+          if (detail.indexOf(ctxLine) === -1) {
+            detail.push(ctxLine);
+          }
+        }
+      }
       var forecast = computeTrendForecast(series, {
         horizonMinutes: trend.settings.predictionMinutes || 30,
         intervalMs: trend.settings.sampleIntervalMs || calcAverageInterval(series, 60000)
@@ -3551,6 +4091,8 @@
         forecast.latestValue = latest.value;
         forecast.status = calcRangeStatus(forecast.value, lower, upper);
         forecast.generatedAt = nowIso;
+        forecast = applyContextualForecast(forecast, context, { lower: lower, upper: upper });
+        forecast.status = calcRangeStatus(forecast.value, lower, upper);
         detail.push("预测 " + forecast.horizonMinutes + " 分钟后约为 " + formatTrendValue(forecast.value, forecast.unit) + "，状态 " + forecast.status + "，置信度 " + Math.round((forecast.confidence || 0) * 100) + "%");
         newForecasts.push(forecast);
       }
@@ -3581,6 +4123,9 @@
           : null,
         source: "analysis"
       };
+      if (context) {
+        suggestion.context = context;
+      }
       newSuggestions.push(suggestion);
     }
     var existing = foldTrendSuggestionsMap();

@@ -139,6 +139,8 @@
     var nodeRefSelect = document.getElementById("trendNodeRef");
     var manualStepField = document.getElementById("trendManualStepField");
     var manualStepInput = document.getElementById("trendManualStep");
+    var manualImpactField = document.getElementById("trendManualImpactField");
+    var manualImpactSelect = document.getElementById("trendManualImpact");
     var addNodeBtn = document.getElementById("trendAddNode");
     var deleteNodeBtn = document.getElementById("trendDeleteNode");
     var addSubNodeBtn = document.getElementById("trendAddSubNode");
@@ -203,6 +205,94 @@
       return null;
     }
 
+    function findSubNode(nodeId, subNodeId) {
+      var node = findNode(nodeId);
+      if (!node || !Array.isArray(node.children)) {
+        return null;
+      }
+      for (var i = 0; i < node.children.length; i += 1) {
+        if (node.children[i] && node.children[i].id === subNodeId) {
+          return node.children[i];
+        }
+      }
+      return null;
+    }
+
+    function buildManualTargetValue(nodeId, subNodeId) {
+      if (!nodeId) {
+        return "";
+      }
+      return subNodeId ? nodeId + "::" + subNodeId : nodeId;
+    }
+
+    function resolveManualTargetLabel(target) {
+      if (!target || !target.nodeId) {
+        return "";
+      }
+      var node = findNode(target.nodeId);
+      if (!node) {
+        return "";
+      }
+      if (target.subNodeId) {
+        var child = findSubNode(target.nodeId, target.subNodeId);
+        if (child) {
+          return node.name + " · " + child.name;
+        }
+      }
+      return node.name;
+    }
+
+    function renderManualImpactOptions(currentNode) {
+      if (!manualImpactSelect || !manualImpactField) {
+        return;
+      }
+      manualImpactSelect.innerHTML = "";
+      var nodes = (state.snapshot && state.snapshot.nodes) || [];
+      var selected = {};
+      if (currentNode && Array.isArray(currentNode.manualTargets)) {
+        currentNode.manualTargets.forEach(function (target) {
+          if (!target || !target.nodeId) {
+            return;
+          }
+          var key = buildManualTargetValue(target.nodeId, target.subNodeId || null);
+          selected[key] = true;
+        });
+      }
+      nodes.forEach(function (candidate) {
+        if (!candidate || !candidate.id || (currentNode && candidate.id === currentNode.id)) {
+          return;
+        }
+        var option = document.createElement("option");
+        option.value = candidate.id;
+        option.textContent = candidate.name;
+        if (selected[candidate.id]) {
+          option.selected = true;
+        }
+        manualImpactSelect.appendChild(option);
+        if (Array.isArray(candidate.children)) {
+          candidate.children.forEach(function (child) {
+            if (!child || !child.id) {
+              return;
+            }
+            var childValue = buildManualTargetValue(candidate.id, child.id);
+            var childOption = document.createElement("option");
+            childOption.value = childValue;
+            childOption.textContent = candidate.name + " · " + child.name;
+            if (selected[childValue]) {
+              childOption.selected = true;
+            }
+            manualImpactSelect.appendChild(childOption);
+          });
+        }
+      });
+      manualImpactField.hidden = !(currentNode && currentNode.manual);
+      if (!manualImpactSelect.options.length) {
+        manualImpactSelect.disabled = true;
+      } else {
+        manualImpactSelect.disabled = false;
+      }
+    }
+
     function renderNodeList() {
       if (!nodeListEl) {
         return;
@@ -228,6 +318,18 @@
         }
         if (node.manual) {
           bounds.push("手动节点");
+        }
+        if (node.manual && Array.isArray(node.manualTargets) && node.manualTargets.length) {
+          var impactLabels = [];
+          node.manualTargets.forEach(function (target) {
+            var label = resolveManualTargetLabel(target);
+            if (label) {
+              impactLabels.push(label);
+            }
+          });
+          if (impactLabels.length) {
+            bounds.push("影响 " + impactLabels.join("、"));
+          }
         }
         meta.textContent = bounds.join(" · ");
         item.appendChild(meta);
@@ -256,6 +358,12 @@
         manualStepInput.value = "";
         manualStepField.hidden = true;
         nodeRefField.hidden = true;
+        if (manualImpactField) {
+          manualImpactField.hidden = true;
+        }
+        if (manualImpactSelect) {
+          manualImpactSelect.innerHTML = "";
+        }
         renderSubNodes();
         return;
       }
@@ -282,6 +390,7 @@
         nodeRefSelect.value = node.positionRef;
       }
       nodeRefField.hidden = nodePositionSelect.value === "after";
+      renderManualImpactOptions(node);
       renderSubNodes();
     }
 
@@ -402,6 +511,25 @@
         positionRef: nodeRefSelect.value || null,
         children: clone(state.editingSubNodes) || []
       };
+      if (manual && manualImpactSelect) {
+        var targets = [];
+        for (var i = 0; i < manualImpactSelect.options.length; i += 1) {
+          var option = manualImpactSelect.options[i];
+          if (!option || !option.selected || !option.value) {
+            continue;
+          }
+          var parts = option.value.split("::");
+          var targetNodeId = parts[0];
+          var targetSubId = parts.length > 1 ? parts[1] : null;
+          if (!targetNodeId) {
+            continue;
+          }
+          targets.push({ nodeId: targetNodeId, subNodeId: targetSubId });
+        }
+        payload.manualTargets = targets;
+      } else {
+        payload.manualTargets = [];
+      }
       if (!payload.manualStep || isNaN(payload.manualStep)) {
         payload.manualStep = manual ? 1 : 0;
       }
@@ -564,6 +692,21 @@
         meta.className = "trend-forecast-meta";
         meta.textContent = "前瞻 " + (forecast.horizonMinutes || 0) + " 分钟 · 置信度 " + Math.round((forecast.confidence || 0) * 100) + "% · 趋势 " + (forecast.trendLabel || "平稳");
         card.appendChild(meta);
+        if (forecast.context && forecast.context.summary && forecast.context.summary.length) {
+          var ctxList = document.createElement("ul");
+          ctxList.className = "trend-forecast-context";
+          forecast.context.summary.forEach(function (line) {
+            if (!line) {
+              return;
+            }
+            var li = document.createElement("li");
+            li.textContent = line;
+            ctxList.appendChild(li);
+          });
+          if (ctxList.children.length) {
+            card.appendChild(ctxList);
+          }
+        }
         if (forecast.method) {
           var method = document.createElement("div");
           method.className = "trend-forecast-method";
@@ -842,7 +985,18 @@
 
     if (nodeManualSelect) {
       nodeManualSelect.addEventListener("change", function () {
-        manualStepField.hidden = nodeManualSelect.value !== "true";
+        var isManual = nodeManualSelect.value === "true";
+        manualStepField.hidden = !isManual;
+        if (manualImpactField) {
+          manualImpactField.hidden = !isManual;
+        }
+        if (isManual) {
+          renderManualImpactOptions(findNode(state.editingNodeId));
+        } else if (manualImpactSelect) {
+          for (var i = 0; i < manualImpactSelect.options.length; i += 1) {
+            manualImpactSelect.options[i].selected = false;
+          }
+        }
       });
     }
 
