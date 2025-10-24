@@ -39,9 +39,20 @@
         <aside class="trend-config" aria-label="节点组配置">
           <div class="trend-config-header">
             <h2>节点组拓扑</h2>
-            <button type="button" class="ghost-button" id="trendAddNode">新增节点组</button>
           </div>
-          <div class="trend-config-body" id="trendNodeList" role="tree"></div>
+          <div class="trend-config-body" id="trendNodeList" role="presentation">
+            <div class="trend-explorer-header">
+              <button type="button" class="ghost-button" id="trendExplorerUp">返回上级</button>
+              <div class="trend-explorer-breadcrumb" id="trendExplorerBreadcrumb" aria-label="当前位置">顶层节点组</div>
+              <div class="trend-explorer-actions">
+                <button type="button" class="ghost-button" id="trendExplorerAddGroup">新建节点组</button>
+                <button type="button" class="ghost-button" id="trendExplorerAddNode">新建节点</button>
+              </div>
+            </div>
+            <div class="trend-explorer-grid" id="trendExplorerGrid" role="list"></div>
+            <div class="trend-explorer-empty" id="trendExplorerEmpty">暂无节点组，请使用右键菜单或按钮创建。</div>
+            <div class="trend-explorer-menu" id="trendExplorerMenu" hidden></div>
+          </div>
           <form id="trendNodeForm" class="trend-form" autocomplete="off">
             <h3 id="trendFormTitle">节点组详情</h3>
             <div class="form-field">

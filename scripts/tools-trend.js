@@ -604,6 +604,7 @@
       scenarioChartKey: null,
       pendingParentId: null,
       pendingNodeKey: null,
+      explorerPath: [],
       unsubscribe: null
     };
     state.scenarioDraft = createScenarioDraft(state.snapshot, null);
@@ -725,7 +726,15 @@
       }
     }
 
-    var nodeListEl = document.getElementById("trendNodeList");
+    var explorerContainer = document.getElementById("trendNodeList");
+    var explorerGridEl = document.getElementById("trendExplorerGrid");
+    var explorerEmptyEl = document.getElementById("trendExplorerEmpty");
+    var explorerBreadcrumbEl = document.getElementById("trendExplorerBreadcrumb");
+    var explorerUpBtn = document.getElementById("trendExplorerUp");
+    var explorerAddGroupBtn = document.getElementById("trendExplorerAddGroup");
+    var explorerAddNodeBtn = document.getElementById("trendExplorerAddNode");
+    var explorerMenuEl = document.getElementById("trendExplorerMenu");
+    var explorerMenuContext = null;
     var nodeForm = document.getElementById("trendNodeForm");
     var nodeKeyInput = document.getElementById("trendNodeKey");
     var nodeNameInput = document.getElementById("trendNodeName");
@@ -867,6 +876,7 @@
       } else {
         state.editingSubNodes = [];
       }
+      ensureExplorerPathValid();
       state.pendingParentId = null;
       if (!state.scenarioDraft) {
         state.scenarioDraft = createScenarioDraft(state.snapshot, null);
@@ -883,8 +893,10 @@
       var node = findNode(nodeId);
       state.editingSubNodes = node ? ensureEditingChildren(clone(node.children) || []) : [];
       state.pendingParentId = null;
+      syncExplorerToNode(nodeId);
       renderForm();
       renderChart();
+      renderNodeList();
     }
 
     function findNode(nodeId) {
@@ -898,6 +910,43 @@
         }
       }
       return null;
+    }
+
+    function buildAncestorPath(nodeId) {
+      var path = [];
+      var visited = {};
+      var current = nodeId ? findNode(nodeId) : null;
+      while (current && current.parentId) {
+        if (visited[current.parentId]) {
+          break;
+        }
+        visited[current.parentId] = true;
+        path.unshift(current.parentId);
+        current = findNode(current.parentId);
+      }
+      return path;
+    }
+
+    function ensureExplorerPathValid() {
+      if (!Array.isArray(state.explorerPath)) {
+        state.explorerPath = [];
+        return;
+      }
+      var next = [];
+      for (var i = 0; i < state.explorerPath.length; i += 1) {
+        var candidate = state.explorerPath[i];
+        if (candidate && findNode(candidate)) {
+          next.push(candidate);
+        } else {
+          break;
+        }
+      }
+      state.explorerPath = next;
+    }
+
+    function syncExplorerToNode(nodeId) {
+      var ancestors = buildAncestorPath(nodeId);
+      state.explorerPath = ancestors;
     }
 
     function findSubNode(nodeId, subNodeId) {
@@ -1042,133 +1091,573 @@
       }
     }
 
-    function renderNodeList() {
-      if (!nodeListEl) {
-        return;
-      }
-      nodeListEl.innerHTML = "";
-      var nodes = (state.snapshot && state.snapshot.nodes) || [];
-      if (!nodes.length) {
-        var empty = document.createElement("div");
-        empty.className = "trend-node-empty";
-        empty.textContent = "暂无节点组，请先创建。";
-        nodeListEl.appendChild(empty);
-        return;
-      }
-      var tree = buildGroupTree(nodes);
-      renderGroupEntries(tree);
 
-      function buildGroupTree(list) {
-        var map = {};
-        var roots = [];
-        for (var i = 0; i < list.length; i += 1) {
-          var group = list[i];
-          if (!group || !group.id) {
+    function getExplorerContext() {
+      var context = {
+        path: Array.isArray(state.explorerPath) ? state.explorerPath.slice() : [],
+        currentId: null,
+        group: null,
+        groups: [],
+        nodes: []
+      };
+      if (context.path.length) {
+        context.currentId = context.path[context.path.length - 1];
+        context.group = findNode(context.currentId);
+      }
+      var list = (state.snapshot && state.snapshot.nodes) || [];
+      for (var i = 0; i < list.length; i += 1) {
+        var entry = list[i];
+        if (!entry || !entry.id) {
+          continue;
+        }
+        var parentId = entry.parentId || null;
+        if (parentId === (context.currentId || null)) {
+          context.groups.push(entry);
+        }
+      }
+      if (context.group && Array.isArray(context.group.children)) {
+        for (var j = 0; j < context.group.children.length; j += 1) {
+          var child = context.group.children[j];
+          if (!child || !child.id) {
             continue;
           }
-          map[group.id] = {
-            data: group,
-            id: group.id,
-            parentId: group.parentId || null,
-            groups: [],
-            order: i,
-            depth: 0
-          };
-        }
-        for (var key in map) {
-          if (!Object.prototype.hasOwnProperty.call(map, key)) {
-            continue;
-          }
-          var entry = map[key];
-          if (entry.parentId && map[entry.parentId]) {
-            map[entry.parentId].groups.push(entry);
-          } else {
-            roots.push(entry);
-          }
-        }
-        function assignDepth(entry, depth) {
-          entry.depth = depth;
-          entry.groups.sort(function (a, b) {
-            return a.order - b.order;
+          context.nodes.push({
+            id: child.id,
+            name: child.name,
+            unit: child.unit,
+            lower: child.lower,
+            center: child.center,
+            upper: child.upper,
+            manual: child.manual,
+            manualStep: child.manualStep,
+            parentId: context.group.id
           });
-          for (var j = 0; j < entry.groups.length; j += 1) {
-            assignDepth(entry.groups[j], depth + 1);
-          }
         }
-        roots.sort(function (a, b) {
-          return a.order - b.order;
-        });
-        for (var r = 0; r < roots.length; r += 1) {
-          assignDepth(roots[r], 0);
-        }
-        return roots;
       }
+      return context;
+    }
 
-      function renderGroupEntries(entries) {
-        for (var i = 0; i < entries.length; i += 1) {
-          var entry = entries[i];
-          if (!entry || !entry.data) {
-            continue;
-          }
-          var node = entry.data;
-          var item = document.createElement("div");
-          item.className = "trend-node-item" + (node.id === state.editingNodeId ? " active" : "");
-          item.setAttribute("role", "treeitem");
-          item.style.paddingLeft = (entry.depth * 20 + 12) + "px";
-          var title = document.createElement("div");
-          title.className = "trend-node-name";
-          title.textContent = node.name + " (" + (node.unit || "") + ")";
-          item.appendChild(title);
-          if (node.note) {
-            var note = document.createElement("div");
-            note.className = "trend-node-note";
-            note.textContent = node.note;
-            item.appendChild(note);
-          }
-          var meta = document.createElement("div");
-          meta.className = "trend-node-meta";
-          var bounds = [];
-          if (typeof node.lower === "number") {
-            bounds.push("下限 " + node.lower);
-          }
-          if (typeof node.center === "number") {
-            bounds.push("中值 " + node.center);
-          }
-          if (typeof node.upper === "number") {
-            bounds.push("上限 " + node.upper);
-          }
-          var childCount = Array.isArray(node.children) ? node.children.length : 0;
-          bounds.push("节点 " + childCount);
-          if (node.manual) {
-            bounds.push("手动节点");
-          }
-          if (node.simulate === false) {
-            bounds.push("演示停用");
-          }
-          if (node.manual && Array.isArray(node.manualTargets) && node.manualTargets.length) {
-            var impactLabels = [];
-            node.manualTargets.forEach(function (target) {
-              var label = resolveManualTargetLabel(target);
-              if (label) {
-                impactLabels.push(label);
-              }
-            });
-            if (impactLabels.length) {
-              bounds.push("影响 " + impactLabels.join("、"));
-            }
-          }
-          meta.textContent = bounds.join(" · ");
-          item.appendChild(meta);
-          item.addEventListener("click", function (groupId) {
-            return function () {
-              handleNodeSelection(groupId);
-            };
-          }(node.id));
-          nodeListEl.appendChild(item);
-          if (entry.groups && entry.groups.length) {
-            renderGroupEntries(entry.groups);
-          }
+    function formatExplorerBound(value) {
+      if (typeof value !== "number" || !isFinite(value)) {
+        return "";
+      }
+      var fixed = value.toFixed(3);
+      while (fixed.indexOf('.') !== -1 && (fixed.charAt(fixed.length - 1) === '0' || fixed.charAt(fixed.length - 1) === '.')) {
+        fixed = fixed.substring(0, fixed.length - 1);
+      }
+      return fixed;
+    }
+
+    function createExplorerItem(type, record, parentId) {
+      var item = document.createElement("div");
+      var className = "trend-explorer-item" + (type === "group" ? " is-group" : " is-node");
+      if (type === "group" && state.editingNodeId === record.id) {
+        className += " is-active";
+      }
+      item.className = className;
+      item.setAttribute("data-type", type);
+      if (record.id) {
+        item.setAttribute("data-id", record.id);
+      }
+      if (parentId) {
+        item.setAttribute("data-parent", parentId);
+      }
+      var icon = document.createElement("div");
+      icon.className = "trend-explorer-icon";
+      item.appendChild(icon);
+      var name = document.createElement("div");
+      name.className = "trend-explorer-name";
+      name.textContent = record.name || (type === "group" ? "节点组" : "节点");
+      item.appendChild(name);
+      var meta = document.createElement("div");
+      meta.className = "trend-explorer-meta";
+      var parts = [];
+      if (record.id) {
+        parts.push("ID " + record.id);
+      }
+      if (type === "group") {
+        var count = 0;
+        if (Array.isArray(record.children)) {
+          count = record.children.length;
+        } else if (typeof record.nodeCount === "number") {
+          count = record.nodeCount;
         }
+        parts.push("节点 " + count);
+        if (record.simulate === false) {
+          parts.push("演示停用");
+        }
+      } else {
+        if (record.unit) {
+          parts.push("单位 " + record.unit);
+        }
+        if (typeof record.lower === "number") {
+          parts.push("下限 " + formatExplorerBound(record.lower));
+        }
+        if (typeof record.center === "number") {
+          parts.push("中值 " + formatExplorerBound(record.center));
+        }
+        if (typeof record.upper === "number") {
+          parts.push("上限 " + formatExplorerBound(record.upper));
+        }
+        if (record.manual) {
+          parts.push("手动节点");
+        }
+      }
+      meta.textContent = parts.join(" · ");
+      item.appendChild(meta);
+      if (type === "group" && record.note) {
+        var note = document.createElement("div");
+        note.className = "trend-explorer-note";
+        note.textContent = record.note;
+        item.appendChild(note);
+      }
+      item.addEventListener("click", function () {
+        closeExplorerMenu();
+        if (type === "group") {
+          handleNodeSelection(record.id);
+        } else if (parentId) {
+          handleNodeSelection(parentId);
+        }
+      });
+      item.addEventListener("dblclick", function () {
+        closeExplorerMenu();
+        if (type === "group") {
+          enterExplorerGroup(record.id);
+        } else if (parentId) {
+          openNodeEditor(parentId, record.id, false);
+        }
+      });
+      item.addEventListener("contextmenu", function (evt) {
+        openExplorerMenu(evt, {
+          type: type,
+          id: record.id,
+          parentId: type === "group" ? record.id : parentId
+        });
+      });
+      return item;
+    }
+
+    function renderExplorerBreadcrumb(context) {
+      if (!explorerBreadcrumbEl) {
+        return;
+      }
+      explorerBreadcrumbEl.innerHTML = "";
+      var path = context && context.path ? context.path : [];
+      var rootBtn = document.createElement("button");
+      rootBtn.type = "button";
+      rootBtn.textContent = "顶层节点组";
+      rootBtn.setAttribute("data-depth", "0");
+      explorerBreadcrumbEl.appendChild(rootBtn);
+      for (var i = 0; i < path.length; i += 1) {
+        var group = findNode(path[i]);
+        var crumb = document.createElement("button");
+        crumb.type = "button";
+        crumb.textContent = group && group.name ? group.name : "节点组";
+        crumb.setAttribute("data-depth", String(i + 1));
+        explorerBreadcrumbEl.appendChild(crumb);
+      }
+    }
+
+    function renderNodeList() {
+      if (!explorerGridEl) {
+        return;
+      }
+      ensureExplorerPathValid();
+      closeExplorerMenu();
+      var context = getExplorerContext();
+      renderExplorerBreadcrumb(context);
+      if (explorerAddNodeBtn) {
+        explorerAddNodeBtn.disabled = !context.currentId;
+      }
+      if (explorerUpBtn) {
+        explorerUpBtn.disabled = !context.path.length;
+      }
+      explorerGridEl.innerHTML = "";
+      var hasContent = false;
+      var i;
+      for (i = 0; i < context.groups.length; i += 1) {
+        var groupItem = createExplorerItem("group", context.groups[i], context.currentId);
+        explorerGridEl.appendChild(groupItem);
+        hasContent = true;
+      }
+      for (i = 0; i < context.nodes.length; i += 1) {
+        var nodeItem = createExplorerItem("node", context.nodes[i], context.currentId);
+        explorerGridEl.appendChild(nodeItem);
+        hasContent = true;
+      }
+      if (explorerEmptyEl) {
+        explorerEmptyEl.hidden = hasContent;
+        if (!hasContent) {
+          explorerEmptyEl.textContent = context.currentId ? "该节点组下暂无内容，右键创建子节点组或节点。" : "暂无节点组，请使用右键菜单或按钮创建。";
+        }
+      }
+    }
+
+
+    function resolveExplorerItemElement(element) {
+      var current = element;
+      while (current && current !== explorerContainer) {
+        if (current.classList && current.classList.contains("trend-explorer-item")) {
+          return current;
+        }
+        current = current.parentNode;
+      }
+      return null;
+    }
+
+    function enterExplorerGroup(groupId) {
+      if (!groupId) {
+        return;
+      }
+      ensureExplorerPathValid();
+      var path = Array.isArray(state.explorerPath) ? state.explorerPath.slice() : [];
+      var index = -1;
+      for (var i = 0; i < path.length; i += 1) {
+        if (path[i] === groupId) {
+          index = i;
+          break;
+        }
+      }
+      if (index !== -1) {
+        state.explorerPath = path.slice(0, index + 1);
+      } else {
+        path.push(groupId);
+        state.explorerPath = path;
+      }
+      renderNodeList();
+    }
+
+    function exitExplorerGroup() {
+      if (!Array.isArray(state.explorerPath) || !state.explorerPath.length) {
+        return;
+      }
+      state.explorerPath.pop();
+      renderNodeList();
+    }
+
+    function navigateExplorerToDepth(depth) {
+      if (!Array.isArray(state.explorerPath)) {
+        state.explorerPath = [];
+        renderNodeList();
+        return;
+      }
+      var nextDepth = depth;
+      if (typeof nextDepth !== "number") {
+        nextDepth = parseInt(nextDepth, 10);
+      }
+      if (isNaN(nextDepth) || nextDepth < 0) {
+        nextDepth = 0;
+      }
+      if (nextDepth > state.explorerPath.length) {
+        nextDepth = state.explorerPath.length;
+      }
+      state.explorerPath = state.explorerPath.slice(0, nextDepth);
+      renderNodeList();
+    }
+
+    function openExplorerMenu(evt, context) {
+      if (!explorerMenuEl) {
+        return;
+      }
+      if (!context) {
+        return;
+      }
+      evt.preventDefault();
+      closeExplorerMenu();
+      buildExplorerMenu(context);
+      if (!explorerMenuEl.childNodes.length) {
+        return;
+      }
+      explorerMenuContext = context;
+      var rect = explorerContainer ? explorerContainer.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+      var scrollLeft = explorerContainer ? explorerContainer.scrollLeft : 0;
+      var scrollTop = explorerContainer ? explorerContainer.scrollTop : 0;
+      var left = evt.clientX - rect.left + scrollLeft;
+      var top = evt.clientY - rect.top + scrollTop;
+      if (left < 0) {
+        left = 0;
+      }
+      if (top < 0) {
+        top = 0;
+      }
+      explorerMenuEl.style.left = left + "px";
+      explorerMenuEl.style.top = top + "px";
+      explorerMenuEl.hidden = false;
+      var menuRect = explorerMenuEl.getBoundingClientRect();
+      var containerRect = explorerContainer ? explorerContainer.getBoundingClientRect() : rect;
+      var maxLeft = (containerRect.width || rect.width) - menuRect.width - 12;
+      var maxTop = (containerRect.height || rect.height) - menuRect.height - 12;
+      if (maxLeft < 0) {
+        maxLeft = 0;
+      }
+      if (maxTop < 0) {
+        maxTop = 0;
+      }
+      var adjustedLeft = left;
+      var adjustedTop = top;
+      if (adjustedLeft > maxLeft) {
+        adjustedLeft = maxLeft;
+      }
+      if (adjustedTop > maxTop) {
+        adjustedTop = maxTop;
+      }
+      explorerMenuEl.style.left = adjustedLeft + "px";
+      explorerMenuEl.style.top = adjustedTop + "px";
+    }
+
+    function closeExplorerMenu() {
+      if (explorerMenuEl) {
+        explorerMenuEl.hidden = true;
+      }
+      explorerMenuContext = null;
+    }
+
+    function buildExplorerMenu(context) {
+      if (!explorerMenuEl) {
+        return;
+      }
+      explorerMenuEl.innerHTML = "";
+      var actions = [];
+      if (!context) {
+        return;
+      }
+      if (context.type === "group") {
+        actions.push({
+          label: "打开节点组",
+          handler: function (groupId) {
+            return function () {
+              enterExplorerGroup(groupId);
+            };
+          }(context.id)
+        });
+        actions.push({
+          label: "查看趋势",
+          handler: function (groupId) {
+            return function () {
+              viewGroupTrend(groupId);
+            };
+          }(context.id)
+        });
+        actions.push("divider");
+        actions.push({
+          label: "新建子节点组",
+          handler: function (groupId) {
+            return function () {
+              startCreateGroup(groupId);
+            };
+          }(context.id)
+        });
+        actions.push({
+          label: "新建节点",
+          handler: function (groupId) {
+            return function () {
+              startCreateNode(groupId);
+            };
+          }(context.id)
+        });
+        actions.push("divider");
+        actions.push({
+          label: "重命名",
+          handler: function (groupId) {
+            return function () {
+              editGroup(groupId);
+            };
+          }(context.id)
+        });
+        actions.push({
+          label: "编辑备注",
+          handler: function (groupId) {
+            return function () {
+              editGroupNote(groupId);
+            };
+          }(context.id)
+        });
+      } else if (context.type === "node") {
+        actions.push({
+          label: "查看节点详情",
+          handler: function (groupId, nodeId) {
+            return function () {
+              openNodeEditor(groupId, nodeId, false);
+            };
+          }(context.parentId, context.id)
+        });
+        actions.push({
+          label: "编辑节点",
+          handler: function (groupId, nodeId) {
+            return function () {
+              openNodeEditor(groupId, nodeId, true);
+            };
+          }(context.parentId, context.id)
+        });
+        actions.push({
+          label: "查看所属节点组趋势",
+          handler: function (groupId) {
+            return function () {
+              viewGroupTrend(groupId);
+            };
+          }(context.parentId)
+        });
+      } else {
+        actions.push({
+          label: "新建节点组",
+          handler: function (parentId) {
+            return function () {
+              startCreateGroup(parentId || null);
+            };
+          }(context.parentId || null)
+        });
+        if (context.parentId) {
+          actions.push({
+            label: "新建节点",
+            handler: function (parentId) {
+              return function () {
+                startCreateNode(parentId);
+              };
+            }(context.parentId)
+          });
+        }
+      }
+      for (var i = 0; i < actions.length; i += 1) {
+        var action = actions[i];
+        if (action === "divider") {
+          var hr = document.createElement("hr");
+          explorerMenuEl.appendChild(hr);
+          continue;
+        }
+        if (!action || typeof action.handler !== "function") {
+          continue;
+        }
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = action.label;
+        btn.addEventListener("click", (function (handler) {
+          return function () {
+            handler();
+            closeExplorerMenu();
+          };
+        })(action.handler));
+        explorerMenuEl.appendChild(btn);
+      }
+    }
+
+    function startCreateGroup(parentId) {
+      closeExplorerMenu();
+      state.pendingParentId = parentId || "";
+      state.editingNodeId = null;
+      state.pendingNodeKey = generateUniqueGroupId();
+      state.editingSubNodes = [];
+      renderForm();
+      if (nodeNameInput) {
+        window.setTimeout(function () {
+          try {
+            nodeNameInput.focus();
+            nodeNameInput.select();
+          } catch (err) {}
+        }, 0);
+      }
+    }
+
+    function startCreateNode(parentId) {
+      closeExplorerMenu();
+      if (!parentId) {
+        if (services.toast) {
+          services.toast("请先选择节点组");
+        }
+        return;
+      }
+      handleNodeSelection(parentId);
+      addSubNode();
+    }
+
+    function editGroup(groupId) {
+      closeExplorerMenu();
+      if (!groupId) {
+        return;
+      }
+      handleNodeSelection(groupId);
+      if (nodeNameInput) {
+        window.setTimeout(function () {
+          try {
+            nodeNameInput.focus();
+            nodeNameInput.select();
+          } catch (err) {}
+        }, 0);
+      }
+    }
+
+    function editGroupNote(groupId) {
+      closeExplorerMenu();
+      if (!groupId) {
+        return;
+      }
+      handleNodeSelection(groupId);
+      if (nodeNoteInput) {
+        window.setTimeout(function () {
+          try {
+            nodeNoteInput.focus();
+          } catch (err) {}
+        }, 0);
+      }
+    }
+
+    function viewGroupTrend(groupId) {
+      closeExplorerMenu();
+      if (!groupId) {
+        return;
+      }
+      handleNodeSelection(groupId);
+    }
+
+    function openNodeEditor(groupId, nodeId, allowEdit) {
+      if (!groupId || !nodeId) {
+        return;
+      }
+      handleNodeSelection(groupId);
+      if (!state.editingSubNodes || !state.editingSubNodes.length) {
+        return;
+      }
+      var index = -1;
+      for (var i = 0; i < state.editingSubNodes.length; i += 1) {
+        var sub = state.editingSubNodes[i];
+        if (sub && sub.id === nodeId) {
+          index = i;
+          break;
+        }
+      }
+      if (index === -1) {
+        if (services.toast) {
+          services.toast("未找到该节点");
+        }
+        return;
+      }
+      if (allowEdit) {
+        editSubNode(index);
+      } else if (services.toast) {
+        services.toast("已定位节点，请在下方详情查看");
+      }
+    }
+
+    function handleExplorerDocumentClick(evt) {
+      if (!explorerMenuEl || explorerMenuEl.hidden) {
+        return;
+      }
+      var target = evt.target;
+      if (target === explorerMenuEl) {
+        return;
+      }
+      if (explorerMenuEl.contains(target)) {
+        return;
+      }
+      closeExplorerMenu();
+    }
+
+    function handleExplorerKeydown(evt) {
+      if (!explorerMenuEl || explorerMenuEl.hidden) {
+        return;
+      }
+      var key = evt.key || evt.keyCode;
+      if (key === "Escape" || key === "Esc" || key === 27) {
+        closeExplorerMenu();
       }
     }
 
@@ -2747,14 +3236,64 @@
       renderScenarioSaved();
     }
 
-    if (addNodeBtn) {
-      addNodeBtn.addEventListener("click", function () {
-        state.pendingParentId = state.editingNodeId || null;
-        state.editingNodeId = null;
-        state.pendingNodeKey = generateUniqueGroupId();
-        state.editingSubNodes = [];
-        renderForm();
+    if (explorerUpBtn) {
+      explorerUpBtn.addEventListener("click", function () {
+        exitExplorerGroup();
       });
+    }
+
+    if (explorerAddGroupBtn) {
+      explorerAddGroupBtn.addEventListener("click", function () {
+        var parentId = state.explorerPath && state.explorerPath.length ? state.explorerPath[state.explorerPath.length - 1] : null;
+        startCreateGroup(parentId);
+      });
+    }
+
+    if (explorerAddNodeBtn) {
+      explorerAddNodeBtn.addEventListener("click", function () {
+        var parentId = state.explorerPath && state.explorerPath.length ? state.explorerPath[state.explorerPath.length - 1] : null;
+        startCreateNode(parentId);
+      });
+    }
+
+    if (explorerBreadcrumbEl) {
+      explorerBreadcrumbEl.addEventListener("click", function (evt) {
+        var target = evt.target;
+        while (target && target !== explorerBreadcrumbEl) {
+          if (target.tagName && target.tagName.toLowerCase() === "button" && target.hasAttribute("data-depth")) {
+            var depthValue = target.getAttribute("data-depth");
+            var depth = parseInt(depthValue, 10);
+            navigateExplorerToDepth(isNaN(depth) ? 0 : depth);
+            break;
+          }
+          target = target.parentNode;
+        }
+      });
+    }
+
+    if (explorerContainer) {
+      explorerContainer.addEventListener("contextmenu", function (evt) {
+        var item = resolveExplorerItemElement(evt.target);
+        if (item) {
+          return;
+        }
+        openExplorerMenu(evt, {
+          type: "background",
+          parentId: state.explorerPath && state.explorerPath.length ? state.explorerPath[state.explorerPath.length - 1] : null
+        });
+      });
+      explorerContainer.addEventListener("scroll", function () {
+        closeExplorerMenu();
+      });
+    }
+
+    if (typeof document !== "undefined") {
+      document.addEventListener("click", handleExplorerDocumentClick);
+      document.addEventListener("keydown", handleExplorerKeydown);
+    }
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("resize", closeExplorerMenu);
     }
 
     if (nodeKeyInput) {
