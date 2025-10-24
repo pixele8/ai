@@ -133,6 +133,7 @@
     var nodeUnitInput = document.getElementById("trendNodeUnit");
     var nodeManualSelect = document.getElementById("trendNodeManual");
     var nodeLowerInput = document.getElementById("trendNodeLower");
+    var nodeCenterInput = document.getElementById("trendNodeCenter");
     var nodeUpperInput = document.getElementById("trendNodeUpper");
     var nodePositionSelect = document.getElementById("trendNodePosition");
     var nodeRefField = document.getElementById("trendNodeRefField");
@@ -313,6 +314,9 @@
         if (typeof node.lower === "number") {
           bounds.push("下限 " + node.lower);
         }
+        if (typeof node.center === "number") {
+          bounds.push("中值 " + node.center);
+        }
         if (typeof node.upper === "number") {
           bounds.push("上限 " + node.upper);
         }
@@ -353,6 +357,9 @@
         nodeUnitInput.value = "℃";
         nodeManualSelect.value = "false";
         nodeLowerInput.value = "";
+        if (nodeCenterInput) {
+          nodeCenterInput.value = "";
+        }
         nodeUpperInput.value = "";
         nodePositionSelect.value = "after";
         manualStepInput.value = "";
@@ -371,6 +378,9 @@
       nodeUnitInput.value = node.unit || "";
       nodeManualSelect.value = node.manual ? "true" : "false";
       nodeLowerInput.value = typeof node.lower === "number" ? node.lower : "";
+      if (nodeCenterInput) {
+        nodeCenterInput.value = typeof node.center === "number" ? node.center : "";
+      }
       nodeUpperInput.value = typeof node.upper === "number" ? node.upper : "";
       nodePositionSelect.value = node.positionMode || "after";
       manualStepInput.value = typeof node.manualStep === "number" ? node.manualStep : "";
@@ -420,6 +430,9 @@
         if (typeof item.lower === "number") {
           parts.push("下限 " + item.lower);
         }
+        if (typeof item.center === "number") {
+          parts.push("中值 " + item.center);
+        }
         if (typeof item.upper === "number") {
           parts.push("上限 " + item.upper);
         }
@@ -463,12 +476,14 @@
       }
       var unit = window.prompt("子节点单位", node.unit || "");
       var lower = window.prompt("下限 (可空)", typeof node.lower === "number" ? node.lower : "");
+      var center = window.prompt("中值 (可空)", typeof node.center === "number" ? node.center : "");
       var upper = window.prompt("上限 (可空)", typeof node.upper === "number" ? node.upper : "");
       var manual = window.confirm("是否手动调整节点？当前值：" + (node.manual ? "是" : "否"));
       var step = window.prompt("单次标准调整量", typeof node.manualStep === "number" ? node.manualStep : "");
       node.name = name;
       node.unit = unit || node.unit;
       node.lower = lower === "" ? null : parseFloat(lower);
+      node.center = center === "" ? null : parseFloat(center);
       node.upper = upper === "" ? null : parseFloat(upper);
       node.manual = manual;
       node.manualStep = step === "" ? node.manualStep : parseFloat(step);
@@ -482,6 +497,7 @@
       }
       var unit = window.prompt("单位", nodeUnitInput.value || "℃");
       var lower = window.prompt("下限 (可空)", nodeLowerInput.value || "");
+      var center = window.prompt("中值 (可空)", nodeCenterInput && nodeCenterInput.value ? nodeCenterInput.value : "");
       var upper = window.prompt("上限 (可空)", nodeUpperInput.value || "");
       var manual = window.confirm("是否为手动调整子节点？");
       var step = window.prompt("单次标准调整量", manualStepInput.value || "");
@@ -490,6 +506,7 @@
         name: name,
         unit: unit || nodeUnitInput.value || "",
         lower: lower === "" ? null : parseFloat(lower),
+        center: center === "" ? null : parseFloat(center),
         upper: upper === "" ? null : parseFloat(upper),
         manual: manual,
         manualStep: step === "" ? null : parseFloat(step)
@@ -506,6 +523,7 @@
         manual: manual,
         manualStep: manualStepInput.value ? parseFloat(manualStepInput.value) : null,
         lower: nodeLowerInput.value ? parseFloat(nodeLowerInput.value) : null,
+        center: nodeCenterInput && nodeCenterInput.value ? parseFloat(nodeCenterInput.value) : null,
         upper: nodeUpperInput.value ? parseFloat(nodeUpperInput.value) : null,
         positionMode: nodePositionSelect.value,
         positionRef: nodeRefSelect.value || null,

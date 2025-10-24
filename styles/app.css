@@ -4229,6 +4229,10 @@ textarea:focus {
   gap: 12px;
 }
 
+.trend-form .form-row.triple {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .trend-form .form-field {
   display: flex;
   flex-direction: column;

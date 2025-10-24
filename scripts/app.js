@@ -2777,6 +2777,13 @@
       if (typeof node.lower !== "number" && node.lower !== null) {
         node.lower = null;
       }
+      if (typeof node.center !== "number" && node.center !== null) {
+        if (typeof node.lower === "number" && typeof node.upper === "number") {
+          node.center = (node.lower + node.upper) / 2;
+        } else {
+          node.center = null;
+        }
+      }
       if (typeof node.upper !== "number" && node.upper !== null) {
         node.upper = null;
       }
@@ -2818,6 +2825,15 @@
         }
         if (typeof child.lower !== "number" && child.lower !== null) {
           child.lower = node.lower;
+        }
+        if (typeof child.center !== "number" && child.center !== null) {
+          if (typeof child.lower === "number" && typeof child.upper === "number") {
+            child.center = (child.lower + child.upper) / 2;
+          } else if (typeof node.center === "number") {
+            child.center = node.center;
+          } else {
+            child.center = null;
+          }
         }
         if (typeof child.upper !== "number" && child.upper !== null) {
           child.upper = node.upper;
@@ -3084,6 +3100,15 @@
     } else if (typeof base.lower !== "number" && base.lower !== null) {
       base.lower = null;
     }
+    if (typeof payload.center === "number" || payload.center === null) {
+      base.center = payload.center;
+    } else if (typeof base.center !== "number" && base.center !== null) {
+      if (typeof base.lower === "number" && typeof base.upper === "number") {
+        base.center = (base.lower + base.upper) / 2;
+      } else {
+        base.center = null;
+      }
+    }
     if (typeof payload.upper === "number" || payload.upper === null) {
       base.upper = payload.upper;
     } else if (typeof base.upper !== "number" && base.upper !== null) {
@@ -3129,6 +3154,17 @@
           existing.lower = childInput.lower;
         } else if (typeof existing.lower !== "number" && existing.lower !== null) {
           existing.lower = base.lower;
+        }
+        if (typeof childInput.center === "number" || childInput.center === null) {
+          existing.center = childInput.center;
+        } else if (typeof existing.center !== "number" && existing.center !== null) {
+          if (typeof existing.lower === "number" && typeof existing.upper === "number") {
+            existing.center = (existing.lower + existing.upper) / 2;
+          } else if (typeof base.center === "number") {
+            existing.center = base.center;
+          } else {
+            existing.center = null;
+          }
         }
         if (typeof childInput.upper === "number" || childInput.upper === null) {
           existing.upper = childInput.upper;
@@ -3304,7 +3340,124 @@
     return (last.value - first.value) / (dt / 60000);
   }
 
-  function calcRangeStatus(value, lower, upper) {
+  function resolveTrendBounds(node, child) {
+    var lower = null;
+    var upper = null;
+    var center = null;
+    if (child) {
+      if (typeof child.lower === "number") {
+        lower = child.lower;
+      }
+      if (typeof child.upper === "number") {
+        upper = child.upper;
+      }
+      if (typeof child.center === "number") {
+        center = child.center;
+      }
+    }
+    if (node) {
+      if (lower === null && typeof node.lower === "number") {
+        lower = node.lower;
+      }
+      if (upper === null && typeof node.upper === "number") {
+        upper = node.upper;
+      }
+      if (center === null && typeof node.center === "number") {
+        center = node.center;
+      }
+    }
+    if (center === null && lower !== null && upper !== null) {
+      center = (lower + upper) / 2;
+    }
+    return {
+      lower: typeof lower === "number" ? lower : null,
+      upper: typeof upper === "number" ? upper : null,
+      center: typeof center === "number" ? center : null
+    };
+  }
+
+  function computeBoundsRange(bounds) {
+    if (!bounds) {
+      return null;
+    }
+    if (typeof bounds.upper === "number" && typeof bounds.lower === "number" && bounds.upper > bounds.lower) {
+      return bounds.upper - bounds.lower;
+    }
+    if (typeof bounds.center === "number") {
+      var ref = Math.abs(bounds.center) || 1;
+      return ref * 0.2;
+    }
+    return null;
+  }
+
+  function computeRelationshipWeight(sourceNode, targetNode, relation) {
+    if (!sourceNode || !targetNode) {
+      return 0.4;
+    }
+    var sourceBounds = resolveTrendBounds(sourceNode, null);
+    var targetBounds = resolveTrendBounds(targetNode, null);
+    var base;
+    if (relation === "upstream") {
+      base = 0.7;
+    } else if (relation === "downstream") {
+      base = 0.6;
+    } else {
+      base = 0.5;
+    }
+    var sourceRange = computeBoundsRange(sourceBounds) || 1;
+    var targetRange = computeBoundsRange(targetBounds) || 1;
+    var rangeRatio = targetRange / sourceRange;
+    if (!isFinite(rangeRatio) || rangeRatio <= 0) {
+      rangeRatio = 1;
+    }
+    var rangeFactor = rangeRatio > 1 ? 1 / rangeRatio : rangeRatio;
+    rangeFactor = Math.max(0.3, Math.min(1, rangeFactor));
+    var centerFactor = 0.75;
+    if (typeof sourceBounds.center === "number" && typeof targetBounds.center === "number") {
+      var diff = Math.abs(sourceBounds.center - targetBounds.center);
+      var span = (sourceRange + targetRange) / 2;
+      if (!span || !isFinite(span)) {
+        span = Math.max(Math.abs(sourceBounds.center), Math.abs(targetBounds.center), 1);
+      }
+      var ratio = span ? diff / (span + 1) : 0;
+      centerFactor = Math.max(0.35, Math.min(1.1, 1 - Math.min(0.8, ratio)));
+    }
+    var weight = base * rangeFactor * centerFactor;
+    if (!isFinite(weight) || weight <= 0) {
+      weight = base * 0.5;
+    }
+    return Math.max(0.2, Math.min(1.5, parseFloat(weight.toFixed(3))));
+  }
+
+  function computeManualInfluenceWeight(manualNode, targetNode, targetChild) {
+    if (!manualNode || !targetNode) {
+      return 0.5;
+    }
+    var manualBounds = resolveTrendBounds(manualNode, null);
+    var targetBounds = resolveTrendBounds(targetNode, targetChild);
+    var manualStep = typeof manualNode.manualStep === "number" && manualNode.manualStep !== 0
+      ? Math.abs(manualNode.manualStep)
+      : 1;
+    var targetRange = computeBoundsRange(targetBounds) || 1;
+    var base = manualStep / targetRange;
+    if (!isFinite(base) || base <= 0) {
+      base = 0.5;
+    }
+    var centerFactor = 1;
+    if (typeof manualBounds.center === "number" && typeof targetBounds.center === "number") {
+      var diff = Math.abs(manualBounds.center - targetBounds.center);
+      var span = (computeBoundsRange(manualBounds) || targetRange || 1);
+      var ratio = span ? diff / (span + 1) : 0;
+      centerFactor = Math.max(0.35, Math.min(1.25, 1 - Math.min(0.85, ratio)));
+    }
+    var weight = base * centerFactor;
+    if (!isFinite(weight) || weight <= 0) {
+      weight = 0.5;
+    }
+    return Math.max(0.25, Math.min(2, parseFloat(weight.toFixed(3))));
+  }
+
+  function calcRangeStatus(value, lower, upper, center) {
     if (typeof value !== "number") {
       return "未知";
     }
@@ -3314,23 +3467,41 @@
     if (typeof upper === "number" && value > upper) {
       return "超上限";
     }
-    if (typeof lower === "number" && value < lower + (typeof upper === "number" ? (upper - lower) * 0.1 : 1)) {
-      return "偏低";
+    if (typeof center === "number") {
+      var span = 1;
+      if (typeof lower === "number" && typeof upper === "number" && upper > lower) {
+        span = (upper - lower) / 6;
+      } else {
+        span = Math.max(Math.abs(center) * 0.05, 0.5);
+      }
+      if (value > center + span) {
+        return "偏高";
+      }
+      if (value < center - span) {
+        return "偏低";
+      }
+      return "平稳";
     }
-    if (typeof upper === "number" && value > upper - (typeof lower === "number" ? (upper - lower) * 0.1 : 1)) {
-      return "偏高";
+    if (typeof lower === "number" && typeof upper === "number" && upper > lower) {
+      var tolerance = (upper - lower) * 0.1;
+      if (value < lower + tolerance) {
+        return "偏低";
+      }
+      if (value > upper - tolerance) {
+        return "偏高";
+      }
     }
     return "平稳";
   }
 
-  function summarizeDuration(points, lower, upper) {
+  function summarizeDuration(points, lower, upper, center) {
     if (!points || points.length === 0) {
       return 0;
     }
     var thresholdTime = null;
     for (var i = points.length - 1; i >= 0; i -= 1) {
       var pt = points[i];
-      var status = calcRangeStatus(pt.value, lower, upper);
+      var status = calcRangeStatus(pt.value, lower, upper, center);
       if (status === "平稳") {
         break;
       }
@@ -3458,13 +3629,31 @@
     if (!Array.isArray(nodes)) {
       return adjacency;
     }
+    var nodeMap = {};
     for (var i = 0; i < nodes.length; i += 1) {
       var node = nodes[i];
       if (!node || !node.id) {
         continue;
       }
+      nodeMap[node.id] = node;
       adjacency[node.id] = adjacency[node.id] || { upstream: [], downstream: [], parallel: [] };
     }
+
+    function ensureEntry(list, nodeId, weight) {
+      if (!Array.isArray(list) || !nodeId) {
+        return;
+      }
+      for (var idx = 0; idx < list.length; idx += 1) {
+        if (list[idx] && list[idx].nodeId === nodeId) {
+          if (typeof weight === "number" && !isNaN(weight)) {
+            list[idx].weight = weight;
+          }
+          return;
+        }
+      }
+      list.push({ nodeId: nodeId, weight: typeof weight === "number" && isFinite(weight) ? weight : 0.4 });
+    }
+
     for (var n = 0; n < nodes.length; n += 1) {
       var current = nodes[n];
       if (!current || !current.id) {
@@ -3477,22 +3666,20 @@
         upstreamId = nodes[n - 1].id;
       }
       if (upstreamId && adjacency[current.id]) {
-        if (adjacency[current.id].upstream.indexOf(upstreamId) === -1) {
-          adjacency[current.id].upstream.push(upstreamId);
-        }
-        if (adjacency[upstreamId] && adjacency[upstreamId].downstream.indexOf(current.id) === -1) {
-          adjacency[upstreamId].downstream.push(current.id);
+        var upstreamNode = nodeMap[upstreamId];
+        var currentNode = nodeMap[current.id];
+        ensureEntry(adjacency[current.id].upstream, upstreamId, computeRelationshipWeight(currentNode, upstreamNode, "upstream"));
+        if (adjacency[upstreamId]) {
+          ensureEntry(adjacency[upstreamId].downstream, current.id, computeRelationshipWeight(upstreamNode, currentNode, "downstream"));
         }
       }
       if (current.positionMode === "same" || current.positionMode === "parallel") {
         var peerId = current.positionRef || upstreamId;
         if (peerId && adjacency[peerId]) {
-          if (adjacency[current.id].parallel.indexOf(peerId) === -1) {
-            adjacency[current.id].parallel.push(peerId);
-          }
-          if (adjacency[peerId].parallel.indexOf(current.id) === -1) {
-            adjacency[peerId].parallel.push(current.id);
-          }
+          var peerNode = nodeMap[peerId];
+          var currentNodeForParallel = nodeMap[current.id];
+          ensureEntry(adjacency[current.id].parallel, peerId, computeRelationshipWeight(currentNodeForParallel, peerNode, "parallel"));
+          ensureEntry(adjacency[peerId].parallel, current.id, computeRelationshipWeight(peerNode, currentNodeForParallel, "parallel"));
         }
       }
     }
@@ -3514,7 +3701,23 @@
         if (!target || !target.nodeId) {
           continue;
         }
-        var key = target.subNodeId ? target.nodeId + "::" + target.subNodeId : target.nodeId;
+        var targetNode = findTrendNodeById(target.nodeId);
+        if (!targetNode) {
+          continue;
+        }
+        var subId = null;
+        var targetChild = null;
+        if (target.subNodeId) {
+          subId = target.subNodeId;
+          var subCandidate = findTrendChild(targetNode, subId);
+          if (!subCandidate) {
+            subId = null;
+          } else {
+            subId = subCandidate.id;
+            targetChild = subCandidate;
+          }
+        }
+        var key = subId ? targetNode.id + "::" + subId : targetNode.id;
         if (!map[key]) {
           map[key] = [];
         }
@@ -3522,7 +3725,9 @@
           sourceId: node.id,
           sourceName: node.name || "手动节点",
           manualStep: typeof node.manualStep === "number" ? node.manualStep : 1,
-          weight: typeof target.weight === "number" && !isNaN(target.weight) ? target.weight : 1
+          weight: typeof target.weight === "number" && !isNaN(target.weight)
+            ? target.weight
+            : computeManualInfluenceWeight(node, targetNode, targetChild)
         });
       }
     }
@@ -3557,8 +3762,15 @@
       }
       seen[key] = true;
       var entry = { nodeId: targetNode.id, subNodeId: subId };
+      var manualNode = findTrendNodeById(manualNodeId);
+      var targetChild = subId ? findTrendChild(targetNode, subId) : null;
       if (typeof target.weight === "number" && !isNaN(target.weight)) {
         entry.weight = target.weight;
+      } else {
+        var computedWeight = computeManualInfluenceWeight(manualNode, targetNode, targetChild);
+        if (computedWeight) {
+          entry.weight = computedWeight;
+        }
       }
       cleaned.push(entry);
     }
@@ -3605,7 +3817,7 @@
     return summary;
   }
 
-  function extractSeriesMetrics(series, lower, upper, label, unit) {
+  function extractSeriesMetrics(series, lower, upper, center, label, unit) {
     if (!series || !series.length) {
       return null;
     }
@@ -3613,7 +3825,7 @@
       return new Date(a.capturedAt).getTime() - new Date(b.capturedAt).getTime();
     });
     var latest = ordered[ordered.length - 1];
-    var status = calcRangeStatus(latest.value, lower, upper);
+    var status = calcRangeStatus(latest.value, lower, upper, center);
     var slope = calcSlope(ordered.slice(Math.max(0, ordered.length - 5)));
     return {
       label: label || "",
@@ -3622,9 +3834,10 @@
       capturedAt: latest.capturedAt,
       status: status,
       slope: slope,
-      duration: summarizeDuration(ordered, lower, upper),
+      duration: summarizeDuration(ordered, lower, upper, center),
       mean: calcMean(ordered),
       lower: lower,
+      center: center,
       upper: upper
     };
   }
@@ -3651,6 +3864,9 @@
       }
       if (metric.duration) {
         segment += "，持续 " + metric.duration + " 分钟";
+      }
+      if (typeof metric.weight === "number") {
+        segment += "，影响系数 " + metric.weight.toFixed(2);
       }
       parts.push(segment);
     }
@@ -3684,6 +3900,9 @@
       if (item.summary && item.summary.lastNote) {
         text += " · " + item.summary.lastNote;
       }
+      if (typeof item.weight === "number") {
+        text += " · 影响系数 " + item.weight.toFixed(2);
+      }
       parts.push(text);
     }
     if (!parts.length) {
@@ -3705,15 +3924,18 @@
       summary: []
     };
     var unit = child ? child.unit : node.unit;
-    var lower = child && typeof child.lower === "number" ? child.lower : node.lower;
-    var upper = child && typeof child.upper === "number" ? child.upper : node.upper;
+    var bounds = resolveTrendBounds(node, child);
+    var lower = bounds.lower;
+    var center = bounds.center;
+    var upper = bounds.upper;
     var label = child ? node.name + " · " + child.name : node.name;
-    context.current = extractSeriesMetrics(series, lower, upper, label, unit);
+    context.current = extractSeriesMetrics(series, lower, upper, center, label, unit);
 
-    function collectNeighborMetrics(targetId, bucket) {
-      if (!targetId) {
+    function collectNeighborMetrics(targetEntry, bucket, relation) {
+      if (!targetEntry) {
         return;
       }
+      var targetId = typeof targetEntry === "string" ? targetEntry : targetEntry.nodeId;
       var neighborNode = findTrendNodeById(targetId);
       if (!neighborNode) {
         return;
@@ -3723,8 +3945,25 @@
       if (!raw || !raw.length) {
         return;
       }
-      var metrics = extractSeriesMetrics(raw, neighborNode.lower, neighborNode.upper, neighborNode.name, neighborNode.unit);
+      var neighborBounds = resolveTrendBounds(neighborNode, null);
+      var metrics = extractSeriesMetrics(
+        raw,
+        neighborBounds.lower,
+        neighborBounds.upper,
+        neighborBounds.center,
+        neighborNode.name,
+        neighborNode.unit
+      );
       if (metrics) {
+        if (targetEntry && typeof targetEntry.weight === "number") {
+          metrics.weight = targetEntry.weight;
+        } else if (relation === "upstream") {
+          metrics.weight = 0.6;
+        } else if (relation === "parallel") {
+          metrics.weight = 0.5;
+        } else {
+          metrics.weight = 0.4;
+        }
         bucket.push(metrics);
       }
     }
@@ -3733,17 +3972,17 @@
     if (entry) {
       if (Array.isArray(entry.upstream)) {
         for (var u = 0; u < entry.upstream.length; u += 1) {
-          collectNeighborMetrics(entry.upstream[u], context.upstream);
+          collectNeighborMetrics(entry.upstream[u], context.upstream, "upstream");
         }
       }
       if (Array.isArray(entry.downstream)) {
         for (var d = 0; d < entry.downstream.length; d += 1) {
-          collectNeighborMetrics(entry.downstream[d], context.downstream);
+          collectNeighborMetrics(entry.downstream[d], context.downstream, "downstream");
         }
       }
       if (Array.isArray(entry.parallel)) {
         for (var p = 0; p < entry.parallel.length; p += 1) {
-          collectNeighborMetrics(entry.parallel[p], context.parallel);
+          collectNeighborMetrics(entry.parallel[p], context.parallel, "parallel");
         }
       }
     }
@@ -3764,12 +4003,15 @@
       }
       seenManual[source.sourceId] = true;
       var manualNode = findTrendNodeById(source.sourceId);
+      var manualWeight = typeof source.weight === "number"
+        ? source.weight
+        : computeManualInfluenceWeight(manualNode, node, child || null);
       context.manualInfluence.push({
         sourceId: source.sourceId,
         sourceName: (manualNode && manualNode.name) || source.sourceName || "手动节点",
         summary: manualHistory ? manualHistory[source.sourceId] : null,
         manualStep: typeof source.manualStep === "number" ? source.manualStep : (manualNode && typeof manualNode.manualStep === "number" ? manualNode.manualStep : 1),
-        weight: typeof source.weight === "number" ? source.weight : 1,
+        weight: manualWeight,
         unit: manualNode ? manualNode.unit : ""
       });
     }
@@ -3826,29 +4068,27 @@
     var slopeTotal = 0;
     var slopeWeight = 0;
 
-    function accumulateSlope(metrics, weight) {
-      if (!metrics || !metrics.length || !weight) {
+    function accumulateSlope(metrics, fallbackWeight) {
+      if (!metrics || !metrics.length) {
         return;
       }
-      var sum = 0;
-      var count = 0;
       for (var i = 0; i < metrics.length; i += 1) {
-        if (!metrics[i] || typeof metrics[i].slope !== "number" || isNaN(metrics[i].slope)) {
+        var metric = metrics[i];
+        if (!metric || typeof metric.slope !== "number" || isNaN(metric.slope)) {
           continue;
         }
-        sum += metrics[i].slope;
-        count += 1;
+        var weight = typeof metric.weight === "number" && isFinite(metric.weight) ? metric.weight : fallbackWeight;
+        if (!weight) {
+          continue;
+        }
+        slopeTotal += metric.slope * weight;
+        slopeWeight += weight;
       }
-      if (!count) {
-        return;
-      }
-      slopeTotal += (sum / count) * weight;
-      slopeWeight += weight;
     }
 
-    accumulateSlope(context.upstream, 0.6);
-    accumulateSlope(context.parallel, 0.4);
-    accumulateSlope(context.downstream, 0.3);
+    accumulateSlope(context.upstream, 0.55);
+    accumulateSlope(context.parallel, 0.45);
+    accumulateSlope(context.downstream, 0.35);
 
     var blendedSlope = slopeWeight ? slopeTotal / slopeWeight : 0;
     if (slopeWeight) {
@@ -4033,12 +4273,14 @@
         continue;
       }
       var child = subNodeId ? findTrendChild(node, subNodeId) : null;
-      var lower = child && typeof child.lower === "number" ? child.lower : node.lower;
-      var upper = child && typeof child.upper === "number" ? child.upper : node.upper;
+      var boundsCurrent = resolveTrendBounds(node, child);
+      var lower = boundsCurrent.lower;
+      var center = boundsCurrent.center;
+      var upper = boundsCurrent.upper;
       var latest = series[series.length - 1];
-      var status = calcRangeStatus(latest.value, lower, upper);
+      var status = calcRangeStatus(latest.value, lower, upper, center);
       var slope = calcSlope(series.slice(Math.max(0, series.length - 5)));
-      var duration = summarizeDuration(series, lower, upper);
+      var duration = summarizeDuration(series, lower, upper, center);
       var severity = 1;
       if (status === "超上限" || status === "超下限") {
         severity = 4;
@@ -4060,6 +4302,9 @@
       detail.push("最新值 " + formatTrendValue(latest.value, child ? child.unit : node.unit));
       if (typeof lower === "number" || typeof upper === "number") {
         detail.push("范围 " + (typeof lower === "number" ? lower : "-") + " ~ " + (typeof upper === "number" ? upper : "-"));
+      }
+      if (typeof center === "number") {
+        detail.push("中值 " + center);
       }
       if (duration > 0 && status !== "平稳") {
         detail.push(status + "持续 " + duration + " 分钟");
@@ -4089,10 +4334,10 @@
         forecast.unit = child ? child.unit : node.unit;
         forecast.label = child ? child.name : node.name;
         forecast.latestValue = latest.value;
-        forecast.status = calcRangeStatus(forecast.value, lower, upper);
+        forecast.status = calcRangeStatus(forecast.value, lower, upper, center);
         forecast.generatedAt = nowIso;
-        forecast = applyContextualForecast(forecast, context, { lower: lower, upper: upper });
-        forecast.status = calcRangeStatus(forecast.value, lower, upper);
+        forecast = applyContextualForecast(forecast, context, { lower: lower, upper: upper, center: center });
+        forecast.status = calcRangeStatus(forecast.value, lower, upper, center);
         detail.push("预测 " + forecast.horizonMinutes + " 分钟后约为 " + formatTrendValue(forecast.value, forecast.unit) + "，状态 " + forecast.status + "，置信度 " + Math.round((forecast.confidence || 0) * 100) + "%");
         newForecasts.push(forecast);
       }
