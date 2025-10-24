@@ -35,23 +35,30 @@
       <div class="user-info" id="userInfo"></div>
     </header>
     <section class="panel trend-panel">
+      <div class="trend-explorer-panel" id="trendExplorerPanel">
+        <header class="trend-explorer-toolbar">
+          <div class="trend-explorer-path">
+            <button type="button" class="ghost-button" id="trendExplorerUp" aria-label="返回上级">返回</button>
+            <div class="trend-explorer-breadcrumb" id="trendExplorerBreadcrumb" aria-label="当前位置">顶层节点组</div>
+          </div>
+          <div class="trend-explorer-actions">
+            <button type="button" class="ghost-button" id="trendExplorerAddGroup">新建节点组</button>
+            <button type="button" class="ghost-button" id="trendExplorerAddNode">新建节点</button>
+          </div>
+        </header>
+        <div class="trend-explorer-canvas" role="presentation">
+          <div class="trend-explorer-grid" id="trendExplorerGrid" role="list"></div>
+          <div class="trend-explorer-empty" id="trendExplorerEmpty">暂无节点组，请使用右键菜单或按钮创建。</div>
+        </div>
+        <div class="trend-explorer-menu" id="trendExplorerMenu" hidden></div>
+      </div>
       <div class="trend-grid">
         <aside class="trend-config" aria-label="节点组配置">
           <div class="trend-config-header">
             <h2>节点组拓扑</h2>
           </div>
           <div class="trend-config-body" id="trendNodeList" role="presentation">
-            <div class="trend-explorer-header">
-              <button type="button" class="ghost-button" id="trendExplorerUp">返回上级</button>
-              <div class="trend-explorer-breadcrumb" id="trendExplorerBreadcrumb" aria-label="当前位置">顶层节点组</div>
-              <div class="trend-explorer-actions">
-                <button type="button" class="ghost-button" id="trendExplorerAddGroup">新建节点组</button>
-                <button type="button" class="ghost-button" id="trendExplorerAddNode">新建节点</button>
-              </div>
-            </div>
-            <div class="trend-explorer-grid" id="trendExplorerGrid" role="list"></div>
-            <div class="trend-explorer-empty" id="trendExplorerEmpty">暂无节点组，请使用右键菜单或按钮创建。</div>
-            <div class="trend-explorer-menu" id="trendExplorerMenu" hidden></div>
+            <p class="trend-config-intro">在上方资源面板中选择节点组或节点，即可在此查看详情并进行编辑。</p>
           </div>
           <form id="trendNodeForm" class="trend-form" autocomplete="off">
             <h3 id="trendFormTitle">节点组详情</h3>

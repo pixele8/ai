@@ -857,7 +857,7 @@
       return false;
     }
 
-    var explorerContainer = document.getElementById("trendNodeList");
+    var explorerContainer = document.getElementById("trendExplorerPanel");
     var explorerGridEl = document.getElementById("trendExplorerGrid");
     var explorerEmptyEl = document.getElementById("trendExplorerEmpty");
     var explorerBreadcrumbEl = document.getElementById("trendExplorerBreadcrumb");
