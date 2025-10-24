@@ -99,7 +99,8 @@
       manualOnly: false,
       simulatedOnly: false,
       selectedId: null,
-      unsubscribe: null
+      unsubscribe: null,
+      fallbackRequested: false
     };
 
     var statsEl = document.getElementById("trendRegistryStats");
@@ -134,6 +135,42 @@
       buildGroupOptions();
       renderTable();
       renderDetail();
+      attemptIndexedFallback();
+    }
+
+    function attemptIndexedFallback() {
+      if (state.library && state.library.length) {
+        return;
+      }
+      if (state.fallbackRequested) {
+        return;
+      }
+      if (!window.TrendIndexedStore || typeof window.TrendIndexedStore.loadNodeLibrary !== "function") {
+        state.fallbackRequested = true;
+        return;
+      }
+      state.fallbackRequested = true;
+      try {
+        var promise = window.TrendIndexedStore.loadNodeLibrary();
+        if (promise && typeof promise.then === "function") {
+          promise.then(function (records) {
+            if (records && records.length) {
+              state.library = records.slice();
+              if (!state.selectedId && state.library.length) {
+                state.selectedId = state.library[0].id;
+              }
+              renderStats();
+              buildGroupOptions();
+              renderTable();
+              renderDetail();
+            }
+          }).catch(function (err) {
+            console.warn("trend registry fallback failed", err);
+          });
+        }
+      } catch (err) {
+        console.warn("trend registry fallback error", err);
+      }
     }
 
     function renderStats() {

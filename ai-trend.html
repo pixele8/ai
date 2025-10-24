@@ -49,13 +49,6 @@
           </div>
         </div>
         <div class="trend-desktop-info">
-          <div class="trend-console-summary">
-            <header class="trend-console-summary-header">
-              <h2>控制台基础信息</h2>
-              <p>实时汇总状态、采样区间与异常预警。</p>
-            </header>
-            <div class="trend-console-items" id="trendSummary"></div>
-          </div>
           <div class="trend-console-output" id="trendOutputCard">
             <div class="trend-target-title">引出量中心</div>
             <div class="trend-target-values">
@@ -411,6 +404,27 @@
       <h2 id="trendTargetModalTitle">引出量目标</h2>
       <button type="button" class="ghost-button" id="trendTargetModalClose">关闭</button>
     </header>
+    <div class="trend-target-summary" id="trendTargetSummary">
+      <div class="trend-target-summary-grid">
+        <div class="trend-target-summary-card">
+          <div class="summary-label">中心目标</div>
+          <div class="summary-value" id="trendTargetSummaryCenter">--</div>
+        </div>
+        <div class="trend-target-summary-card">
+          <div class="summary-label">安全区间</div>
+          <div class="summary-value" id="trendTargetSummaryRange">--</div>
+        </div>
+        <div class="trend-target-summary-card">
+          <div class="summary-label">采样 / 预测</div>
+          <div class="summary-value" id="trendTargetSummaryWindow">--</div>
+        </div>
+        <div class="trend-target-summary-card">
+          <div class="summary-label">节点 / 数据源</div>
+          <div class="summary-value" id="trendTargetSummaryContext">--</div>
+        </div>
+      </div>
+      <p class="trend-target-summary-status" id="trendTargetSummaryStatus">引出量目标用于衡量整体引出量稳定性。</p>
+    </div>
     <form id="trendTargetModalForm" class="trend-target-form" autocomplete="off">
       <div class="form-row triple">
         <div class="form-field">

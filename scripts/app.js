@@ -55,6 +55,8 @@
   var trendRejectForm = null;
   var trendRejectInput = null;
   var trendRejectSuggestionId = null;
+  var trendIndexedDbPromise = null;
+  var trendIndexedHydrated = false;
   var FAVORITE_OVERLAY_STATE_KEY = "aiFavoriteOverlayState";
   var TREND_BEACON_POSITION_KEY = "aiTrendBeaconPosition";
   var SESSION_LIST_MIN = 7;
@@ -2096,6 +2098,7 @@
     } catch (err) {
       console.error("保存状态失败", err);
     }
+    persistTrendStoreSnapshotToDb();
   }
 
   function loadState() {
@@ -2853,6 +2856,156 @@
     return state.settings.contaminationGroups.slice();
   }
 
+  function getTrendIndexedDb() {
+    if (typeof indexedDB === "undefined") {
+      return Promise.resolve(null);
+    }
+    if (trendIndexedDbPromise) {
+      return trendIndexedDbPromise;
+    }
+    trendIndexedDbPromise = new Promise(function (resolve) {
+      var request;
+      try {
+        request = indexedDB.open("hongxiaoliao-trend", 1);
+      } catch (err) {
+        resolve(null);
+        return;
+      }
+      request.onupgradeneeded = function (event) {
+        var db = event.target.result;
+        if (db && !db.objectStoreNames.contains("kv")) {
+          db.createObjectStore("kv", { keyPath: "key" });
+        }
+      };
+      request.onsuccess = function (event) {
+        resolve(event.target.result);
+      };
+      request.onerror = function () {
+        resolve(null);
+      };
+      request.onblocked = function () {
+        resolve(null);
+      };
+    });
+    return trendIndexedDbPromise;
+  }
+
+  function persistTrendStoreSnapshotToDb() {
+    if (!state || !state.tools || !state.tools.trend || typeof indexedDB === "undefined") {
+      return;
+    }
+    var snapshot = {
+      nodes: Array.isArray(state.tools.trend.nodes) ? state.tools.trend.nodes : [],
+      nodeLibrary: Array.isArray(state.tools.trend.nodeLibrary) ? state.tools.trend.nodeLibrary : [],
+      hierarchy: state.tools.trend.hierarchy || { groups: {}, nodes: {} },
+      groupPaths: state.tools.trend.groupPaths || {},
+      settings: state.tools.trend.settings || {},
+      updatedAt: new Date().toISOString()
+    };
+    getTrendIndexedDb().then(function (db) {
+      if (!db) {
+        return;
+      }
+      var tx;
+      try {
+        tx = db.transaction("kv", "readwrite");
+      } catch (err) {
+        console.warn("trend store db transaction failed", err);
+        return;
+      }
+      try {
+        tx.objectStore("kv").put({ key: "trendStore", value: snapshot });
+      } catch (err) {
+        console.warn("persist trend store snapshot failed", err);
+      }
+    }).catch(function (err) {
+      console.warn("persist trend store db error", err);
+    });
+  }
+
+  function loadTrendStoreSnapshotFromDb() {
+    if (typeof indexedDB === "undefined") {
+      return Promise.resolve(null);
+    }
+    return getTrendIndexedDb().then(function (db) {
+      if (!db) {
+        return null;
+      }
+      return new Promise(function (resolve) {
+        var tx;
+        try {
+          tx = db.transaction("kv", "readonly");
+        } catch (err) {
+          resolve(null);
+          return;
+        }
+        var store = tx.objectStore("kv");
+        var request = store.get("trendStore");
+        request.onsuccess = function () {
+          var result = request.result;
+          if (result && Object.prototype.hasOwnProperty.call(result, "value")) {
+            resolve(result.value);
+          } else {
+            resolve(result || null);
+          }
+        };
+        request.onerror = function () {
+          resolve(null);
+        };
+      });
+    });
+  }
+
+  function loadTrendNodeLibraryFromDb() {
+    return loadTrendStoreSnapshotFromDb().then(function (snapshot) {
+      if (snapshot && Array.isArray(snapshot.nodeLibrary)) {
+        return snapshot.nodeLibrary;
+      }
+      return [];
+    });
+  }
+
+  function hydrateTrendStoreFromDb() {
+    if (trendIndexedHydrated || typeof indexedDB === "undefined") {
+      return;
+    }
+    trendIndexedHydrated = true;
+    loadTrendStoreSnapshotFromDb().then(function (snapshot) {
+      if (!snapshot || !state || !state.tools || !state.tools.trend) {
+        return;
+      }
+      var trend = state.tools.trend;
+      var changed = false;
+      if (Array.isArray(snapshot.nodes) && (!Array.isArray(trend.nodes) || !trend.nodes.length)) {
+        trend.nodes = snapshot.nodes;
+        changed = true;
+      }
+      if (Array.isArray(snapshot.nodeLibrary) && (!Array.isArray(trend.nodeLibrary) || !trend.nodeLibrary.length)) {
+        trend.nodeLibrary = snapshot.nodeLibrary;
+        changed = true;
+      }
+      if (snapshot.groupPaths && (!trend.groupPaths || Object.keys(trend.groupPaths).length === 0)) {
+        trend.groupPaths = snapshot.groupPaths;
+        changed = true;
+      }
+      if (snapshot.hierarchy && (!trend.hierarchy || (Object.keys(trend.hierarchy.nodes || {}).length === 0 && Object.keys(trend.hierarchy.groups || {}).length === 0))) {
+        trend.hierarchy = snapshot.hierarchy;
+        changed = true;
+      }
+      if (snapshot.settings && (!trend.settings || Object.keys(trend.settings).length === 0)) {
+        trend.settings = snapshot.settings;
+        changed = true;
+      }
+      if (changed) {
+        rebuildTrendNodeLibrary();
+        saveState();
+        emitTrendChange();
+      }
+    }).catch(function (err) {
+      console.warn("hydrate trend store failed", err);
+    });
+  }
+
   function ensureTrendStore() {
     if (!state.tools || typeof state.tools !== "object") {
       state.tools = {};
@@ -3141,6 +3294,7 @@
     if (trend.forecasts.length > 400) {
       trend.forecasts = trend.forecasts.slice(trend.forecasts.length - 400);
     }
+    hydrateTrendStoreFromDb();
   }
 
   function cloneTrendNodes() {
@@ -3792,6 +3946,7 @@
     state.tools.trend.groupPaths = pathCache;
     state.tools.trend.nodeRegistry = nodeRegistry;
     state.tools.trend.hierarchy = { groups: groupHierarchy, nodes: nodeRegistry, version: 1 };
+    persistTrendStoreSnapshotToDb();
   }
 
   function sanitizeTrendSample(sample) {
@@ -13417,4 +13572,10 @@
   window.TrendDataBridge.remove = removeTrendMesEndpoint;
   window.TrendDataBridge.list = listTrendMesEndpoints;
   window.TrendDataBridge.fetch = fetchTrendSamplesFromEndpoint;
+
+  if (!window.TrendIndexedStore) {
+    window.TrendIndexedStore = {};
+  }
+  window.TrendIndexedStore.loadStore = loadTrendStoreSnapshotFromDb;
+  window.TrendIndexedStore.loadNodeLibrary = loadTrendNodeLibraryFromDb;
 })();

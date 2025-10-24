@@ -953,6 +953,12 @@
     var summaryEl = document.getElementById("trendSummary");
     var targetCenterEl = document.getElementById("trendTargetCenter");
     var targetRangeEl = document.getElementById("trendTargetRange");
+    var targetSummaryEl = document.getElementById("trendTargetSummary");
+    var targetSummaryCenterEl = document.getElementById("trendTargetSummaryCenter");
+    var targetSummaryRangeEl = document.getElementById("trendTargetSummaryRange");
+    var targetSummaryWindowEl = document.getElementById("trendTargetSummaryWindow");
+    var targetSummaryContextEl = document.getElementById("trendTargetSummaryContext");
+    var targetSummaryStatusEl = document.getElementById("trendTargetSummaryStatus");
     var chartCanvas = document.getElementById("trendChart");
     var chartToolbar = document.querySelector(".trend-chart-toolbar");
     var matrixGridEl = document.getElementById("trendMatrixGrid");
@@ -2177,6 +2183,20 @@
       if (targetModalCancelBtn) {
         targetModalCancelBtn.textContent = viewMode ? "关闭" : "取消";
       }
+      if (targetModalForm) {
+        if (viewMode) {
+          targetModalForm.classList.add("is-view");
+        } else {
+          targetModalForm.classList.remove("is-view");
+        }
+      }
+      if (targetSummaryEl) {
+        if (viewMode) {
+          targetSummaryEl.classList.remove("hidden");
+        } else {
+          targetSummaryEl.classList.add("hidden");
+        }
+      }
     }
 
     function openTargetModal(options) {
@@ -2194,6 +2214,7 @@
       if (targetModalUpperInput) {
         targetModalUpperInput.value = typeof target.upper === "number" ? target.upper : "";
       }
+      renderTargetSummary(target);
       applyTargetModalMode();
       targetModalEl.classList.remove("hidden");
       window.setTimeout(function () {
@@ -3103,6 +3124,100 @@
       });
     }
 
+    function formatTargetNumber(value) {
+      if (typeof value !== "number" || !isFinite(value)) {
+        return "--";
+      }
+      return value.toFixed(3);
+    }
+
+    function formatIntervalMs(ms) {
+      if (typeof ms !== "number" || !isFinite(ms) || ms <= 0) {
+        return "--";
+      }
+      if (ms >= 60000) {
+        var minutes = ms / 60000;
+        var label = minutes >= 10 ? minutes.toFixed(0) : minutes.toFixed(1);
+        return label.replace(/\.0$/, "") + " 分钟";
+      }
+      if (ms >= 1000) {
+        var seconds = ms / 1000;
+        var secLabel = seconds >= 10 ? seconds.toFixed(0) : seconds.toFixed(1);
+        return secLabel.replace(/\.0$/, "") + " 秒";
+      }
+      return Math.round(ms) + " 毫秒";
+    }
+
+    function formatMinutesDuration(minutes) {
+      if (typeof minutes !== "number" || !isFinite(minutes) || minutes <= 0) {
+        return "--";
+      }
+      if (minutes >= 60) {
+        var hours = minutes / 60;
+        var hourLabel = hours >= 10 ? hours.toFixed(0) : hours.toFixed(1);
+        return hourLabel.replace(/\.0$/, "") + " 小时";
+      }
+      var minuteLabel = minutes >= 10 ? minutes.toFixed(0) : minutes.toFixed(1);
+      return minuteLabel.replace(/\.0$/, "") + " 分钟";
+    }
+
+    function renderTargetSummary(target) {
+      target = target || {};
+      if (!targetSummaryCenterEl && !targetSummaryEl) {
+        return;
+      }
+      var lower = typeof target.lower === "number" ? target.lower : null;
+      var center = typeof target.center === "number" ? target.center : null;
+      var upper = typeof target.upper === "number" ? target.upper : null;
+      if (targetSummaryCenterEl) {
+        targetSummaryCenterEl.textContent = center !== null ? formatTargetNumber(center) : "--";
+      }
+      if (targetSummaryRangeEl) {
+        if (lower !== null || upper !== null) {
+          var lowerText = lower !== null ? formatTargetNumber(lower) : "--";
+          var upperText = upper !== null ? formatTargetNumber(upper) : "--";
+          targetSummaryRangeEl.textContent = lowerText + " ~ " + upperText;
+        } else {
+          targetSummaryRangeEl.textContent = "--";
+        }
+      }
+      var settings = state.snapshot && state.snapshot.settings ? state.snapshot.settings : {};
+      var sampleInterval = typeof settings.sampleIntervalMs === "number" ? settings.sampleIntervalMs : null;
+      var lookback = typeof settings.lookbackMinutes === "number" ? settings.lookbackMinutes : null;
+      var prediction = typeof settings.predictionMinutes === "number" ? settings.predictionMinutes : null;
+      if (targetSummaryWindowEl) {
+        var windowParts = [];
+        if (sampleInterval) {
+          windowParts.push("采样 " + formatIntervalMs(sampleInterval));
+        }
+        if (lookback) {
+          windowParts.push("历史 " + formatMinutesDuration(lookback));
+        }
+        if (prediction) {
+          windowParts.push("预测 " + formatMinutesDuration(prediction));
+        }
+        targetSummaryWindowEl.textContent = windowParts.length ? windowParts.join(" · ") : "--";
+      }
+      var library = (state.snapshot && state.snapshot.nodeLibrary) || [];
+      var manualCount = library.filter(function (node) { return node && node.manual; }).length;
+      var endpoints = settings && Array.isArray(settings.mesEndpoints)
+        ? settings.mesEndpoints.filter(function (item) { return item && item.enabled !== false; }).length
+        : 0;
+      if (targetSummaryContextEl) {
+        targetSummaryContextEl.textContent = library.length + " 个节点 / " + manualCount + " 个手动 / " + endpoints + " 个数据源";
+      }
+      if (targetSummaryStatusEl) {
+        var suggestions = (state.snapshot && state.snapshot.suggestions) || [];
+        var activeSuggestions = suggestions.filter(function (item) { return item && item.status === "active"; }).length;
+        var feedback = (state.snapshot && state.snapshot.feedback) || [];
+        if (activeSuggestions || feedback.length) {
+          targetSummaryStatusEl.textContent = "活跃建议 " + activeSuggestions + " 条 · 反馈记录 " + feedback.length + " 条";
+        } else {
+          targetSummaryStatusEl.textContent = "引出量目标用于衡量整体引出量稳定性。";
+        }
+      }
+    }
+
     function renderTargetCard() {
       if (!targetCenterEl || !targetRangeEl) {
         return;
@@ -3112,9 +3227,9 @@
         targetCenterEl.textContent = "--";
         targetRangeEl.textContent = "上下限 -- / --";
       } else {
-        targetCenterEl.textContent = typeof target.center === "number" ? target.center : "--";
-        var lower = typeof target.lower === "number" ? target.lower : "--";
-        var upper = typeof target.upper === "number" ? target.upper : "--";
+        targetCenterEl.textContent = formatTargetNumber(target.center);
+        var lower = formatTargetNumber(target.lower);
+        var upper = formatTargetNumber(target.upper);
         targetRangeEl.textContent = "上下限 " + lower + " / " + upper;
       }
       if (state.snapshot && state.snapshot.demo && state.snapshot.demo.enabled) {
