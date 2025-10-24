@@ -114,18 +114,139 @@
     ctx.stroke();
   }
 
+  function drawMultiSeries(canvas, datasets, options) {
+    if (!canvas || !canvas.getContext) {
+      return;
+    }
+    var sets = Array.isArray(datasets) ? datasets.filter(function (set) {
+      return set && Array.isArray(set.data) && set.data.length;
+    }) : [];
+    var ctx = canvas.getContext("2d");
+    var width = canvas.clientWidth || 600;
+    var height = canvas.clientHeight || 260;
+    canvas.width = width;
+    canvas.height = height;
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = "#f8fafc";
+    ctx.fillRect(0, 0, width, height);
+    if (!sets.length) {
+      ctx.fillStyle = "rgba(15, 23, 42, 0.45)";
+      ctx.font = "14px/1.6 'PingFang SC', 'Microsoft YaHei', sans-serif";
+      ctx.fillText("暂无数据", 20, height / 2);
+      return;
+    }
+    var min = sets[0].data[0].value;
+    var max = sets[0].data[0].value;
+    var minTime = new Date(sets[0].data[0].capturedAt).getTime();
+    var maxTime = minTime;
+    sets.forEach(function (set) {
+      set.data.forEach(function (point) {
+        if (typeof point.value !== "number" || !point.capturedAt) {
+          return;
+        }
+        if (point.value < min) { min = point.value; }
+        if (point.value > max) { max = point.value; }
+        var ts = new Date(point.capturedAt).getTime();
+        if (isFinite(ts)) {
+          if (ts < minTime) { minTime = ts; }
+          if (ts > maxTime) { maxTime = ts; }
+        }
+      });
+    });
+    if (!isFinite(minTime) || !isFinite(maxTime)) {
+      minTime = Date.now() - 600000;
+      maxTime = Date.now();
+    }
+    if (Math.abs(max - min) < 1e-6) {
+      var center = (max + min) / 2;
+      max = center + 1;
+      min = center - 1;
+    }
+    var padding = 24;
+    var bottom = height - padding * 1.4;
+    var top = padding;
+    var span = Math.max(maxTime - minTime, 1);
+    ctx.strokeStyle = "rgba(15, 23, 42, 0.08)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(padding, bottom);
+    ctx.lineTo(width - padding, bottom);
+    ctx.stroke();
+    var palette = (options && options.colors) || ["#94a3b8", "#2563eb", "#f97316", "#10b981"];
+    sets.forEach(function (set, index) {
+      var color = set.color || palette[index % palette.length];
+      ctx.lineWidth = set.lineWidth || 2;
+      if (set.dashed) {
+        ctx.setLineDash([6, 4]);
+      } else {
+        ctx.setLineDash([]);
+      }
+      ctx.strokeStyle = color;
+      ctx.beginPath();
+      set.data.forEach(function (point, pointIndex) {
+        var ts = new Date(point.capturedAt).getTime();
+        if (!isFinite(ts)) {
+          return;
+        }
+        var x = padding + ((ts - minTime) / span) * (width - padding * 2);
+        var y = bottom - ((point.value - min) / (max - min)) * (bottom - top);
+        if (pointIndex === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      });
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+  }
+
   function mount(services) {
     if (!services) {
       return;
     }
+
+    function createScenarioDraft(snapshot, base) {
+      var defaultHorizon = 30;
+      if (snapshot && snapshot.settings && typeof snapshot.settings.predictionMinutes === "number" && snapshot.settings.predictionMinutes > 0) {
+        defaultHorizon = snapshot.settings.predictionMinutes;
+      }
+      var draft = {
+        id: base && base.id ? base.id : null,
+        name: base && base.name ? base.name : "",
+        note: base && base.note ? base.note : "",
+        horizon: base && typeof base.horizonMinutes === "number" ? base.horizonMinutes : defaultHorizon,
+        adjustments: []
+      };
+      if (base && Array.isArray(base.adjustments)) {
+        base.adjustments.forEach(function (adj) {
+          if (!adj || !adj.nodeId) {
+            return;
+          }
+          var key = adj.subNodeId ? adj.nodeId + "::" + adj.subNodeId : adj.nodeId;
+          draft.adjustments.push({ key: key, delta: typeof adj.delta === "number" ? adj.delta : (typeof adj.amount === "number" ? adj.amount : "") });
+        });
+      }
+      if (!draft.adjustments.length) {
+        draft.adjustments.push({ key: "", delta: "" });
+      }
+      return draft;
+    }
+
     var state = {
       services: services,
       snapshot: services.getSnapshot ? services.getSnapshot({}) : null,
       editingNodeId: null,
       editingSubNodes: [],
       selectedRange: 180,
+      scenarioDraft: null,
+      scenarioResult: null,
+      scenarios: services.listScenarios ? services.listScenarios() : [],
+      activeScenarioId: null,
+      scenarioChartKey: null,
       unsubscribe: null
     };
+    state.scenarioDraft = createScenarioDraft(state.snapshot, null);
 
     var nodeListEl = document.getElementById("trendNodeList");
     var nodeForm = document.getElementById("trendNodeForm");
@@ -178,13 +299,87 @@
     var feedbackRatingInput = document.getElementById("trendFeedbackRating");
     var feedbackNoteInput = document.getElementById("trendFeedbackNote");
     var outputCard = document.getElementById("trendOutputCard");
+    var scenarioForm = document.getElementById("trendScenarioForm");
+    var scenarioNameInput = document.getElementById("trendScenarioName");
+    var scenarioNoteInput = document.getElementById("trendScenarioNote");
+    var scenarioHorizonInput = document.getElementById("trendScenarioHorizon");
+    var scenarioPersistInput = document.getElementById("trendScenarioPersist");
+    var scenarioAdjustmentsEl = document.getElementById("trendScenarioAdjustments");
+    var scenarioAddAdjustmentBtn = document.getElementById("trendScenarioAddAdjustment");
+    var scenarioRunBtn = document.getElementById("trendScenarioRun");
+    var scenarioResultEl = document.getElementById("trendScenarioResult");
+    var scenarioSavedListEl = document.getElementById("trendScenarioSavedList");
+    var scenarioChartCanvas = null;
+    var scenarioChartLegend = null;
+    var scenarioContributionEl = null;
+
+    function ensureScenarioDraftRows() {
+      if (!state.scenarioDraft) {
+        state.scenarioDraft = createScenarioDraft(state.snapshot, null);
+      }
+      if (!Array.isArray(state.scenarioDraft.adjustments)) {
+        state.scenarioDraft.adjustments = [];
+      }
+      if (!state.scenarioDraft.adjustments.length) {
+        state.scenarioDraft.adjustments.push({ key: "", delta: "" });
+      }
+    }
+
+    function buildScenarioOptions() {
+      var options = [];
+      var nodes = (state.snapshot && state.snapshot.nodes) || [];
+      nodes.forEach(function (node) {
+        if (!node || !node.id) {
+          return;
+        }
+        options.push({ value: node.id, label: node.name, unit: node.unit || "" });
+        if (Array.isArray(node.children)) {
+          node.children.forEach(function (child) {
+            if (!child || !child.id) {
+              return;
+            }
+            options.push({ value: node.id + "::" + child.id, label: node.name + " · " + child.name, unit: child.unit || node.unit || "" });
+          });
+        }
+      });
+      return options;
+    }
+
+    function findScenarioOption(value, options) {
+      options = options || buildScenarioOptions();
+      for (var i = 0; i < options.length; i += 1) {
+        if (options[i] && options[i].value === value) {
+          return options[i];
+        }
+      }
+      return null;
+    }
+
+    function parseScenarioKey(value) {
+      if (!value) {
+        return null;
+      }
+      var parts = value.split("::");
+      return {
+        nodeId: parts[0],
+        subNodeId: parts.length > 1 ? parts[1] : null
+      };
+    }
 
     function syncSnapshot(snapshot) {
       state.snapshot = snapshot || services.getSnapshot({});
+      state.scenarios = (state.snapshot && state.snapshot.scenarios) || [];
       if (!state.editingNodeId && state.snapshot && state.snapshot.nodes && state.snapshot.nodes.length) {
         state.editingNodeId = state.snapshot.nodes[0].id;
         state.editingSubNodes = clone(state.snapshot.nodes[0].children) || [];
       }
+      if (!state.scenarioDraft) {
+        state.scenarioDraft = createScenarioDraft(state.snapshot, null);
+      }
+      if (!state.scenarioDraft.id && state.snapshot && state.snapshot.settings && typeof state.snapshot.settings.predictionMinutes === "number") {
+        state.scenarioDraft.horizon = state.snapshot.settings.predictionMinutes;
+      }
+      ensureScenarioDraftRows();
       render();
     }
 
@@ -1153,6 +1348,567 @@
       targetUpperInput.value = typeof target.upper === "number" ? target.upper : "";
     }
 
+    function renderScenarioAdjustments() {
+      if (!scenarioAdjustmentsEl) {
+        return;
+      }
+      ensureScenarioDraftRows();
+      var options = buildScenarioOptions();
+      scenarioAdjustmentsEl.innerHTML = "";
+      state.scenarioDraft.adjustments.forEach(function (row, index) {
+        var wrapper = document.createElement("div");
+        wrapper.className = "trend-scenario-adjustment";
+        var select = document.createElement("select");
+        select.className = "trend-scenario-select";
+        var placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "选择节点";
+        select.appendChild(placeholder);
+        options.forEach(function (opt) {
+          var option = document.createElement("option");
+          option.value = opt.value;
+          option.textContent = opt.label;
+          if (opt.value === row.key) {
+            option.selected = true;
+          }
+          select.appendChild(option);
+        });
+        select.addEventListener("change", function () {
+          state.scenarioDraft.adjustments[index].key = select.value;
+          var matched = findScenarioOption(select.value, options);
+          var unitEl = wrapper.querySelector(".trend-scenario-unit");
+          if (unitEl) {
+            unitEl.textContent = matched ? matched.unit : "";
+          }
+        });
+        wrapper.appendChild(select);
+        var input = document.createElement("input");
+        input.type = "number";
+        input.step = "any";
+        input.placeholder = "调整量";
+        input.className = "trend-scenario-input";
+        input.value = row.delta === null || row.delta === undefined ? "" : row.delta;
+        input.addEventListener("input", function () {
+          state.scenarioDraft.adjustments[index].delta = input.value;
+        });
+        wrapper.appendChild(input);
+        var unit = document.createElement("span");
+        unit.className = "trend-scenario-unit";
+        var matched = findScenarioOption(row.key, options);
+        unit.textContent = matched ? matched.unit : "";
+        wrapper.appendChild(unit);
+        var removeBtn = document.createElement("button");
+        removeBtn.type = "button";
+        removeBtn.className = "ghost-button danger";
+        removeBtn.textContent = "移除";
+        removeBtn.addEventListener("click", function () {
+          if (!state.scenarioDraft || !Array.isArray(state.scenarioDraft.adjustments)) {
+            return;
+          }
+          if (state.scenarioDraft.adjustments.length <= 1) {
+            state.scenarioDraft.adjustments[0] = { key: "", delta: "" };
+          } else {
+            state.scenarioDraft.adjustments.splice(index, 1);
+          }
+          renderScenarioAdjustments();
+        });
+        wrapper.appendChild(removeBtn);
+        scenarioAdjustmentsEl.appendChild(wrapper);
+      });
+    }
+
+    function renderScenarioForm() {
+      if (!scenarioForm) {
+        return;
+      }
+      ensureScenarioDraftRows();
+      if (scenarioNameInput) {
+        scenarioNameInput.value = state.scenarioDraft.name || "";
+      }
+      if (scenarioNoteInput) {
+        scenarioNoteInput.value = state.scenarioDraft.note || "";
+      }
+      if (scenarioHorizonInput) {
+        scenarioHorizonInput.value = state.scenarioDraft.horizon || ((state.snapshot && state.snapshot.settings && state.snapshot.settings.predictionMinutes) || 30);
+      }
+      renderScenarioAdjustments();
+      if (state.activeScenarioId) {
+        scenarioForm.classList.add("scenario-editing");
+      } else {
+        scenarioForm.classList.remove("scenario-editing");
+      }
+    }
+
+    function scenarioKeyFromEntry(entry) {
+      if (!entry) {
+        return null;
+      }
+      if (entry.key) {
+        return entry.key;
+      }
+      return entry.nodeId + (entry.subNodeId ? "::" + entry.subNodeId : "");
+    }
+
+    function getScenarioEntryByKey(key) {
+      if (!key || !state.scenarioResult || !Array.isArray(state.scenarioResult.nodes)) {
+        return null;
+      }
+      for (var i = 0; i < state.scenarioResult.nodes.length; i += 1) {
+        var item = state.scenarioResult.nodes[i];
+        if (scenarioKeyFromEntry(item) === key) {
+          return item;
+        }
+      }
+      return null;
+    }
+
+    function refreshScenarioRowActive() {
+      if (!scenarioResultEl) {
+        return;
+      }
+      var rows = scenarioResultEl.querySelectorAll(".trend-scenario-result-row");
+      for (var i = 0; i < rows.length; i += 1) {
+        var row = rows[i];
+        var key = row ? row.getAttribute("data-key") : null;
+        if (!row) {
+          continue;
+        }
+        if (key && state.scenarioChartKey === key) {
+          row.classList.add("active");
+        } else {
+          row.classList.remove("active");
+        }
+      }
+    }
+
+    function renderScenarioChart() {
+      if (!scenarioChartCanvas || !state.scenarioResult) {
+        return;
+      }
+      var nodes = state.scenarioResult.nodes || [];
+      if (!state.scenarioChartKey && nodes.length) {
+        state.scenarioChartKey = scenarioKeyFromEntry(nodes[0]);
+      }
+      var entry = getScenarioEntryByKey(state.scenarioChartKey);
+      if (!entry && nodes.length) {
+        entry = nodes[0];
+        state.scenarioChartKey = scenarioKeyFromEntry(entry);
+      }
+      if (!entry) {
+        drawMultiSeries(scenarioChartCanvas, []);
+        if (scenarioLegend) {
+          scenarioLegend.innerHTML = "";
+        }
+        if (scenarioContributionEl) {
+          scenarioContributionEl.innerHTML = "";
+        }
+        refreshScenarioRowActive();
+        return;
+      }
+      var baseline = Array.isArray(entry.baselineSeries) ? entry.baselineSeries : [];
+      var projection = Array.isArray(entry.projectedSeries) ? entry.projectedSeries : [];
+      drawMultiSeries(scenarioChartCanvas, [
+        { label: "当前趋势", data: baseline, color: "#94a3b8", dashed: true },
+        { label: "模拟预测", data: projection, color: "#2563eb" }
+      ]);
+      if (scenarioLegend) {
+        scenarioLegend.innerHTML = "";
+        [
+          { label: "当前趋势", color: "#94a3b8", dashed: true },
+          { label: "模拟预测", color: "#2563eb" }
+        ].forEach(function (item) {
+          var legendItem = document.createElement("span");
+          legendItem.className = "trend-scenario-legend-item" + (item.dashed ? " dashed" : "");
+          var dot = document.createElement("span");
+          dot.className = "trend-scenario-legend-dot";
+          dot.style.backgroundColor = item.color;
+          legendItem.appendChild(dot);
+          var text = document.createElement("span");
+          text.textContent = item.label;
+          legendItem.appendChild(text);
+          scenarioLegend.appendChild(legendItem);
+        });
+      }
+      if (scenarioContributionEl) {
+        scenarioContributionEl.innerHTML = "";
+        var title = document.createElement("div");
+        title.className = "trend-scenario-contrib-title";
+        title.textContent = (entry.label || "节点") + " · 预测 " + formatNumber(entry.projected, entry.unit || "") + " · 状态 " + (entry.status || "未知");
+        scenarioContributionEl.appendChild(title);
+        var list = document.createElement("ul");
+        list.className = "trend-scenario-contrib-list";
+        var contributions = Array.isArray(entry.contributions) ? entry.contributions.slice() : [];
+        contributions.sort(function (a, b) {
+          return Math.abs(b.delta || 0) - Math.abs(a.delta || 0);
+        });
+        contributions.slice(0, 4).forEach(function (item) {
+          if (!item) {
+            return;
+          }
+          var li = document.createElement("li");
+          li.className = "trend-scenario-contrib-item";
+          li.textContent = (item.label || "调整") + " → " + formatNumber(item.delta, entry.unit || "");
+          list.appendChild(li);
+        });
+        if (!list.children.length) {
+          var empty = document.createElement("li");
+          empty.className = "trend-scenario-contrib-item";
+          empty.textContent = "暂无贡献明细";
+          list.appendChild(empty);
+        }
+        scenarioContributionEl.appendChild(list);
+      }
+      refreshScenarioRowActive();
+    }
+
+    function exportScenarioCsv() {
+      if (!state.scenarioResult || !state.scenarioResult.nodes || !state.scenarioResult.nodes.length) {
+        return;
+      }
+      var rows = ["节点,单位,当前值,预测值,变化,状态,影响分"];
+      state.scenarioResult.nodes.forEach(function (row) {
+        if (!row) {
+          return;
+        }
+        var label = (row.label || "节点").replace(/\"/g, '""');
+        rows.push([
+          '"' + label + '"',
+          row.unit || "",
+          typeof row.base === "number" ? row.base.toFixed(4) : "",
+          typeof row.projected === "number" ? row.projected.toFixed(4) : "",
+          typeof row.delta === "number" ? row.delta.toFixed(4) : "",
+          row.status || "",
+          typeof row.impact === "number" ? row.impact.toFixed(4) : ""
+        ].join(","));
+      });
+      var blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8;" });
+      var url = URL.createObjectURL(blob);
+      var link = document.createElement("a");
+      link.href = url;
+      var name = state.scenarioResult.name || "scenario";
+      link.download = name + "-projection.csv";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    }
+
+    function duplicateScenario(scenario) {
+      if (!scenario || !services.runScenario) {
+        return;
+      }
+      var baseName = scenario.name || "模拟方案";
+      var copyName = baseName + " 副本";
+      var projection = services.runScenario({
+        adjustments: clone(scenario.adjustments || []),
+        horizonMinutes: scenario.horizonMinutes,
+        name: copyName,
+        note: scenario.note || "",
+        persist: true
+      });
+      if (projection) {
+        state.scenarioResult = projection;
+        state.scenarioChartKey = null;
+        state.activeScenarioId = projection.scenarioId || null;
+        if (services.listScenarios) {
+          state.scenarios = services.listScenarios();
+        }
+        renderScenarioResult();
+        renderScenarioSaved();
+        if (services.toast) {
+          services.toast("已复制模拟方案");
+        }
+      }
+    }
+
+    function renderScenarioResult() {
+      if (!scenarioResultEl) {
+        return;
+      }
+      scenarioResultEl.innerHTML = "";
+      if (!state.scenarioResult) {
+        var empty = document.createElement("div");
+        empty.className = "trend-scenario-empty";
+        empty.textContent = "暂无模拟结果";
+        scenarioResultEl.appendChild(empty);
+        return;
+      }
+      var header = document.createElement("div");
+      header.className = "trend-scenario-summary";
+      header.textContent = state.scenarioResult.summary || "模拟完成";
+      scenarioResultEl.appendChild(header);
+      var meta = document.createElement("div");
+      meta.className = "trend-scenario-meta";
+      meta.textContent = "预测 " + (state.scenarioResult.horizonMinutes || 0) + " 分钟 · 生成于 " + formatDateTime(state.scenarioResult.createdAt);
+      scenarioResultEl.appendChild(meta);
+      if (state.scenarioResult.adjustments && state.scenarioResult.adjustments.length) {
+        var adjList = document.createElement("ul");
+        adjList.className = "trend-scenario-adjustment-list";
+        state.scenarioResult.adjustments.forEach(function (adj) {
+          var li = document.createElement("li");
+          li.textContent = (adj.label || "节点") + " 调整 " + (typeof adj.delta === "number" ? adj.delta : adj.delta || "");
+          adjList.appendChild(li);
+        });
+        scenarioResultEl.appendChild(adjList);
+      }
+      var actions = document.createElement("div");
+      actions.className = "trend-scenario-result-actions";
+      var exportBtn = document.createElement("button");
+      exportBtn.type = "button";
+      exportBtn.className = "ghost-button";
+      exportBtn.textContent = "导出 CSV";
+      exportBtn.addEventListener("click", exportScenarioCsv);
+      actions.appendChild(exportBtn);
+      scenarioResultEl.appendChild(actions);
+      var table = document.createElement("div");
+      table.className = "trend-scenario-results";
+      var rows = (state.scenarioResult.nodes || []).slice(0, 8);
+      rows.forEach(function (row) {
+        var item = document.createElement("div");
+        item.className = "trend-scenario-result-row";
+        var key = scenarioKeyFromEntry(row);
+        item.setAttribute("data-key", key || "");
+        var name = document.createElement("div");
+        name.className = "trend-scenario-result-name";
+        name.textContent = row.label;
+        item.appendChild(name);
+        var value = document.createElement("div");
+        value.className = "trend-scenario-result-value";
+        value.textContent = formatNumber(row.projected, row.unit || "");
+        item.appendChild(value);
+        var delta = document.createElement("div");
+        delta.className = "trend-scenario-result-delta" + (row.delta >= 0 ? " rise" : " fall");
+        var diffText = row.delta >= 0 ? "+" + formatNumber(row.delta, row.unit || "") : formatNumber(row.delta, row.unit || "");
+        delta.textContent = "变化 " + diffText;
+        item.appendChild(delta);
+        var status = document.createElement("div");
+        status.className = "trend-scenario-result-status trend-scenario-result-status-" + (row.status || "未知");
+        status.textContent = row.status || "未知";
+        item.appendChild(status);
+        if (!state.scenarioChartKey) {
+          state.scenarioChartKey = key;
+        }
+        if (key && state.scenarioChartKey === key) {
+          item.classList.add("active");
+        }
+        item.addEventListener("click", function () {
+          if (!key) {
+            return;
+          }
+          state.scenarioChartKey = key;
+          renderScenarioChart();
+        });
+        table.appendChild(item);
+      });
+      scenarioResultEl.appendChild(table);
+      var chartBlock = document.createElement("div");
+      chartBlock.className = "trend-scenario-chart";
+      scenarioChartCanvas = document.createElement("canvas");
+      scenarioChartCanvas.id = "trendScenarioChart";
+      chartBlock.appendChild(scenarioChartCanvas);
+      scenarioLegend = document.createElement("div");
+      scenarioLegend.className = "trend-scenario-legend";
+      chartBlock.appendChild(scenarioLegend);
+      scenarioResultEl.appendChild(chartBlock);
+      scenarioContributionEl = document.createElement("div");
+      scenarioContributionEl.className = "trend-scenario-contrib";
+      scenarioResultEl.appendChild(scenarioContributionEl);
+      renderScenarioChart();
+    }
+
+    function renderScenarioSaved() {
+      if (!scenarioSavedListEl) {
+        return;
+      }
+      scenarioSavedListEl.innerHTML = "";
+      if (!state.scenarios || !state.scenarios.length) {
+        var empty = document.createElement("div");
+        empty.className = "trend-scenario-empty";
+        empty.textContent = "暂无已保存的模拟";
+        scenarioSavedListEl.appendChild(empty);
+        return;
+      }
+      state.scenarios.forEach(function (scenario) {
+        if (!scenario) {
+          return;
+        }
+        var card = document.createElement("div");
+        card.className = "trend-scenario-card" + (state.activeScenarioId === scenario.id ? " active" : "");
+        var title = document.createElement("div");
+        title.className = "trend-scenario-card-title";
+        title.textContent = scenario.name || "模拟方案";
+        card.appendChild(title);
+        var meta = document.createElement("div");
+        meta.className = "trend-scenario-card-meta";
+        meta.textContent = "更新 " + formatDateTime(scenario.updatedAt || scenario.createdAt);
+        card.appendChild(meta);
+        if (scenario.lastProjection && scenario.lastProjection.summary) {
+          var summary = document.createElement("div");
+          summary.className = "trend-scenario-card-summary";
+          summary.textContent = scenario.lastProjection.summary;
+          card.appendChild(summary);
+        }
+        var actions = document.createElement("div");
+        actions.className = "trend-scenario-card-actions";
+        var loadBtn = document.createElement("button");
+        loadBtn.type = "button";
+        loadBtn.className = "ghost-button";
+        loadBtn.textContent = "载入";
+        loadBtn.addEventListener("click", function () {
+          state.activeScenarioId = scenario.id;
+          state.scenarioDraft = createScenarioDraft(state.snapshot, scenario);
+          state.scenarioDraft.id = scenario.id;
+          state.scenarioResult = scenario.lastProjection ? clone(scenario.lastProjection) : null;
+          state.scenarioChartKey = null;
+          renderScenarioForm();
+          renderScenarioResult();
+          renderScenarioSaved();
+        });
+        actions.appendChild(loadBtn);
+        var replayBtn = document.createElement("button");
+        replayBtn.type = "button";
+        replayBtn.className = "ghost-button";
+        replayBtn.textContent = "再次模拟";
+        replayBtn.addEventListener("click", function () {
+          if (!services.runScenario) {
+            return;
+          }
+          var projection = services.runScenario({
+            adjustments: clone(scenario.adjustments || []),
+            horizonMinutes: scenario.horizonMinutes,
+            name: scenario.name,
+            note: scenario.note || "",
+            scenarioId: scenario.id,
+            persist: true
+          });
+          if (projection) {
+            state.scenarioResult = projection;
+            state.activeScenarioId = projection.scenarioId || scenario.id;
+            state.scenarioChartKey = null;
+            if (services.listScenarios) {
+              state.scenarios = services.listScenarios();
+            }
+            renderScenarioResult();
+            renderScenarioSaved();
+            if (services.toast) {
+              services.toast("模拟已刷新");
+            }
+          }
+        });
+        actions.appendChild(replayBtn);
+        var copyBtn = document.createElement("button");
+        copyBtn.type = "button";
+        copyBtn.className = "ghost-button";
+        copyBtn.textContent = "复制";
+        copyBtn.addEventListener("click", function () {
+          duplicateScenario(scenario);
+        });
+        actions.appendChild(copyBtn);
+        var deleteBtn = document.createElement("button");
+        deleteBtn.type = "button";
+        deleteBtn.className = "ghost-button danger";
+        deleteBtn.textContent = "删除";
+        deleteBtn.addEventListener("click", function () {
+          if (!services.removeScenario) {
+            return;
+          }
+          if (window.confirm && !window.confirm("确定删除该模拟方案？")) {
+            return;
+          }
+          if (services.removeScenario(scenario.id)) {
+            if (state.activeScenarioId === scenario.id) {
+              state.activeScenarioId = null;
+              state.scenarioDraft = createScenarioDraft(state.snapshot, null);
+              state.scenarioResult = null;
+              state.scenarioChartKey = null;
+              ensureScenarioDraftRows();
+              renderScenarioForm();
+              renderScenarioResult();
+            }
+            if (services.listScenarios) {
+              state.scenarios = services.listScenarios();
+            }
+            renderScenarioSaved();
+            if (services.toast) {
+              services.toast("模拟方案已删除");
+            }
+          }
+        });
+        actions.appendChild(deleteBtn);
+        card.appendChild(actions);
+        scenarioSavedListEl.appendChild(card);
+      });
+    }
+
+    function handleScenarioRun(evt) {
+      if (evt) {
+        evt.preventDefault();
+      }
+      if (!services.runScenario) {
+        return;
+      }
+      ensureScenarioDraftRows();
+      var adjustments = [];
+      var invalid = 0;
+      var options = buildScenarioOptions();
+      state.scenarioDraft.adjustments.forEach(function (row) {
+        if (!row || !row.key) {
+          return;
+        }
+        var parsed = parseScenarioKey(row.key);
+        if (!parsed || !parsed.nodeId) {
+          invalid += 1;
+          return;
+        }
+        var value = typeof row.delta === "number" ? row.delta : parseFloat(row.delta);
+        if (!isFinite(value)) {
+          invalid += 1;
+          return;
+        }
+        var opt = findScenarioOption(row.key, options);
+        adjustments.push({
+          nodeId: parsed.nodeId,
+          subNodeId: parsed.subNodeId || null,
+          delta: value,
+          label: opt ? opt.label : row.key
+        });
+      });
+      if (!adjustments.length) {
+        if (services.toast) {
+          services.toast("请至少配置一个节点并填写调整量");
+        }
+        return;
+      }
+      if (invalid && services.toast) {
+        services.toast("部分调整量无效，已忽略");
+      }
+      var payload = {
+        adjustments: adjustments,
+        horizonMinutes: state.scenarioDraft.horizon || ((state.snapshot && state.snapshot.settings && state.snapshot.settings.predictionMinutes) || 30),
+        name: state.scenarioDraft.name || "模拟方案",
+        note: state.scenarioDraft.note || "",
+        scenarioId: state.scenarioDraft.id || state.activeScenarioId || null,
+        persist: scenarioPersistInput ? !!scenarioPersistInput.checked : false
+      };
+      var projection = services.runScenario(payload);
+      if (projection) {
+        state.scenarioResult = projection;
+        state.scenarioChartKey = null;
+        if (payload.persist) {
+          state.activeScenarioId = projection.scenarioId || payload.scenarioId || null;
+          state.scenarioDraft.id = state.activeScenarioId;
+          if (services.listScenarios) {
+            state.scenarios = services.listScenarios();
+          }
+        }
+        renderScenarioResult();
+        renderScenarioSaved();
+        if (services.toast) {
+          services.toast("模拟已完成");
+        }
+      }
+    }
+
     function render() {
       renderNodeList();
       renderForm();
@@ -1166,6 +1922,9 @@
       renderEndpoints();
       renderFeedbackOptions();
       renderSettingsForm();
+      renderScenarioForm();
+      renderScenarioResult();
+      renderScenarioSaved();
     }
 
     if (addNodeBtn) {
@@ -1189,6 +1948,43 @@
           for (var i = 0; i < manualImpactSelect.options.length; i += 1) {
             manualImpactSelect.options[i].selected = false;
           }
+        }
+      });
+    }
+
+    if (scenarioAddAdjustmentBtn) {
+      scenarioAddAdjustmentBtn.addEventListener("click", function () {
+        ensureScenarioDraftRows();
+        state.scenarioDraft.adjustments.push({ key: "", delta: "" });
+        renderScenarioAdjustments();
+      });
+    }
+
+    if (scenarioRunBtn) {
+      scenarioRunBtn.addEventListener("click", handleScenarioRun);
+    }
+
+    if (scenarioForm) {
+      scenarioForm.addEventListener("submit", handleScenarioRun);
+    }
+
+    if (scenarioNameInput) {
+      scenarioNameInput.addEventListener("input", function () {
+        state.scenarioDraft.name = scenarioNameInput.value || "";
+      });
+    }
+
+    if (scenarioNoteInput) {
+      scenarioNoteInput.addEventListener("input", function () {
+        state.scenarioDraft.note = scenarioNoteInput.value || "";
+      });
+    }
+
+    if (scenarioHorizonInput) {
+      scenarioHorizonInput.addEventListener("change", function () {
+        var value = parseInt(scenarioHorizonInput.value, 10);
+        if (!isNaN(value) && value > 0) {
+          state.scenarioDraft.horizon = value;
         }
       });
     }

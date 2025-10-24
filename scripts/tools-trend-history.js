@@ -79,6 +79,96 @@
     ctx.stroke();
   }
 
+  function drawScenarioSeries(canvas, baseline, projection) {
+    if (!canvas || !canvas.getContext) {
+      return;
+    }
+    var datasets = [];
+    if (Array.isArray(baseline) && baseline.length) {
+      datasets.push({ label: "当前趋势", color: "#94a3b8", dashed: true, data: baseline });
+    }
+    if (Array.isArray(projection) && projection.length) {
+      datasets.push({ label: "模拟预测", color: "#2563eb", dashed: false, data: projection });
+    }
+    var ctx = canvas.getContext("2d");
+    var width = canvas.clientWidth || 600;
+    var height = canvas.clientHeight || 260;
+    canvas.width = width;
+    canvas.height = height;
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = "#f8fafc";
+    ctx.fillRect(0, 0, width, height);
+    if (!datasets.length) {
+      ctx.fillStyle = "rgba(15, 23, 42, 0.45)";
+      ctx.font = "14px/1.6 'PingFang SC', 'Microsoft YaHei', sans-serif";
+      ctx.fillText("暂无数据", 20, height / 2);
+      return;
+    }
+    var min = datasets[0].data[0].value;
+    var max = datasets[0].data[0].value;
+    var minTime = new Date(datasets[0].data[0].capturedAt).getTime();
+    var maxTime = minTime;
+    datasets.forEach(function (set) {
+      set.data.forEach(function (point) {
+        if (typeof point.value !== "number" || !point.capturedAt) {
+          return;
+        }
+        if (point.value < min) { min = point.value; }
+        if (point.value > max) { max = point.value; }
+        var ts = new Date(point.capturedAt).getTime();
+        if (!isFinite(ts)) {
+          return;
+        }
+        if (ts < minTime) { minTime = ts; }
+        if (ts > maxTime) { maxTime = ts; }
+      });
+    });
+    if (Math.abs(max - min) < 1e-6) {
+      var center = (max + min) / 2;
+      max = center + 1;
+      min = center - 1;
+    }
+    if (!isFinite(minTime) || !isFinite(maxTime)) {
+      minTime = Date.now() - 600000;
+      maxTime = Date.now();
+    }
+    var padding = 24;
+    var bottom = height - padding * 1.4;
+    var top = padding;
+    var span = Math.max(maxTime - minTime, 1);
+    ctx.strokeStyle = "rgba(15, 23, 42, 0.08)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(padding, bottom);
+    ctx.lineTo(width - padding, bottom);
+    ctx.stroke();
+    datasets.forEach(function (set) {
+      ctx.lineWidth = 2;
+      if (set.dashed) {
+        ctx.setLineDash([6, 4]);
+      } else {
+        ctx.setLineDash([]);
+      }
+      ctx.strokeStyle = set.color;
+      ctx.beginPath();
+      set.data.forEach(function (point, index) {
+        var ts = new Date(point.capturedAt).getTime();
+        if (!isFinite(ts)) {
+          return;
+        }
+        var x = padding + ((ts - minTime) / span) * (width - padding * 2);
+        var y = bottom - ((point.value - min) / (max - min)) * (bottom - top);
+        if (index === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      });
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+  }
+
   function buildRecordFromSuggestion(suggestion, nodeMap) {
     var node = nodeMap[suggestion.nodeId] || null;
     return {
@@ -98,6 +188,16 @@
     };
   }
 
+  function scenarioKey(entry) {
+    if (!entry) {
+      return null;
+    }
+    if (entry.key) {
+      return entry.key;
+    }
+    return entry.nodeId + (entry.subNodeId ? "::" + entry.subNodeId : "");
+  }
+
   function mount(services) {
     if (!services) {
       return;
@@ -110,7 +210,9 @@
       selectedId: null,
       range: 180,
       records: [],
-      unsubscribe: null
+      unsubscribe: null,
+      scenarioFocusKey: null,
+      lastScenarioRecordId: null
     };
 
     var groupSelect = document.getElementById("trendHistoryGroup");
@@ -125,6 +227,7 @@
     var endpointEl = document.getElementById("trendHistoryEndpoint");
     var chartCanvas = document.getElementById("trendHistoryChart");
     var chartToolbar = document.querySelector(".trend-history-chart-toolbar");
+    var chartLegend = document.getElementById("trendHistoryChartLegend");
     var forecastListEl = document.getElementById("trendHistoryForecasts");
     var exportBtn = document.getElementById("trendHistoryExport");
     var clearBtn = document.getElementById("trendHistoryClear");
@@ -268,6 +371,37 @@
             history: [entry],
             source: "manual"
           });
+        } else if (entry.kind === "scenario") {
+          var meta = entry.meta || {};
+          var lines = [];
+          if (meta.summary) {
+            lines.push(meta.summary);
+          }
+          if (meta.adjustments && meta.adjustments.length) {
+            var adjustText = meta.adjustments.map(function (adj) {
+              return (adj.label || "节点") + " → " + (typeof adj.delta === "number" ? adj.delta : adj.delta || "");
+            }).join("；");
+            lines.push("调整：" + adjustText);
+          }
+          if (meta.horizonMinutes) {
+            lines.push("前瞻 " + meta.horizonMinutes + " 分钟");
+          }
+          state.records.push({
+            id: entry.id,
+            suggestionId: null,
+            nodeId: null,
+            nodeName: "情景模拟",
+            status: "scenario",
+            statusLabel: "情景模拟",
+            severity: 0,
+            summary: entry.name || meta.summary || "情景模拟",
+            detail: lines,
+            createdAt: entry.createdAt,
+            updatedAt: entry.createdAt,
+            history: [entry],
+            source: "scenario",
+            scenario: meta
+          });
         }
       });
       state.records.sort(function (a, b) {
@@ -289,7 +423,8 @@
         { value: "accepted", label: "已采纳" },
         { value: "rejected", label: "已拒绝" },
         { value: "resolved", label: "自动恢复" },
-        { value: "manual", label: "手动调整" }
+        { value: "manual", label: "手动调整" },
+        { value: "scenario", label: "情景模拟" }
       ];
       nodes.forEach(function (node) {
         options.push({ value: "node:" + node.id, label: "节点 · " + node.name });
@@ -323,6 +458,9 @@
         if (state.group === "manual" && record.status !== "manual") {
           return false;
         }
+        if (state.group === "scenario" && record.status !== "scenario") {
+          return false;
+        }
         if (state.group.indexOf("node:") === 0) {
           var nodeId = state.group.split(":")[1];
           if (record.nodeId !== nodeId) {
@@ -337,6 +475,70 @@
         }
         return true;
       });
+    }
+
+    function renderScenarioDetail(record) {
+      if (!summaryEl || !record || !record.scenario) {
+        return;
+      }
+      var scenario = record.scenario;
+      var nodes = scenario.nodes || [];
+      if (!nodes.length) {
+        return;
+      }
+      if (state.lastScenarioRecordId !== record.id) {
+        state.lastScenarioRecordId = record.id;
+        state.scenarioFocusKey = null;
+      }
+      if (!state.scenarioFocusKey && nodes.length) {
+        state.scenarioFocusKey = scenarioKey(nodes[0]);
+      }
+      if (state.scenarioFocusKey && !nodes.some(function (entry) { return scenarioKey(entry) === state.scenarioFocusKey; })) {
+        state.scenarioFocusKey = scenarioKey(nodes[0]);
+      }
+      if (scenario.nodes && scenario.nodes.length) {
+        var container = document.createElement("div");
+        container.className = "trend-history-scenario";
+        scenario.nodes.slice(0, 6).forEach(function (item) {
+          if (!item) {
+            return;
+          }
+          var row = document.createElement("div");
+          row.className = "trend-history-scenario-row";
+          var key = scenarioKey(item);
+          row.setAttribute("data-key", key || "");
+          var name = document.createElement("div");
+          name.className = "trend-history-scenario-name";
+          name.textContent = item.label || "节点";
+          row.appendChild(name);
+          var value = document.createElement("div");
+          value.className = "trend-history-scenario-value";
+          value.textContent = formatNumber(item.projected, item.unit || "");
+          row.appendChild(value);
+          var delta = document.createElement("div");
+          delta.className = "trend-history-scenario-delta" + (item.delta >= 0 ? " rise" : " fall");
+          var diffText = item.delta >= 0 ? "+" + formatNumber(item.delta, item.unit || "") : formatNumber(item.delta, item.unit || "");
+          delta.textContent = diffText;
+          row.appendChild(delta);
+          var status = document.createElement("div");
+          status.className = "trend-history-scenario-status";
+          status.textContent = item.status || "未知";
+          row.appendChild(status);
+          if (key && state.scenarioFocusKey === key) {
+            row.classList.add("active");
+          }
+          row.addEventListener("click", function () {
+            if (!key) {
+              return;
+            }
+            state.scenarioFocusKey = key;
+            renderScenarioDetail(record);
+            renderDetailChart(record);
+          });
+          container.appendChild(row);
+        });
+        summaryEl.appendChild(container);
+      }
     }
 
     function renderList() {
@@ -392,6 +594,9 @@
           placeholderEl.classList.remove("hidden");
         }
         drawSeries(chartCanvas, []);
+        if (chartLegend) {
+          chartLegend.innerHTML = "";
+        }
         return;
       }
       if (detailEl) {
@@ -406,6 +611,10 @@
       if (metaEl) {
         metaEl.textContent = record.statusLabel + " · " + (record.nodeName || "节点") + " · 更新 " + formatDateTime(record.updatedAt || record.createdAt);
       }
+      if (record.status !== "scenario") {
+        state.scenarioFocusKey = null;
+        state.lastScenarioRecordId = null;
+      }
       if (summaryEl) {
         summaryEl.innerHTML = "";
         (record.detail || []).forEach(function (line) {
@@ -413,6 +622,9 @@
           p.textContent = line;
           summaryEl.appendChild(p);
         });
+        if (record.status === "scenario") {
+          renderScenarioDetail(record);
+        }
       }
       if (feedbackListEl) {
         feedbackListEl.innerHTML = "";
@@ -454,6 +666,59 @@
     function renderDetailChart(record) {
       if (!record || !chartCanvas) {
         return;
+      }
+      if (record.status === "scenario") {
+        var scenario = record.scenario || {};
+        var nodes = scenario.nodes || [];
+        if (!nodes.length) {
+          drawScenarioSeries(chartCanvas, [], []);
+          if (chartLegend) {
+            chartLegend.innerHTML = "";
+          }
+          return;
+        }
+        if (state.lastScenarioRecordId !== record.id) {
+          state.lastScenarioRecordId = record.id;
+          state.scenarioFocusKey = scenarioKey(nodes[0]);
+        }
+        var entry = null;
+        if (state.scenarioFocusKey) {
+          for (var i = 0; i < nodes.length; i += 1) {
+            if (scenarioKey(nodes[i]) === state.scenarioFocusKey) {
+              entry = nodes[i];
+              break;
+            }
+          }
+        }
+        if (!entry) {
+          entry = nodes[0];
+          state.scenarioFocusKey = scenarioKey(entry);
+        }
+        var baseline = Array.isArray(entry.baselineSeries) ? entry.baselineSeries : [];
+        var projection = Array.isArray(entry.projectedSeries) ? entry.projectedSeries : [];
+        drawScenarioSeries(chartCanvas, baseline, projection);
+        if (chartLegend) {
+          chartLegend.innerHTML = "";
+          [
+            { label: "当前趋势", color: "#94a3b8", dashed: true },
+            { label: "模拟预测", color: "#2563eb", dashed: false }
+          ].forEach(function (item) {
+            var badge = document.createElement("span");
+            badge.className = "trend-history-chart-legend-item" + (item.dashed ? " dashed" : "");
+            var dot = document.createElement("span");
+            dot.className = "trend-history-chart-legend-dot";
+            dot.style.backgroundColor = item.color;
+            badge.appendChild(dot);
+            var text = document.createElement("span");
+            text.textContent = item.label;
+            badge.appendChild(text);
+            chartLegend.appendChild(badge);
+          });
+        }
+        return;
+      }
+      if (chartLegend) {
+        chartLegend.innerHTML = "";
       }
       var cutoff = Date.now() - state.range * 60000;
       var streams = (state.snapshot && state.snapshot.streams) || [];

@@ -2689,6 +2689,9 @@
     if (!Array.isArray(trend.feedback)) {
       trend.feedback = [];
     }
+    if (!Array.isArray(trend.scenarios)) {
+      trend.scenarios = [];
+    }
     if (!trend.settings || typeof trend.settings !== "object") {
       trend.settings = {
         sampleIntervalMs: 60000,
@@ -2849,6 +2852,47 @@
         }
       }
     }
+    for (var si = 0; si < trend.scenarios.length; si += 1) {
+      var scenario = trend.scenarios[si];
+      if (!scenario || typeof scenario !== "object") {
+        trend.scenarios[si] = {
+          id: uuid(),
+          name: "模拟方案",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          adjustments: [],
+          horizonMinutes: trend.settings.predictionMinutes || 30,
+          note: "",
+          lastProjection: null
+        };
+        continue;
+      }
+      if (!scenario.id) {
+        scenario.id = uuid();
+      }
+      if (typeof scenario.name !== "string" || !scenario.name.trim()) {
+        scenario.name = "模拟方案";
+      }
+      scenario.name = scenario.name.trim();
+      if (!scenario.createdAt) {
+        scenario.createdAt = new Date().toISOString();
+      }
+      if (!scenario.updatedAt) {
+        scenario.updatedAt = scenario.createdAt;
+      }
+      if (typeof scenario.note !== "string") {
+        scenario.note = "";
+      }
+      if (typeof scenario.horizonMinutes !== "number" || !isFinite(scenario.horizonMinutes) || scenario.horizonMinutes <= 0) {
+        scenario.horizonMinutes = trend.settings.predictionMinutes || 30;
+      }
+      if (!Array.isArray(scenario.adjustments)) {
+        scenario.adjustments = [];
+      }
+      if (scenario.lastProjection && typeof scenario.lastProjection !== "object") {
+        scenario.lastProjection = null;
+      }
+    }
     for (var mt = 0; mt < trend.nodes.length; mt += 1) {
       var manualNode = trend.nodes[mt];
       if (!manualNode) {
@@ -2904,6 +2948,16 @@
       return JSON.parse(JSON.stringify(state.tools.trend.suggestions));
     } catch (err) {
       console.warn("cloneTrendSuggestions failed", err);
+      return [];
+    }
+  }
+
+  function cloneTrendScenarios() {
+    ensureTrendStore();
+    try {
+      return JSON.parse(JSON.stringify(state.tools.trend.scenarios || []));
+    } catch (err) {
+      console.warn("cloneTrendScenarios failed", err);
       return [];
     }
   }
@@ -3021,6 +3075,7 @@
       nodes: cloneTrendNodes(),
       streams: cloneTrendStreams(streamLimit),
       suggestions: cloneTrendSuggestions(),
+      scenarios: cloneTrendScenarios(),
       forecasts: cloneTrendForecasts(),
       history: cloneTrendHistory(),
       feedback: cloneTrendFeedback(),
@@ -4582,6 +4637,542 @@
       console.warn("getTrendForecasts failed", err);
       return [];
     }
+  }
+
+  function buildTrendManualForwardMap(nodes) {
+    var forward = {};
+    if (!Array.isArray(nodes)) {
+      return forward;
+    }
+    for (var i = 0; i < nodes.length; i += 1) {
+      var node = nodes[i];
+      if (!node || !node.id || !node.manual || !Array.isArray(node.manualTargets)) {
+        continue;
+      }
+      var list = [];
+      for (var j = 0; j < node.manualTargets.length; j += 1) {
+        var target = node.manualTargets[j];
+        if (!target || !target.nodeId) {
+          continue;
+        }
+        var targetNode = findTrendNodeById(target.nodeId);
+        if (!targetNode) {
+          continue;
+        }
+        var child = null;
+        if (target.subNodeId) {
+          child = findTrendChild(targetNode, target.subNodeId);
+          if (!child) {
+            continue;
+          }
+        }
+        var weight = typeof target.weight === "number" && isFinite(target.weight)
+          ? target.weight
+          : computeManualInfluenceWeight(node, targetNode, child || null);
+        list.push({
+          nodeId: targetNode.id,
+          subNodeId: child ? child.id : null,
+          label: child ? targetNode.name + " · " + child.name : targetNode.name,
+          weight: isFinite(weight) ? weight : 0.4
+        });
+      }
+      forward[node.id] = list;
+    }
+    return forward;
+  }
+
+  function gatherTrendSeriesSnapshot() {
+    ensureTrendStore();
+    var streams = state.tools.trend.streams || [];
+    var map = {};
+    for (var i = 0; i < streams.length; i += 1) {
+      var sample = streams[i];
+      if (!sample || !sample.nodeId) {
+        continue;
+      }
+      var key = sample.nodeId + (sample.subNodeId ? "::" + sample.subNodeId : "");
+      if (!map[key]) {
+        map[key] = [];
+      }
+      map[key].push({
+        capturedAt: sample.capturedAt,
+        value: sample.value,
+        confidence: sample.confidence || 0,
+        source: sample.source || ""
+      });
+    }
+    var latest = {};
+    for (var key in map) {
+      if (Object.prototype.hasOwnProperty.call(map, key)) {
+        map[key].sort(function (a, b) {
+          return new Date(a.capturedAt) - new Date(b.capturedAt);
+        });
+        var series = map[key];
+        if (series.length) {
+          latest[key] = series[series.length - 1].value;
+        }
+      }
+    }
+    return { series: map, latest: latest };
+  }
+
+  function sanitizeScenarioAdjustments(adjustments) {
+    var cleaned = [];
+    if (!Array.isArray(adjustments)) {
+      return cleaned;
+    }
+    var seen = {};
+    for (var i = 0; i < adjustments.length; i += 1) {
+      var entry = adjustments[i] || {};
+      var nodeId = entry.nodeId;
+      var subNodeId = entry.subNodeId || null;
+      if (!nodeId && typeof entry.key === "string") {
+        var parts = entry.key.split("::");
+        nodeId = parts[0];
+        subNodeId = parts.length > 1 ? parts[1] : null;
+      }
+      var node = findTrendNodeById(nodeId);
+      if (!node) {
+        continue;
+      }
+      var child = null;
+      if (subNodeId) {
+        child = findTrendChild(node, subNodeId);
+        if (!child) {
+          subNodeId = null;
+        }
+      }
+      var delta = typeof entry.delta === "number" ? entry.delta : parseFloat(entry.delta);
+      if (!isFinite(delta) || delta === 0) {
+        continue;
+      }
+      var key = node.id + (subNodeId ? "::" + subNodeId : "");
+      if (!seen[key]) {
+        seen[key] = true;
+        cleaned.push({
+          nodeId: node.id,
+          subNodeId: subNodeId,
+          delta: delta,
+          label: typeof entry.label === "string" && entry.label.trim()
+            ? entry.label.trim()
+            : child
+              ? node.name + " · " + child.name
+              : node.name,
+          manual: !!node.manual
+        });
+      } else {
+        for (var idx = 0; idx < cleaned.length; idx += 1) {
+          if (cleaned[idx] && cleaned[idx].nodeId === node.id && cleaned[idx].subNodeId === subNodeId) {
+            cleaned[idx].delta += delta;
+            break;
+          }
+        }
+      }
+    }
+    return cleaned;
+  }
+
+  function computeScenarioImpactScore(delta, bounds) {
+    if (typeof delta !== "number" || !isFinite(delta)) {
+      return 0;
+    }
+    var range = computeBoundsRange(bounds) || Math.max(Math.abs(bounds.center || 0) * 0.1, 1);
+    if (!range) {
+      range = 1;
+    }
+    var score = Math.abs(delta) / range;
+    if (!isFinite(score)) {
+      return 0;
+    }
+    return parseFloat(score.toFixed(3));
+  }
+
+  function extractScenarioBaselineSeries(snapshot, key, horizonMinutes) {
+    var result = [];
+    if (!snapshot || !snapshot.series || !snapshot.series[key]) {
+      return result;
+    }
+    var series = snapshot.series[key];
+    if (!Array.isArray(series) || !series.length) {
+      return result;
+    }
+    var limit = Math.max(60, Math.round((horizonMinutes || 30) * 2));
+    var start = Math.max(0, series.length - limit);
+    for (var i = start; i < series.length; i += 1) {
+      var point = series[i];
+      if (!point || typeof point.value !== "number" || !point.capturedAt) {
+        continue;
+      }
+      result.push({
+        capturedAt: point.capturedAt,
+        value: point.value
+      });
+    }
+    return result;
+  }
+
+  function easeInOut(ratio) {
+    if (ratio <= 0) {
+      return 0;
+    }
+    if (ratio >= 1) {
+      return 1;
+    }
+    return ratio < 0.5
+      ? 2 * ratio * ratio
+      : -1 + (4 - 2 * ratio) * ratio;
+  }
+
+  function buildScenarioProjectionSeries(entry, baselineSeries, horizonMinutes, nowIso) {
+    var projection = [];
+    if (!entry) {
+      return projection;
+    }
+    var baseValue = typeof entry.base === "number" && isFinite(entry.base)
+      ? entry.base
+      : (typeof entry.projected === "number" && isFinite(entry.projected)
+        ? entry.projected - (typeof entry.delta === "number" ? entry.delta : 0)
+        : 0);
+    var startTs = Date.now();
+    if (baselineSeries && baselineSeries.length) {
+      var lastPoint = baselineSeries[baselineSeries.length - 1];
+      var ts = new Date(lastPoint.capturedAt).getTime();
+      if (isFinite(ts)) {
+        startTs = ts;
+      }
+      if (typeof lastPoint.value === "number" && isFinite(lastPoint.value)) {
+        baseValue = lastPoint.value;
+      }
+    }
+    var horizonMs = Math.max(1, (horizonMinutes || 30) * 60000);
+    var steps = Math.max(4, Math.min(24, Math.round((horizonMinutes || 30) / 5) + 4));
+    var target = typeof entry.projected === "number" && isFinite(entry.projected)
+      ? entry.projected
+      : baseValue;
+    for (var i = 0; i <= steps; i += 1) {
+      var ratio = i / steps;
+      var eased = easeInOut(ratio);
+      var tsPoint = new Date(startTs + ratio * horizonMs);
+      projection.push({
+        capturedAt: tsPoint.toISOString(),
+        value: baseValue + (target - baseValue) * eased
+      });
+    }
+    if (!projection.length) {
+      projection.push({ capturedAt: (nowIso || new Date().toISOString()), value: target });
+    }
+    return projection;
+  }
+
+  function computeTrendScenarioProjection(payload) {
+    ensureTrendStore();
+    payload = payload || {};
+    var adjustments = sanitizeScenarioAdjustments(payload.adjustments || []);
+    var horizon = typeof payload.horizonMinutes === "number" && payload.horizonMinutes > 0
+      ? Math.round(payload.horizonMinutes)
+      : state.tools.trend.settings.predictionMinutes || 30;
+    var name = typeof payload.name === "string" && payload.name.trim() ? payload.name.trim() : "模拟方案";
+    var note = typeof payload.note === "string" ? payload.note.trim() : "";
+    var snapshot = gatherTrendSeriesSnapshot();
+    var manualForward = buildTrendManualForwardMap(state.tools.trend.nodes || []);
+    var adjacency = buildTrendAdjacency(state.tools.trend.nodes || []);
+    var nowIso = new Date().toISOString();
+    var queue = [];
+    var visited = {};
+    var results = {};
+    var maxDepth = typeof payload.depth === "number" && payload.depth >= 1 ? Math.min(4, Math.floor(payload.depth)) : 3;
+
+    function ensureEntry(nodeId, subNodeId) {
+      var key = nodeId + (subNodeId ? "::" + subNodeId : "");
+      if (!results[key]) {
+        var node = findTrendNodeById(nodeId);
+        if (!node) {
+          return null;
+        }
+        var child = subNodeId ? findTrendChild(node, subNodeId) : null;
+        var bounds = resolveTrendBounds(node, child || null);
+        var latestKey = key;
+        var base = typeof snapshot.latest[latestKey] === "number" ? snapshot.latest[latestKey] : null;
+        results[key] = {
+          nodeId: nodeId,
+          subNodeId: subNodeId || null,
+          label: child ? node.name + " · " + child.name : node.name,
+          unit: child ? (child.unit || node.unit || "") : (node.unit || ""),
+          base: base,
+          delta: 0,
+          bounds: bounds,
+          contributions: [],
+          impact: 0,
+          projected: base,
+          status: base === null ? "未知" : calcRangeStatus(base, bounds.lower, bounds.upper, bounds.center)
+        };
+      }
+      return results[key];
+    }
+
+    function trackAndQueue(next) {
+      if (!next || !next.nodeId) {
+        return;
+      }
+      var key = next.nodeId + (next.subNodeId ? "::" + next.subNodeId : "");
+      var originKey = key + "|" + next.originKey;
+      var amount = Math.abs(next.delta || 0);
+      if (!amount) {
+        return;
+      }
+      var existing = visited[originKey];
+      if (existing && amount <= existing * 0.35) {
+        return;
+      }
+      visited[originKey] = existing ? Math.max(existing, amount) : amount;
+      queue.push(next);
+    }
+
+    adjustments.forEach(function (adj, index) {
+      var originKey = (adj.nodeId || "node") + ":" + index;
+      trackAndQueue({
+        nodeId: adj.nodeId,
+        subNodeId: adj.subNodeId || null,
+        delta: adj.delta,
+        depth: 0,
+        originKey: originKey,
+        sourceLabel: adj.label,
+        via: []
+      });
+    });
+
+    while (queue.length) {
+      var current = queue.shift();
+      if (!current) {
+        continue;
+      }
+      var entry = ensureEntry(current.nodeId, current.subNodeId || null);
+      if (!entry) {
+        continue;
+      }
+      if (typeof current.delta === "number" && isFinite(current.delta)) {
+        entry.delta += current.delta;
+        entry.contributions.push({
+          label: current.sourceLabel,
+          delta: current.delta,
+          depth: current.depth,
+          path: current.via.slice()
+        });
+      }
+      if (current.depth >= maxDepth) {
+        continue;
+      }
+      var node = findTrendNodeById(current.nodeId);
+      if (!node) {
+        continue;
+      }
+      var nextDepth = current.depth + 1;
+
+      if (!current.subNodeId && node.manual && manualForward[node.id] && manualForward[node.id].length) {
+        for (var mi = 0; mi < manualForward[node.id].length; mi += 1) {
+          var target = manualForward[node.id][mi];
+          var propagated = current.delta * target.weight;
+          if (!isFinite(propagated) || Math.abs(propagated) < 1e-5) {
+            continue;
+          }
+          trackAndQueue({
+            nodeId: target.nodeId,
+            subNodeId: target.subNodeId || null,
+            delta: propagated,
+            depth: nextDepth,
+            originKey: current.originKey,
+            sourceLabel: current.sourceLabel,
+            via: current.via.concat([{ type: "manual", source: node.name, target: target.label }])
+          });
+        }
+      }
+
+      if (!current.subNodeId && adjacency[node.id]) {
+        var down = adjacency[node.id].downstream || [];
+        for (var di = 0; di < down.length; di += 1) {
+          var downEdge = down[di];
+          var downNode = findTrendNodeById(downEdge.nodeId);
+          if (!downNode) {
+            continue;
+          }
+          var weight = typeof downEdge.weight === "number" && isFinite(downEdge.weight) ? downEdge.weight : 0.35;
+          var propagatedDown = current.delta * weight * 0.8;
+          if (!isFinite(propagatedDown) || Math.abs(propagatedDown) < 1e-5) {
+            continue;
+          }
+          trackAndQueue({
+            nodeId: downNode.id,
+            subNodeId: null,
+            delta: propagatedDown,
+            depth: nextDepth,
+            originKey: current.originKey,
+            sourceLabel: current.sourceLabel,
+            via: current.via.concat([{ type: "downstream", source: node.name, target: downNode.name }])
+          });
+        }
+        var parallels = adjacency[node.id].parallel || [];
+        for (var pi = 0; pi < parallels.length; pi += 1) {
+          var peerEdge = parallels[pi];
+          var peerNode = findTrendNodeById(peerEdge.nodeId);
+          if (!peerNode) {
+            continue;
+          }
+          var pWeight = typeof peerEdge.weight === "number" && isFinite(peerEdge.weight) ? peerEdge.weight : 0.25;
+          var propagatedPeer = current.delta * pWeight * 0.5;
+          if (!isFinite(propagatedPeer) || Math.abs(propagatedPeer) < 1e-5) {
+            continue;
+          }
+          trackAndQueue({
+            nodeId: peerNode.id,
+            subNodeId: null,
+            delta: propagatedPeer,
+            depth: nextDepth,
+            originKey: current.originKey,
+            sourceLabel: current.sourceLabel,
+            via: current.via.concat([{ type: "parallel", source: node.name, target: peerNode.name }])
+          });
+        }
+      }
+    }
+
+    var output = [];
+    for (var key in results) {
+      if (Object.prototype.hasOwnProperty.call(results, key)) {
+        var item = results[key];
+        item.projected = typeof item.base === "number" ? item.base + item.delta : item.delta;
+        item.status = calcRangeStatus(item.projected, item.bounds.lower, item.bounds.upper, item.bounds.center);
+        item.impact = computeScenarioImpactScore(item.delta, item.bounds);
+        item.key = key;
+        item.baselineSeries = extractScenarioBaselineSeries(snapshot, key, horizon);
+        item.projectedSeries = buildScenarioProjectionSeries(item, item.baselineSeries, horizon, nowIso);
+        output.push(item);
+      }
+    }
+    output.sort(function (a, b) {
+      return b.impact - a.impact;
+    });
+
+    var summaryParts = [];
+    for (var oi = 0; oi < output.length && oi < 3; oi += 1) {
+      var row = output[oi];
+      summaryParts.push(row.label + " → " + formatTrendValue(row.projected, row.unit) + " (" + row.status + ")");
+    }
+    var summary = summaryParts.length ? summaryParts.join("；") : "暂无显著波动";
+
+    return {
+      id: payload.id || uuid(),
+      name: name,
+      note: note,
+      createdAt: nowIso,
+      horizonMinutes: horizon,
+      adjustments: adjustments,
+      nodes: output,
+      summary: summary
+    };
+  }
+
+  function recordTrendScenarioHistory(scenario, projection) {
+    ensureTrendStore();
+    if (!projection) {
+      return;
+    }
+    var entry = {
+      id: uuid(),
+      kind: "scenario",
+      createdAt: projection.createdAt || new Date().toISOString(),
+      scenarioId: scenario ? scenario.id : projection.id,
+      name: scenario ? scenario.name : projection.name,
+      meta: {
+        summary: projection.summary,
+        adjustments: projection.adjustments,
+        nodes: projection.nodes,
+        horizonMinutes: projection.horizonMinutes,
+        note: projection.note || ""
+      }
+    };
+    state.tools.trend.history.push(entry);
+    if (state.tools.trend.history.length > 1000) {
+      state.tools.trend.history = state.tools.trend.history.slice(state.tools.trend.history.length - 1000);
+    }
+    saveState();
+  }
+
+  function runTrendScenario(payload) {
+    ensureTrendStore();
+    var projection = computeTrendScenarioProjection(payload || {});
+    var persist = payload && payload.persist;
+    var scenario = null;
+    if (persist) {
+      var trend = state.tools.trend;
+      var nowIso = projection.createdAt || new Date().toISOString();
+      if (payload.scenarioId) {
+        for (var i = 0; i < trend.scenarios.length; i += 1) {
+          if (trend.scenarios[i] && trend.scenarios[i].id === payload.scenarioId) {
+            scenario = trend.scenarios[i];
+            break;
+          }
+        }
+      }
+      if (!scenario) {
+        scenario = {
+          id: payload.scenarioId || uuid(),
+          name: projection.name,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+          adjustments: [],
+          horizonMinutes: projection.horizonMinutes,
+          note: projection.note || "",
+          lastProjection: null
+        };
+        trend.scenarios.push(scenario);
+      }
+      scenario.name = projection.name;
+      scenario.note = projection.note || scenario.note || "";
+      scenario.adjustments = JSON.parse(JSON.stringify(projection.adjustments));
+      scenario.horizonMinutes = projection.horizonMinutes;
+      scenario.updatedAt = nowIso;
+      scenario.lastProjection = {
+        createdAt: projection.createdAt,
+        summary: projection.summary,
+        nodes: projection.nodes.slice(0, 10)
+      };
+      recordTrendScenarioHistory(scenario, projection);
+      saveState();
+      emitTrendChange();
+      projection.scenarioId = scenario.id;
+    }
+    if (!persist && payload && payload.scenarioId && !projection.scenarioId) {
+      projection.scenarioId = payload.scenarioId;
+    }
+    return projection;
+  }
+
+  function listTrendScenarios() {
+    return cloneTrendScenarios();
+  }
+
+  function removeTrendScenario(id) {
+    ensureTrendStore();
+    if (!id) {
+      return false;
+    }
+    var trend = state.tools.trend;
+    var next = [];
+    var removed = false;
+    for (var i = 0; i < trend.scenarios.length; i += 1) {
+      var scenario = trend.scenarios[i];
+      if (scenario && scenario.id === id) {
+        removed = true;
+      } else {
+        next.push(scenario);
+      }
+    }
+    if (removed) {
+      trend.scenarios = next;
+      saveState();
+      emitTrendChange();
+    }
+    return removed;
   }
 
   function acceptTrendSuggestion(id, note) {
@@ -11603,6 +12194,9 @@
         rejectSuggestion: rejectTrendSuggestion,
         refreshAnalytics: refreshTrendAnalytics,
         getForecasts: getTrendForecasts,
+        runScenario: runTrendScenario,
+        listScenarios: listTrendScenarios,
+        removeScenario: removeTrendScenario,
         feedback: recordTrendFeedback,
         toast: showToast,
         getUser: function () {

@@ -174,6 +174,46 @@
             </div>
             <div class="trend-advice-list" id="trendAdviceList"></div>
           </div>
+          <div class="trend-scenario" id="trendScenario">
+            <div class="trend-scenario-header">
+              <div>
+                <h2>情景模拟</h2>
+                <p>组合节点调整、推演趋势并保存为长期方案。</p>
+              </div>
+              <div class="trend-scenario-header-actions">
+                <label class="trend-scenario-save">
+                  <input type="checkbox" id="trendScenarioPersist">
+                  <span>保存并写入历史</span>
+                </label>
+                <button type="button" class="primary-button" id="trendScenarioRun">运行模拟</button>
+              </div>
+            </div>
+            <form id="trendScenarioForm" class="trend-scenario-form" autocomplete="off">
+              <div class="form-row dual">
+                <div class="form-field">
+                  <label for="trendScenarioName">方案名称</label>
+                  <input id="trendScenarioName" type="text" placeholder="如：降温段调优演练">
+                </div>
+                <div class="form-field">
+                  <label for="trendScenarioHorizon">预测前瞻 (分钟)</label>
+                  <input id="trendScenarioHorizon" type="number" min="1" step="1">
+                </div>
+              </div>
+              <div class="form-field">
+                <label for="trendScenarioNote">备注</label>
+                <textarea id="trendScenarioNote" rows="2" placeholder="说明假设条件或目标"></textarea>
+              </div>
+              <div class="trend-scenario-adjustments" id="trendScenarioAdjustments" role="list"></div>
+              <div class="trend-scenario-actions">
+                <button type="button" class="ghost-button" id="trendScenarioAddAdjustment">新增节点调整</button>
+              </div>
+            </form>
+            <div class="trend-scenario-output" id="trendScenarioResult"></div>
+            <div class="trend-scenario-saved">
+              <h3>已保存的模拟</h3>
+              <div class="trend-scenario-saved-list" id="trendScenarioSavedList"></div>
+            </div>
+          </div>
         </section>
         <aside class="trend-side" aria-label="模型设置">
           <div class="trend-side-block">

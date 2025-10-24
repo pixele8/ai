@@ -4741,6 +4741,339 @@ textarea:focus {
   gap: 8px;
 }
 
+.trend-scenario {
+  margin-top: 24px;
+  background: rgba(248, 250, 252, 0.85);
+  border-radius: 16px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.trend-scenario-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.trend-scenario-header h2 {
+  margin-bottom: 4px;
+  font-size: 20px;
+  color: #0f172a;
+}
+
+.trend-scenario-header p {
+  font-size: 13px;
+  color: rgba(15, 23, 42, 0.55);
+}
+
+.trend-scenario-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.trend-scenario-save {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: rgba(15, 23, 42, 0.65);
+}
+
+.trend-scenario-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.trend-scenario-form .form-row.dual {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+}
+
+.trend-scenario-adjustments {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.trend-scenario-adjustment {
+  display: grid;
+  grid-template-columns: minmax(200px, 2fr) minmax(120px, 1fr) 70px auto;
+  gap: 12px;
+  align-items: center;
+  background: #ffffff;
+  border-radius: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  padding: 12px 14px;
+}
+
+.trend-scenario-select,
+.trend-scenario-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.trend-scenario-input:focus,
+.trend-scenario-select:focus,
+#trendScenarioNote:focus {
+  outline: none;
+  border-color: rgba(59, 130, 246, 0.45);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+
+.trend-scenario-unit {
+  font-size: 13px;
+  color: rgba(15, 23, 42, 0.45);
+  text-align: center;
+}
+
+.trend-scenario-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.trend-scenario-output {
+  background: #ffffff;
+  border-radius: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.trend-scenario-empty {
+  font-size: 14px;
+  color: rgba(15, 23, 42, 0.5);
+}
+
+.trend-scenario-summary {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.trend-scenario-meta {
+  font-size: 12px;
+  color: rgba(15, 23, 42, 0.55);
+}
+
+.trend-scenario-adjustment-list {
+  margin: 0;
+  padding-left: 18px;
+  color: rgba(15, 23, 42, 0.65);
+}
+
+.trend-scenario-results {
+  display: grid;
+  gap: 10px;
+}
+
+.trend-scenario-result-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.trend-scenario-result-row {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr auto;
+  gap: 12px;
+  align-items: center;
+  background: rgba(59, 130, 246, 0.04);
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.trend-scenario-result-row.active {
+  background: rgba(59, 130, 246, 0.12);
+  box-shadow: 0 10px 20px rgba(59, 130, 246, 0.12);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+}
+
+.trend-scenario-result-name {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.trend-scenario-result-value {
+  font-weight: 500;
+  color: rgba(15, 23, 42, 0.9);
+}
+
+.trend-scenario-result-delta {
+  font-size: 13px;
+  color: rgba(15, 23, 42, 0.7);
+}
+
+.trend-scenario-result-delta.rise {
+  color: #2563eb;
+}
+
+.trend-scenario-result-delta.fall {
+  color: #dc2626;
+}
+
+.trend-scenario-result-status {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.08);
+  color: #0f172a;
+}
+
+.trend-scenario-result-status-超上限 {
+  background: rgba(220, 38, 38, 0.12);
+  color: #b91c1c;
+}
+
+.trend-scenario-result-status-超下限 {
+  background: rgba(59, 130, 246, 0.12);
+  color: #1d4ed8;
+}
+
+.trend-scenario-result-status-偏高 {
+  background: rgba(234, 179, 8, 0.16);
+  color: #b45309;
+}
+
+.trend-scenario-result-status-偏低 {
+  background: rgba(59, 130, 246, 0.16);
+  color: #1d4ed8;
+}
+
+.trend-scenario-chart {
+  margin-top: 12px;
+  background: #ffffff;
+  border-radius: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  padding: 16px;
+}
+
+.trend-scenario-chart canvas {
+  width: 100%;
+  height: 260px;
+  display: block;
+}
+
+.trend-scenario-legend {
+  margin-top: 12px;
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: rgba(15, 23, 42, 0.65);
+}
+
+.trend-scenario-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.trend-scenario-legend-item.dashed .trend-scenario-legend-dot {
+  background-image: linear-gradient(90deg, rgba(148, 163, 184, 1) 50%, transparent 50%);
+  background-size: 6px 2px;
+  background-repeat: repeat-x;
+  background-position: left center;
+}
+
+.trend-scenario-legend-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.75);
+  display: inline-block;
+}
+
+.trend-scenario-contrib {
+  margin-top: 16px;
+  background: rgba(248, 250, 252, 0.85);
+  border-radius: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.trend-scenario-contrib-title {
+  font-weight: 600;
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.trend-scenario-contrib-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: rgba(15, 23, 42, 0.65);
+}
+
+.trend-scenario-contrib-item {
+  padding: 4px 0;
+}
+
+.trend-scenario-saved {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.trend-scenario-saved-list {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.trend-scenario-card {
+  background: #ffffff;
+  border-radius: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.trend-scenario-card.active {
+  border-color: rgba(59, 130, 246, 0.45);
+  box-shadow: 0 12px 24px rgba(59, 130, 246, 0.12);
+}
+
+.trend-scenario-card-title {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.trend-scenario-card-meta {
+  font-size: 12px;
+  color: rgba(15, 23, 42, 0.5);
+}
+
+.trend-scenario-card-summary {
+  font-size: 13px;
+  color: rgba(15, 23, 42, 0.65);
+}
+
+.trend-scenario-card-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .trend-side {
   gap: 16px;
 }
@@ -5020,6 +5353,57 @@ textarea:focus {
   color: rgba(15, 23, 42, 0.6);
 }
 
+.trend-history-scenario {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.trend-history-scenario-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 2fr) minmax(100px, 1fr) minmax(100px, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  background: rgba(59, 130, 246, 0.06);
+  border-radius: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.trend-history-scenario-row.active {
+  background: rgba(59, 130, 246, 0.14);
+  box-shadow: 0 8px 18px rgba(59, 130, 246, 0.14);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+}
+
+.trend-history-scenario-name {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.trend-history-scenario-value {
+  color: rgba(15, 23, 42, 0.85);
+}
+
+.trend-history-scenario-delta {
+  font-size: 13px;
+  color: rgba(15, 23, 42, 0.65);
+}
+
+.trend-history-scenario-delta.rise {
+  color: #2563eb;
+}
+
+.trend-history-scenario-delta.fall {
+  color: #dc2626;
+}
+
+.trend-history-scenario-status {
+  font-size: 12px;
+  color: rgba(15, 23, 42, 0.6);
+}
+
 .trend-history-section {
   margin-top: 20px;
   border-top: 1px solid rgba(15, 23, 42, 0.08);
@@ -5028,6 +5412,36 @@ textarea:focus {
 
 .trend-history-section h3 {
   margin-bottom: 12px;
+}
+
+.trend-history-chart-legend {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: rgba(15, 23, 42, 0.6);
+  margin-top: 10px;
+}
+
+.trend-history-chart-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.trend-history-chart-legend-item.dashed .trend-history-chart-legend-dot {
+  background-image: linear-gradient(90deg, rgba(148, 163, 184, 1) 50%, transparent 50%);
+  background-size: 6px 2px;
+  background-repeat: repeat-x;
+  background-position: left center;
+}
+
+.trend-history-chart-legend-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.75);
+  display: inline-block;
 }
 
 .trend-history-placeholder {
