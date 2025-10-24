@@ -1533,13 +1533,6 @@
       }
       explorerGridEl.innerHTML = "";
       var hasContent = false;
-      if (!context.currentId) {
-        var outputRecord = buildOutputExplorerRecord();
-        if (outputRecord) {
-          explorerGridEl.appendChild(createExplorerItem("output", outputRecord, null));
-          hasContent = true;
-        }
-      }
       var i;
       for (i = 0; i < context.groups.length; i += 1) {
         var groupItem = createExplorerItem("group", context.groups[i], context.currentId);

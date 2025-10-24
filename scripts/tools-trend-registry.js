@@ -87,6 +87,73 @@
     ctx.stroke();
   }
 
+  function deriveLibraryFromSnapshot(snapshot) {
+    if (!snapshot || !Array.isArray(snapshot.nodes) || !snapshot.nodes.length) {
+      return [];
+    }
+    var groups = {};
+    snapshot.nodes.forEach(function (group) {
+      if (!group || !group.id) {
+        return;
+      }
+      groups[group.id] = {
+        id: group.id,
+        name: group.name || "节点组",
+        parentId: group.parentId || null,
+        note: group.note || ""
+      };
+    });
+    function buildGroupPath(id) {
+      var ids = [];
+      var names = [];
+      var guard = 0;
+      var currentId = id;
+      while (currentId && groups[currentId] && guard < 50) {
+        var entry = groups[currentId];
+        ids.unshift(entry.id);
+        names.unshift(entry.name);
+        currentId = entry.parentId;
+        guard += 1;
+      }
+      return {
+        ids: ids,
+        names: names
+      };
+    }
+    var derived = [];
+    snapshot.nodes.forEach(function (group) {
+      if (!group || !group.id || !Array.isArray(group.children)) {
+        return;
+      }
+      var path = buildGroupPath(group.id);
+      group.children.forEach(function (child) {
+        if (!child || !child.id) {
+          return;
+        }
+        derived.push({
+          id: child.id,
+          name: child.name || "节点",
+          unit: child.unit || "",
+          lower: typeof child.lower === "number" ? child.lower : null,
+          center: typeof child.center === "number" ? child.center : null,
+          upper: typeof child.upper === "number" ? child.upper : null,
+          manual: !!child.manual,
+          manualStep: typeof child.manualStep === "number" ? child.manualStep : 0,
+          simulate: child.simulate === false ? false : true,
+          note: child.note || "",
+          groupId: group.id,
+          parentGroupId: group.parentId || null,
+          groupPath: path.ids.slice(),
+          groupNamePath: path.names.slice(),
+          groupNote: group.note || "",
+          createdAt: child.createdAt || group.createdAt || "",
+          updatedAt: child.updatedAt || group.updatedAt || ""
+        });
+      });
+    });
+    return derived;
+  }
+
   window.initTrendRegistryModule = function initTrendRegistryModule(services) {
     if (!services) {
       return;
@@ -122,6 +189,12 @@
     function sync(snapshot) {
       state.snapshot = snapshot || (services.getSnapshot ? services.getSnapshot({}) : null);
       state.library = (state.snapshot && state.snapshot.nodeLibrary) || [];
+      if ((!state.library || !state.library.length) && state.snapshot) {
+        var derived = deriveLibraryFromSnapshot(state.snapshot);
+        if (derived.length) {
+          state.library = derived;
+        }
+      }
       if (state.selectedId) {
         var exists = state.library.some(function (node) { return node && node.id === state.selectedId; });
         if (!exists) {
