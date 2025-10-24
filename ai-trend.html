@@ -75,38 +75,11 @@
               </select>
               <p class="form-hint">可选上级节点组，支持多层嵌套结构。</p>
             </div>
-            <div class="form-row triple">
-              <div class="form-field">
-                <label for="trendNodeUnit">单位</label>
-                <input id="trendNodeUnit" name="unit" type="text" placeholder="℃ / A / % 等">
-              </div>
-              <div class="form-field">
-                <label for="trendNodeManual">手动调整节点</label>
-                <select id="trendNodeManual" name="manual">
-                  <option value="false">否</option>
-                  <option value="true">是</option>
-                </select>
-              </div>
-              <div class="form-field">
-                <label for="trendNodeSimulation">演示模拟</label>
-                <select id="trendNodeSimulation" name="simulate">
-                  <option value="true">启用</option>
-                  <option value="false">停用</option>
-                </select>
-              </div>
-            </div>
-            <div class="form-row triple">
-              <div class="form-field">
-                <label for="trendNodeLower">下限</label>
-                <input id="trendNodeLower" name="lower" type="number" step="any" placeholder="可选">
-              </div>
-              <div class="form-field">
-                <label for="trendNodeCenter">中值</label>
-                <input id="trendNodeCenter" name="center" type="number" step="any" placeholder="可选">
-              </div>
-              <div class="form-field">
-                <label for="trendNodeUpper">上限</label>
-                <input id="trendNodeUpper" name="upper" type="number" step="any" placeholder="可选">
+            <div class="trend-group-summary" id="trendGroupSummary">
+              <div class="trend-group-summary-header">节点组趋势汇总</div>
+              <div class="trend-group-summary-body">
+                <div class="trend-group-bounds" id="trendGroupBoundsInfo">暂无汇总信息</div>
+                <div class="trend-group-analytics" id="trendGroupAnalytics"></div>
               </div>
             </div>
             <div class="form-field">
@@ -120,15 +93,6 @@
             <div class="form-field" id="trendNodeRefField" hidden>
               <label for="trendNodeRef">参考节点</label>
               <select id="trendNodeRef" name="positionRef"></select>
-            </div>
-            <div class="form-field" id="trendManualStepField" hidden>
-              <label for="trendManualStep">单次标准调整量</label>
-              <input id="trendManualStep" name="manualStep" type="number" step="any" placeholder="如：0.5">
-            </div>
-            <div class="form-field" id="trendManualImpactField" hidden>
-              <label for="trendManualImpact">受影响节点</label>
-              <select id="trendManualImpact" name="manualImpact" multiple size="4"></select>
-              <p class="form-hint">选择该手动节点会直接影响的监测节点，用于预测关联分析。</p>
             </div>
             <div class="trend-subnodes">
               <div class="trend-subnodes-header">
@@ -303,6 +267,85 @@
       </div>
     </section>
   </main>
+</div>
+<div class="modal hidden" id="trendNodeModal" aria-hidden="true">
+  <div class="modal-content trend-node-modal" role="dialog" aria-modal="true" aria-labelledby="trendNodeModalTitle">
+    <header class="modal-header">
+      <h2 id="trendNodeModalTitle">节点详情</h2>
+      <button type="button" class="ghost-button" id="trendNodeModalClose">关闭</button>
+    </header>
+    <div class="trend-node-modal-body">
+      <div class="trend-node-inspect">
+        <canvas id="trendNodeModalChart" aria-label="节点趋势"></canvas>
+        <div class="trend-node-inspect-meta" id="trendNodeModalMeta"></div>
+      </div>
+      <div class="trend-node-analytics" id="trendNodeModalAnalytics"></div>
+      <form id="trendNodeModalForm" class="trend-node-form" autocomplete="off">
+        <div class="form-row double">
+          <div class="form-field">
+            <label for="trendNodeModalKey">唯一标识</label>
+            <input id="trendNodeModalKey" name="key" type="text" required>
+          </div>
+          <div class="form-field">
+            <label for="trendNodeModalName">名称</label>
+            <input id="trendNodeModalName" name="name" type="text" required>
+          </div>
+        </div>
+        <div class="form-row double">
+          <div class="form-field">
+            <label for="trendNodeModalUnit">单位</label>
+            <input id="trendNodeModalUnit" name="unit" type="text" placeholder="℃ / A / % 等">
+          </div>
+          <div class="form-field">
+            <label for="trendNodeModalSimulate">演示模拟</label>
+            <select id="trendNodeModalSimulate" name="simulate">
+              <option value="true">启用</option>
+              <option value="false">停用</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row triple">
+          <div class="form-field">
+            <label for="trendNodeModalLower">下限</label>
+            <input id="trendNodeModalLower" name="lower" type="number" step="any" placeholder="可选">
+          </div>
+          <div class="form-field">
+            <label for="trendNodeModalCenter">中值</label>
+            <input id="trendNodeModalCenter" name="center" type="number" step="any" placeholder="可选">
+          </div>
+          <div class="form-field">
+            <label for="trendNodeModalUpper">上限</label>
+            <input id="trendNodeModalUpper" name="upper" type="number" step="any" placeholder="可选">
+          </div>
+        </div>
+        <div class="form-field">
+          <label for="trendNodeModalManual">手动调整节点</label>
+          <select id="trendNodeModalManual" name="manual">
+            <option value="false">否</option>
+            <option value="true">是</option>
+          </select>
+        </div>
+        <div class="form-row double" id="trendNodeModalManualFields">
+          <div class="form-field">
+            <label for="trendNodeModalStep">单次标准调整量</label>
+            <input id="trendNodeModalStep" name="manualStep" type="number" step="any" placeholder="如：0.5">
+          </div>
+          <div class="form-field">
+            <label for="trendNodeModalImpact">受影响节点</label>
+            <select id="trendNodeModalImpact" name="manualImpact" multiple size="4"></select>
+            <p class="form-hint">选择该手动节点会直接影响的监测节点，用于预测关联分析。</p>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="ghost-button" id="trendNodeModalDetail">打开详情页</button>
+          <div class="modal-action-spacer"></div>
+          <button type="button" class="ghost-button" id="trendNodeModalEdit">编辑</button>
+          <button type="button" class="ghost-button" id="trendNodeModalCancel">关闭</button>
+          <button type="submit" class="primary-button" id="trendNodeModalSave">保存节点</button>
+        </div>
+      </form>
+    </div>
+  </div>
 </div>
 <script src="scripts/app.js"></script>
 <script src="scripts/tools-trend.js"></script>

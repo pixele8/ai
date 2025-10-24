@@ -2967,8 +2967,8 @@
       if (!node || typeof node !== "object") {
         trend.nodes[tn] = {
           id: uuid(),
-          name: "节点",
-          unit: "℃",
+          name: "节点组",
+          unit: "",
           positionMode: "after",
           positionRef: null,
           lower: null,
@@ -2991,10 +2991,11 @@
         node.name = "节点";
       }
       node.name = node.name.trim();
-      if (typeof node.unit !== "string" || !node.unit.trim()) {
-        node.unit = "℃";
+      if (typeof node.unit !== "string") {
+        node.unit = "";
+      } else {
+        node.unit = node.unit.trim();
       }
-      node.unit = node.unit.trim();
       if (node.positionMode !== "after" && node.positionMode !== "parallel" && node.positionMode !== "same") {
         node.positionMode = "after";
       }
@@ -3032,11 +3033,12 @@
           node.children[sc] = {
             id: uuid(),
             name: "节点",
-            unit: node.unit,
-            lower: node.lower,
-            upper: node.upper,
-            manual: node.manual,
-            manualStep: node.manualStep
+            unit: "",
+            lower: null,
+            upper: null,
+            center: null,
+            manual: false,
+            manualStep: 0
           };
           continue;
         }
@@ -3049,24 +3051,22 @@
           child.name = child.name.trim();
         }
         if (typeof child.unit !== "string" || !child.unit.trim()) {
-          child.unit = node.unit;
+          child.unit = "";
         } else {
           child.unit = child.unit.trim();
         }
-        if (typeof child.lower !== "number" && child.lower !== null) {
-          child.lower = node.lower;
+        if (typeof child.lower !== "number") {
+          child.lower = null;
         }
-        if (typeof child.center !== "number" && child.center !== null) {
+        if (typeof child.upper !== "number") {
+          child.upper = null;
+        }
+        if (typeof child.center !== "number") {
           if (typeof child.lower === "number" && typeof child.upper === "number") {
             child.center = (child.lower + child.upper) / 2;
-          } else if (typeof node.center === "number") {
-            child.center = node.center;
           } else {
             child.center = null;
           }
-        }
-        if (typeof child.upper !== "number" && child.upper !== null) {
-          child.upper = node.upper;
         }
         if (typeof child.manual !== "boolean") {
           child.manual = node.manual;
@@ -3742,10 +3742,14 @@
         var record = {
           id: child.id,
           name: child.name || (currentGroup.name || "节点"),
-          unit: child.unit || currentGroup.unit || "",
-          lower: typeof child.lower === "number" ? child.lower : (typeof currentGroup.lower === "number" ? currentGroup.lower : null),
-          center: typeof child.center === "number" ? child.center : (typeof currentGroup.center === "number" ? currentGroup.center : null),
-          upper: typeof child.upper === "number" ? child.upper : (typeof currentGroup.upper === "number" ? currentGroup.upper : null),
+          unit: child.unit || "",
+          lower: typeof child.lower === "number" ? child.lower : null,
+          center: typeof child.center === "number"
+            ? child.center
+            : (typeof child.lower === "number" && typeof child.upper === "number"
+              ? (child.lower + child.upper) / 2
+              : null),
+          upper: typeof child.upper === "number" ? child.upper : null,
           manual: typeof child.manual === "boolean" ? child.manual : !!currentGroup.manual,
           manualStep: typeof child.manualStep === "number"
             ? child.manualStep
@@ -3919,10 +3923,13 @@
     } else if (!base.note) {
       base.note = "";
     }
-    if (typeof payload.unit === "string" && payload.unit.trim()) {
+    if (typeof payload.unit === "string") {
       base.unit = payload.unit.trim();
-    } else if (!base.unit) {
-      base.unit = "℃";
+    } else {
+      base.unit = typeof base.unit === "string" ? base.unit.trim() : "";
+      if (!base.unit) {
+        base.unit = "";
+      }
     }
     if (payload.positionMode === "after" || payload.positionMode === "parallel" || payload.positionMode === "same") {
       base.positionMode = payload.positionMode;
@@ -4001,29 +4008,27 @@
         }
         if (typeof childInput.unit === "string" && childInput.unit.trim()) {
           existing.unit = childInput.unit.trim();
-        } else if (!existing.unit) {
-          existing.unit = base.unit;
+        } else if (typeof existing.unit !== "string") {
+          existing.unit = "";
         }
         if (typeof childInput.lower === "number" || childInput.lower === null) {
           existing.lower = childInput.lower;
-        } else if (typeof existing.lower !== "number" && existing.lower !== null) {
-          existing.lower = base.lower;
-        }
-        if (typeof childInput.center === "number" || childInput.center === null) {
-          existing.center = childInput.center;
-        } else if (typeof existing.center !== "number" && existing.center !== null) {
-          if (typeof existing.lower === "number" && typeof existing.upper === "number") {
-            existing.center = (existing.lower + existing.upper) / 2;
-          } else if (typeof base.center === "number") {
-            existing.center = base.center;
-          } else {
-            existing.center = null;
-          }
+        } else if (typeof existing.lower !== "number") {
+          existing.lower = null;
         }
         if (typeof childInput.upper === "number" || childInput.upper === null) {
           existing.upper = childInput.upper;
-        } else if (typeof existing.upper !== "number" && existing.upper !== null) {
-          existing.upper = base.upper;
+        } else if (typeof existing.upper !== "number") {
+          existing.upper = null;
+        }
+        if (typeof childInput.center === "number" || childInput.center === null) {
+          existing.center = childInput.center;
+        } else if (typeof existing.center !== "number") {
+          if (typeof existing.lower === "number" && typeof existing.upper === "number") {
+            existing.center = (existing.lower + existing.upper) / 2;
+          } else {
+            existing.center = null;
+          }
         }
         if (typeof childInput.manual === "boolean") {
           existing.manual = childInput.manual;
