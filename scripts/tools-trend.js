@@ -1050,9 +1050,123 @@
       };
     }
 
+    function cloneLibraryRecord(record) {
+      if (!record || typeof record !== "object") {
+        return null;
+      }
+      var copy = {
+        id: record.id || "",
+        name: record.name || "节点",
+        unit: record.unit || "",
+        lower: typeof record.lower === "number" ? record.lower : null,
+        center: typeof record.center === "number" ? record.center : null,
+        upper: typeof record.upper === "number" ? record.upper : null,
+        manual: !!record.manual,
+        manualStep: typeof record.manualStep === "number" ? record.manualStep : 0,
+        simulate: record.simulate === false ? false : true,
+        note: record.note || "",
+        groupId: record.groupId || null,
+        parentGroupId: record.parentGroupId || null,
+        groupPath: Array.isArray(record.groupPath) ? record.groupPath.slice() : [],
+        groupNamePath: Array.isArray(record.groupNamePath) ? record.groupNamePath.slice() : [],
+        createdAt: record.createdAt || "",
+        updatedAt: record.updatedAt || ""
+      };
+      return copy;
+    }
+
+    function extractLibraryFromHierarchy(snapshot) {
+      if (!snapshot || !snapshot.hierarchy || !snapshot.hierarchy.nodes) {
+        return [];
+      }
+      var nodesMap = snapshot.hierarchy.nodes;
+      var derived = [];
+      for (var id in nodesMap) {
+        if (!Object.prototype.hasOwnProperty.call(nodesMap, id)) {
+          continue;
+        }
+        var entry = nodesMap[id];
+        if (!entry) {
+          continue;
+        }
+        var copy = cloneLibraryRecord(entry);
+        if (!copy.id) {
+          copy.id = id;
+        }
+        if (!copy.groupId && copy.groupPath && copy.groupPath.length) {
+          copy.groupId = copy.groupPath[copy.groupPath.length - 1];
+        }
+        derived.push(copy);
+      }
+      return derived;
+    }
+
+    function extractLibraryFromNodes(snapshot) {
+      if (!snapshot || !Array.isArray(snapshot.nodes)) {
+        return [];
+      }
+      var derived = [];
+      var nowIso = new Date().toISOString();
+      var idSeen = {};
+      snapshot.nodes.forEach(function (group) {
+        if (!group || !group.id || !Array.isArray(group.children)) {
+          return;
+        }
+        var groupPath = [];
+        if (snapshot.groupPaths && snapshot.groupPaths[group.id]) {
+          groupPath = snapshot.groupPaths[group.id].slice();
+        }
+        if (!groupPath.length) {
+          var ancestors = buildAncestorPath(group.id);
+          ancestors.push(group.id);
+          groupPath = ancestors;
+        }
+        var namePath = groupPath.map(function (gid) {
+          var node = findNode(gid);
+          return node && node.name ? node.name : "节点组";
+        });
+        group.children.forEach(function (child) {
+          if (!child) {
+            return;
+          }
+          var copy = cloneLibraryRecord(child);
+          if (!copy.id) {
+            copy.id = child.id || generateId();
+          }
+          if (idSeen[copy.id]) {
+            copy.id = generateId();
+          }
+          idSeen[copy.id] = true;
+          copy.groupId = group.id;
+          copy.parentGroupId = group.parentId || null;
+          copy.groupPath = groupPath.slice();
+          copy.groupNamePath = namePath.slice();
+          if (!copy.createdAt) {
+            copy.createdAt = child.createdAt || group.createdAt || nowIso;
+          }
+          if (!copy.updatedAt) {
+            copy.updatedAt = child.updatedAt || group.updatedAt || nowIso;
+          }
+          derived.push(copy);
+        });
+      });
+      return derived;
+    }
+
+    function resolveNodeLibrary(snapshot) {
+      if (snapshot && Array.isArray(snapshot.nodeLibrary) && snapshot.nodeLibrary.length) {
+        return snapshot.nodeLibrary.map(cloneLibraryRecord).filter(Boolean);
+      }
+      var fromHierarchy = extractLibraryFromHierarchy(snapshot);
+      if (fromHierarchy.length) {
+        return fromHierarchy;
+      }
+      return extractLibraryFromNodes(snapshot);
+    }
+
     function syncSnapshot(snapshot) {
       state.snapshot = snapshot || services.getSnapshot({});
-      state.nodeLibrary = (state.snapshot && state.snapshot.nodeLibrary) || [];
+      state.nodeLibrary = resolveNodeLibrary(state.snapshot);
       state.hierarchy = (state.snapshot && state.snapshot.hierarchy) || { groups: {}, nodes: {} };
       state.groupPaths = (state.snapshot && state.snapshot.groupPaths) || {};
       state.scenarios = (state.snapshot && state.snapshot.scenarios) || [];
@@ -1141,6 +1255,9 @@
 
     function syncExplorerToNode(nodeId) {
       var ancestors = buildAncestorPath(nodeId);
+      if (nodeId && findNode(nodeId) && ancestors.indexOf(nodeId) === -1) {
+        ancestors.push(nodeId);
+      }
       state.explorerPath = ancestors;
     }
 

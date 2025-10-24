@@ -87,8 +87,56 @@
     ctx.stroke();
   }
 
+  function cloneLibraryRecord(record) {
+    if (!record || typeof record !== "object") {
+      return null;
+    }
+    return {
+      id: record.id || "",
+      name: record.name || "节点",
+      unit: record.unit || "",
+      lower: typeof record.lower === "number" ? record.lower : null,
+      center: typeof record.center === "number" ? record.center : null,
+      upper: typeof record.upper === "number" ? record.upper : null,
+      manual: !!record.manual,
+      manualStep: typeof record.manualStep === "number" ? record.manualStep : 0,
+      simulate: record.simulate === false ? false : true,
+      note: record.note || "",
+      groupId: record.groupId || null,
+      parentGroupId: record.parentGroupId || null,
+      groupPath: Array.isArray(record.groupPath) ? record.groupPath.slice() : [],
+      groupNamePath: Array.isArray(record.groupNamePath) ? record.groupNamePath.slice() : [],
+      groupNote: record.groupNote || "",
+      createdAt: record.createdAt || "",
+      updatedAt: record.updatedAt || ""
+    };
+  }
+
   function deriveLibraryFromSnapshot(snapshot) {
-    if (!snapshot || !Array.isArray(snapshot.nodes) || !snapshot.nodes.length) {
+    if (!snapshot) {
+      return [];
+    }
+    if (Array.isArray(snapshot.nodeLibrary) && snapshot.nodeLibrary.length) {
+      return snapshot.nodeLibrary.map(cloneLibraryRecord).filter(Boolean);
+    }
+    if (snapshot.hierarchy && snapshot.hierarchy.nodes) {
+      var hierarchyNodes = snapshot.hierarchy.nodes;
+      var entries = [];
+      for (var id in hierarchyNodes) {
+        if (!Object.prototype.hasOwnProperty.call(hierarchyNodes, id)) {
+          continue;
+        }
+        var derived = cloneLibraryRecord(hierarchyNodes[id]);
+        if (derived) {
+          if (!derived.id) {
+            derived.id = id;
+          }
+          entries.push(derived);
+        }
+      }
+      return entries;
+    }
+    if (!Array.isArray(snapshot.nodes) || !snapshot.nodes.length) {
       return [];
     }
     var groups = {};
@@ -120,7 +168,7 @@
         names: names
       };
     }
-    var derived = [];
+    var derivedList = [];
     snapshot.nodes.forEach(function (group) {
       if (!group || !group.id || !Array.isArray(group.children)) {
         return;
@@ -130,7 +178,7 @@
         if (!child || !child.id) {
           return;
         }
-        derived.push({
+        derivedList.push({
           id: child.id,
           name: child.name || "节点",
           unit: child.unit || "",
@@ -151,7 +199,7 @@
         });
       });
     });
-    return derived;
+    return derivedList;
   }
 
   window.initTrendRegistryModule = function initTrendRegistryModule(services) {
@@ -188,13 +236,7 @@
 
     function sync(snapshot) {
       state.snapshot = snapshot || (services.getSnapshot ? services.getSnapshot({}) : null);
-      state.library = (state.snapshot && state.snapshot.nodeLibrary) || [];
-      if ((!state.library || !state.library.length) && state.snapshot) {
-        var derived = deriveLibraryFromSnapshot(state.snapshot);
-        if (derived.length) {
-          state.library = derived;
-        }
-      }
+      state.library = deriveLibraryFromSnapshot(state.snapshot);
       if (state.selectedId) {
         var exists = state.library.some(function (node) { return node && node.id === state.selectedId; });
         if (!exists) {
