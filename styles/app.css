@@ -6344,8 +6344,15 @@ textarea:focus {
 
 .trend-desktop-info {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+  align-items: stretch;
   gap: 20px;
+}
+
+@media (max-width: 1024px) {
+  .trend-desktop-info {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .trend-console-summary {
