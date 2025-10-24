@@ -59,7 +59,9 @@
         </div>
         <div class="chat-actions-right">
           <div class="chat-tool-menu">
-            <button type="button" class="ghost-button" id="chatToolMenuToggle">检测工具</button>
+            <button type="button" class="ghost-button chat-tool-trigger" id="chatToolMenuToggle" aria-haspopup="true" aria-expanded="false" title="检测工具">
+              <span aria-hidden="true">＋</span>
+            </button>
             <div class="chat-tool-dropdown hidden" id="chatToolMenu">
               <button type="button" class="menu-item" id="chatImageUpload">发送至热脏污识别</button>
             </div>
