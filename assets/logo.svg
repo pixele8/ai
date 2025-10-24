@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-labelledby="title desc">
+  <title id="title">虹小聊 logo</title>
+  <desc id="desc">圆形渐变背景中包含抽象的虹与对话气泡形状</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4c8cff" />
+      <stop offset="50%" stop-color="#6cc4ff" />
+      <stop offset="100%" stop-color="#94f7ff" />
+    </linearGradient>
+    <linearGradient id="arc" x1="20%" y1="80%" x2="80%" y2="20%">
+      <stop offset="0%" stop-color="#1f3b83" />
+      <stop offset="100%" stop-color="#4e7dff" />
+    </linearGradient>
+  </defs>
+  <circle cx="60" cy="60" r="56" fill="url(#bg)" stroke="#0f1c3f" stroke-width="4" />
+  <path d="M28 72c8-22 24-36 44-36 12 0 24 6 32 16l-10 8c-6-8-14-12-22-12-14 0-26 10-32 26z" fill="url(#arc)" />
+  <path d="M48 78h32c6 0 10 4 10 10s-4 10-10 10H64l-12 10v-10H48c-6 0-10-4-10-10s4-10 10-10z" fill="#0f1c3f" opacity="0.85" />
+  <circle cx="76" cy="88" r="4" fill="#94f7ff" />
+</svg>

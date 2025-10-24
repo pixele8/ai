@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>收藏会话预览 · 虹小聊</title>
+<link rel="stylesheet" href="styles/app.css">
+</head>
+<body data-page="favorite-viewer">
+<div class="viewer-shell">
+  <header class="viewer-header">
+    <div>
+      <h1 id="viewerTitle">收藏会话</h1>
+      <div class="viewer-meta" id="viewerMeta"></div>
+    </div>
+    <div class="viewer-actions">
+      <button type="button" class="ghost-button" id="viewerFocus">定位在主页面</button>
+      <button type="button" class="ghost-button" id="viewerClose">关闭窗口</button>
+    </div>
+  </header>
+  <section class="viewer-summary" id="viewerSummary"></section>
+  <section class="viewer-transcript" id="viewerTranscript"></section>
+</div>
+<script src="scripts/app.js"></script>
+</body>
+</html>
