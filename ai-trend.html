@@ -45,12 +45,24 @@
           <form id="trendNodeForm" class="trend-form" autocomplete="off">
             <h3 id="trendFormTitle">节点组详情</h3>
             <div class="form-field">
+              <label for="trendNodeKey">唯一标识</label>
+              <input id="trendNodeKey" name="key" type="text" placeholder="如：cooling-section" required>
+              <p class="form-hint">用于计算与追踪的唯一 ID，可自定义且在全局内保持唯一。</p>
+            </div>
+            <div class="form-field">
               <label for="trendNodeName">名称</label>
               <input id="trendNodeName" name="name" type="text" placeholder="如：降温段温度" required>
             </div>
             <div class="form-field">
               <label for="trendNodeNote">备注</label>
               <textarea id="trendNodeNote" name="note" rows="2" placeholder="记录该节点组的说明或所含节点"></textarea>
+            </div>
+            <div class="form-field">
+              <label for="trendNodeParent">所属节点组</label>
+              <select id="trendNodeParent" name="parent">
+                <option value="">顶层节点组</option>
+              </select>
+              <p class="form-hint">可选上级节点组，支持多层嵌套结构。</p>
             </div>
             <div class="form-row triple">
               <div class="form-field">

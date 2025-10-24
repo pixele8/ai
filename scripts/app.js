@@ -2667,7 +2667,9 @@
           mesEndpoints: []
         },
         model: { version: 1, calibrations: {} },
-        demo: { enabled: false, intervalMs: 60000, amplitude: 0.2, volatility: 0.35 }
+        demo: { enabled: false, intervalMs: 60000, amplitude: 0.2, volatility: 0.35 },
+        nodeLibrary: [],
+        groupPaths: {}
       };
     }
     var trend = state.tools.trend;
@@ -2691,6 +2693,12 @@
     }
     if (!Array.isArray(trend.scenarios)) {
       trend.scenarios = [];
+    }
+    if (!Array.isArray(trend.nodeLibrary)) {
+      trend.nodeLibrary = [];
+    }
+    if (!trend.groupPaths || typeof trend.groupPaths !== "object") {
+      trend.groupPaths = {};
     }
     if (!trend.settings || typeof trend.settings !== "object") {
       trend.settings = {
@@ -2762,6 +2770,11 @@
       }
       if (!node.id) {
         node.id = uuid();
+      }
+      if (typeof node.parentId !== "string" || !node.parentId) {
+        node.parentId = null;
+      } else if (node.parentId === node.id) {
+        node.parentId = null;
       }
       if (typeof node.name !== "string" || !node.name.trim()) {
         node.name = "节点";
@@ -2904,6 +2917,7 @@
       }
       manualNode.manualTargets = sanitizeManualTargetsInput(manualNode.manualTargets, manualNode.id);
     }
+    rebuildTrendNodeLibrary();
     if (trend.streams.length > 2000) {
       trend.streams = trend.streams.slice(trend.streams.length - 2000);
     }
@@ -2925,6 +2939,26 @@
     } catch (err) {
       console.warn("cloneTrendNodes failed", err);
       return [];
+    }
+  }
+
+  function cloneTrendNodeLibrary() {
+    ensureTrendStore();
+    try {
+      return JSON.parse(JSON.stringify(state.tools.trend.nodeLibrary || []));
+    } catch (err) {
+      console.warn("cloneTrendNodeLibrary failed", err);
+      return [];
+    }
+  }
+
+  function cloneTrendGroupPaths() {
+    ensureTrendStore();
+    try {
+      return JSON.parse(JSON.stringify(state.tools.trend.groupPaths || {}));
+    } catch (err) {
+      console.warn("cloneTrendGroupPaths failed", err);
+      return {};
     }
   }
 
@@ -3033,6 +3067,454 @@
     return null;
   }
 
+  function collectTrendDescendantIds(groupId) {
+    ensureTrendStore();
+    var descendants = [];
+    if (!groupId) {
+      return descendants;
+    }
+    var queue = [groupId];
+    while (queue.length) {
+      var currentId = queue.shift();
+      for (var i = 0; i < state.tools.trend.nodes.length; i += 1) {
+        var candidate = state.tools.trend.nodes[i];
+        if (!candidate || !candidate.id || !candidate.parentId) {
+          continue;
+        }
+        if (candidate.parentId === currentId) {
+          descendants.push(candidate.id);
+          queue.push(candidate.id);
+        }
+      }
+    }
+    return descendants;
+  }
+
+  function getTrendGroupPathFromState(groupId) {
+    ensureTrendStore();
+    if (!groupId) {
+      return [];
+    }
+    var paths = state.tools.trend.groupPaths || {};
+    if (paths[groupId]) {
+      return paths[groupId].slice();
+    }
+    var nodes = state.tools.trend.nodes || [];
+    var map = {};
+    for (var i = 0; i < nodes.length; i += 1) {
+      var group = nodes[i];
+      if (group && group.id) {
+        map[group.id] = group;
+      }
+    }
+    var path = [];
+    var guard = 0;
+    var current = map[groupId];
+    while (current && guard < 50) {
+      path.unshift(current.id);
+      if (!current.parentId || !map[current.parentId]) {
+        break;
+      }
+      current = map[current.parentId];
+      guard += 1;
+    }
+    state.tools.trend.groupPaths[groupId] = path.slice();
+    return path;
+  }
+
+  function computeTrendGroupAffinity(sourceNode, targetNode) {
+    if (!sourceNode || !targetNode) {
+      return 0.6;
+    }
+    var sourcePath = getTrendGroupPathFromState(sourceNode.id);
+    var targetPath = getTrendGroupPathFromState(targetNode.id);
+    if (!sourcePath.length || !targetPath.length) {
+      return 0.6;
+    }
+    var maxShared = Math.min(sourcePath.length, targetPath.length);
+    var shared = 0;
+    for (var i = 0; i < maxShared; i += 1) {
+      if (sourcePath[i] === targetPath[i]) {
+        shared += 1;
+      } else {
+        break;
+      }
+    }
+    var distance = (sourcePath.length - shared) + (targetPath.length - shared);
+    if (distance <= 0) {
+      return 1;
+    }
+    if (distance === 1) {
+      return 0.9;
+    }
+    if (distance === 2) {
+      return 0.78;
+    }
+    if (distance === 3) {
+      return 0.66;
+    }
+    var fallback = 0.66 - (distance - 3) * 0.08;
+    if (!isFinite(fallback)) {
+      fallback = 0.5;
+    }
+    return Math.max(0.5, Math.min(0.66, fallback));
+  }
+
+  function rewriteTrendKeyValue(value, oldNodeId, newNodeId, oldSubId, newSubId) {
+    if (typeof value !== "string" || !value) {
+      return value;
+    }
+    var parts = value.split("::");
+    if (!parts.length) {
+      return value;
+    }
+    if (parts[0] === oldNodeId) {
+      parts[0] = newNodeId;
+      if (parts.length > 1 && typeof oldSubId === "string" && typeof newSubId === "string" && parts[1] === oldSubId) {
+        parts[1] = newSubId;
+      }
+      return parts.join("::");
+    }
+    return value;
+  }
+
+  function renameTrendGroupId(oldId, newId) {
+    if (!oldId || !newId || oldId === newId) {
+      return findTrendNodeById(newId) || findTrendNodeById(oldId);
+    }
+    ensureTrendStore();
+    var nodes = state.tools.trend.nodes || [];
+    var target = null;
+    for (var i = 0; i < nodes.length; i += 1) {
+      var group = nodes[i];
+      if (!group) {
+        continue;
+      }
+      if (group.id === oldId) {
+        group.id = newId;
+        target = group;
+      }
+      if (group.parentId === oldId) {
+        group.parentId = newId;
+      }
+      if (group.positionRef === oldId) {
+        group.positionRef = newId;
+      }
+      if (Array.isArray(group.manualTargets)) {
+        for (var mt = 0; mt < group.manualTargets.length; mt += 1) {
+          var manualTarget = group.manualTargets[mt];
+          if (manualTarget && manualTarget.nodeId === oldId) {
+            manualTarget.nodeId = newId;
+          }
+        }
+      }
+    }
+    var collections = [
+      state.tools.trend.streams,
+      state.tools.trend.suggestions,
+      state.tools.trend.forecasts,
+      state.tools.trend.history,
+      state.tools.trend.feedback
+    ];
+    collections.forEach(function (list) {
+      if (!Array.isArray(list)) {
+        return;
+      }
+      for (var idx = 0; idx < list.length; idx += 1) {
+        var entry = list[idx];
+        if (!entry || typeof entry !== "object") {
+          continue;
+        }
+        if (entry.nodeId === oldId) {
+          entry.nodeId = newId;
+        }
+        if (entry.sourceId === oldId) {
+          entry.sourceId = newId;
+        }
+        if (entry.targetId === oldId) {
+          entry.targetId = newId;
+        }
+        if (entry.manualNodeId === oldId) {
+          entry.manualNodeId = newId;
+        }
+        if (entry.upstreamNodeId === oldId) {
+          entry.upstreamNodeId = newId;
+        }
+        if (entry.downstreamNodeId === oldId) {
+          entry.downstreamNodeId = newId;
+        }
+        if (typeof entry.key === "string") {
+          entry.key = rewriteTrendKeyValue(entry.key, oldId, newId);
+        }
+        if (typeof entry.seriesKey === "string") {
+          entry.seriesKey = rewriteTrendKeyValue(entry.seriesKey, oldId, newId);
+        }
+        if (typeof entry.streamKey === "string") {
+          entry.streamKey = rewriteTrendKeyValue(entry.streamKey, oldId, newId);
+        }
+        if (Array.isArray(entry.duplicates)) {
+          for (var d = 0; d < entry.duplicates.length; d += 1) {
+            var dup = entry.duplicates[d];
+            if (!dup || typeof dup !== "object") {
+              continue;
+            }
+            if (dup.nodeId === oldId) {
+              dup.nodeId = newId;
+            }
+            if (typeof dup.key === "string") {
+              dup.key = rewriteTrendKeyValue(dup.key, oldId, newId);
+            }
+          }
+        }
+      }
+    });
+    if (Array.isArray(state.tools.trend.scenarios)) {
+      for (var s = 0; s < state.tools.trend.scenarios.length; s += 1) {
+        var scenario = state.tools.trend.scenarios[s];
+        if (!scenario) {
+          continue;
+        }
+        if (Array.isArray(scenario.adjustments)) {
+          for (var a = 0; a < scenario.adjustments.length; a += 1) {
+            var adj = scenario.adjustments[a];
+            if (!adj) {
+              continue;
+            }
+            if (adj.nodeId === oldId) {
+              adj.nodeId = newId;
+            }
+            if (typeof adj.key === "string") {
+              adj.key = rewriteTrendKeyValue(adj.key, oldId, newId);
+            }
+          }
+        }
+        if (scenario.lastProjection && Array.isArray(scenario.lastProjection.adjustments)) {
+          for (var pa = 0; pa < scenario.lastProjection.adjustments.length; pa += 1) {
+            var projAdj = scenario.lastProjection.adjustments[pa];
+            if (!projAdj) {
+              continue;
+            }
+            if (projAdj.nodeId === oldId) {
+              projAdj.nodeId = newId;
+            }
+            if (typeof projAdj.key === "string") {
+              projAdj.key = rewriteTrendKeyValue(projAdj.key, oldId, newId);
+            }
+          }
+        }
+      }
+    }
+    if (state.tools.trend.model && state.tools.trend.model.calibrations && Object.prototype.hasOwnProperty.call(state.tools.trend.model.calibrations, oldId)) {
+      var calibration = state.tools.trend.model.calibrations[oldId];
+      if (!state.tools.trend.model.calibrations[newId]) {
+        state.tools.trend.model.calibrations[newId] = calibration;
+      } else if (calibration) {
+        state.tools.trend.model.calibrations[newId].ratingSum = (state.tools.trend.model.calibrations[newId].ratingSum || 0) + (calibration.ratingSum || 0);
+        state.tools.trend.model.calibrations[newId].ratingCount = (state.tools.trend.model.calibrations[newId].ratingCount || 0) + (calibration.ratingCount || 0);
+      }
+      delete state.tools.trend.model.calibrations[oldId];
+    }
+    state.tools.trend.groupPaths = {};
+    return target;
+  }
+
+  function renameTrendChildId(nodeId, oldChildId, newChildId) {
+    if (!nodeId || !oldChildId || !newChildId || oldChildId === newChildId) {
+      return;
+    }
+    ensureTrendStore();
+    var node = findTrendNodeById(nodeId);
+    if (!node || !Array.isArray(node.children)) {
+      return;
+    }
+    var child = null;
+    for (var i = 0; i < node.children.length; i += 1) {
+      if (node.children[i] && node.children[i].id === oldChildId) {
+        node.children[i].id = newChildId;
+        child = node.children[i];
+      }
+    }
+    if (!child) {
+      return;
+    }
+    if (Array.isArray(node.manualTargets)) {
+      for (var mt = 0; mt < node.manualTargets.length; mt += 1) {
+        var target = node.manualTargets[mt];
+        if (target && target.nodeId === nodeId && target.subNodeId === oldChildId) {
+          target.subNodeId = newChildId;
+        }
+      }
+    }
+    var collections = [
+      state.tools.trend.streams,
+      state.tools.trend.suggestions,
+      state.tools.trend.forecasts,
+      state.tools.trend.history,
+      state.tools.trend.feedback
+    ];
+    collections.forEach(function (list) {
+      if (!Array.isArray(list)) {
+        return;
+      }
+      for (var idx = 0; idx < list.length; idx += 1) {
+        var entry = list[idx];
+        if (!entry || typeof entry !== "object") {
+          continue;
+        }
+        if (entry.nodeId === nodeId && entry.subNodeId === oldChildId) {
+          entry.subNodeId = newChildId;
+        }
+        if (typeof entry.key === "string") {
+          entry.key = rewriteTrendKeyValue(entry.key, nodeId, nodeId, oldChildId, newChildId);
+        }
+        if (typeof entry.seriesKey === "string") {
+          entry.seriesKey = rewriteTrendKeyValue(entry.seriesKey, nodeId, nodeId, oldChildId, newChildId);
+        }
+        if (typeof entry.streamKey === "string") {
+          entry.streamKey = rewriteTrendKeyValue(entry.streamKey, nodeId, nodeId, oldChildId, newChildId);
+        }
+        if (Array.isArray(entry.duplicates)) {
+          for (var d = 0; d < entry.duplicates.length; d += 1) {
+            var dup = entry.duplicates[d];
+            if (!dup || typeof dup !== "object") {
+              continue;
+            }
+            if (dup.nodeId === nodeId && dup.subNodeId === oldChildId) {
+              dup.subNodeId = newChildId;
+            }
+            if (typeof dup.key === "string") {
+              dup.key = rewriteTrendKeyValue(dup.key, nodeId, nodeId, oldChildId, newChildId);
+            }
+          }
+        }
+      }
+    });
+    if (Array.isArray(state.tools.trend.scenarios)) {
+      for (var s = 0; s < state.tools.trend.scenarios.length; s += 1) {
+        var scenario = state.tools.trend.scenarios[s];
+        if (!scenario) {
+          continue;
+        }
+        if (Array.isArray(scenario.adjustments)) {
+          for (var a = 0; a < scenario.adjustments.length; a += 1) {
+            var adj = scenario.adjustments[a];
+            if (!adj) {
+              continue;
+            }
+            if (adj.nodeId === nodeId && adj.subNodeId === oldChildId) {
+              adj.subNodeId = newChildId;
+            }
+            if (typeof adj.key === "string") {
+              adj.key = rewriteTrendKeyValue(adj.key, nodeId, nodeId, oldChildId, newChildId);
+            }
+          }
+        }
+        if (scenario.lastProjection && Array.isArray(scenario.lastProjection.adjustments)) {
+          for (var pa = 0; pa < scenario.lastProjection.adjustments.length; pa += 1) {
+            var projAdj = scenario.lastProjection.adjustments[pa];
+            if (!projAdj) {
+              continue;
+            }
+            if (projAdj.nodeId === nodeId && projAdj.subNodeId === oldChildId) {
+              projAdj.subNodeId = newChildId;
+            }
+            if (typeof projAdj.key === "string") {
+              projAdj.key = rewriteTrendKeyValue(projAdj.key, nodeId, nodeId, oldChildId, newChildId);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  function rebuildTrendNodeLibrary() {
+    if (!state || !state.tools || !state.tools.trend) {
+      return;
+    }
+    var nodes = Array.isArray(state.tools.trend.nodes) ? state.tools.trend.nodes : [];
+    var map = {};
+    for (var i = 0; i < nodes.length; i += 1) {
+      var group = nodes[i];
+      if (group && group.id) {
+        if (typeof group.parentId !== "string" || !group.parentId) {
+          group.parentId = null;
+        }
+        if (!Array.isArray(group.children)) {
+          group.children = [];
+        }
+        map[group.id] = group;
+      }
+    }
+    var pathCache = {};
+    function computePath(id) {
+      if (!id || !map[id]) {
+        return [];
+      }
+      if (pathCache[id]) {
+        return pathCache[id];
+      }
+      var group = map[id];
+      var parentPath = [];
+      if (group.parentId && map[group.parentId]) {
+        parentPath = computePath(group.parentId).slice();
+      }
+      parentPath.push(id);
+      pathCache[id] = parentPath;
+      return parentPath;
+    }
+    var library = [];
+    var nowIso = new Date().toISOString();
+    for (var gi = 0; gi < nodes.length; gi += 1) {
+      var currentGroup = nodes[gi];
+      if (!currentGroup || !currentGroup.id) {
+        continue;
+      }
+      var groupPath = computePath(currentGroup.id).slice();
+      var namePath = [];
+      for (var pi = 0; pi < groupPath.length; pi += 1) {
+        var gp = map[groupPath[pi]];
+        namePath.push(gp && gp.name ? gp.name : "节点组");
+      }
+      for (var ci = 0; ci < currentGroup.children.length; ci += 1) {
+        var child = currentGroup.children[ci];
+        if (!child) {
+          continue;
+        }
+        if (!child.id) {
+          child.id = uuid();
+        }
+        if (typeof child.createdAt !== "string") {
+          child.createdAt = nowIso;
+        }
+        if (typeof child.updatedAt !== "string") {
+          child.updatedAt = nowIso;
+        }
+        var record = {
+          id: child.id,
+          name: child.name || (currentGroup.name || "节点"),
+          unit: child.unit || currentGroup.unit || "",
+          lower: typeof child.lower === "number" ? child.lower : (typeof currentGroup.lower === "number" ? currentGroup.lower : null),
+          center: typeof child.center === "number" ? child.center : (typeof currentGroup.center === "number" ? currentGroup.center : null),
+          upper: typeof child.upper === "number" ? child.upper : (typeof currentGroup.upper === "number" ? currentGroup.upper : null),
+          manual: typeof child.manual === "boolean" ? child.manual : !!currentGroup.manual,
+          manualStep: typeof child.manualStep === "number"
+            ? child.manualStep
+            : (typeof currentGroup.manualStep === "number" ? currentGroup.manualStep : 0),
+          simulate: child.simulate === false ? false : (currentGroup.simulate === false ? false : true),
+          groupId: currentGroup.id,
+          parentGroupId: currentGroup.parentId || null,
+          groupPath: groupPath.slice(),
+          groupNamePath: namePath.slice(),
+          createdAt: child.createdAt,
+          updatedAt: child.updatedAt
+        };
+        library.push(record);
+      }
+    }
+    state.tools.trend.nodeLibrary = library;
+    state.tools.trend.groupPaths = pathCache;
+  }
+
   function sanitizeTrendSample(sample) {
     if (!sample || typeof sample !== "object") {
       return null;
@@ -3073,6 +3555,8 @@
     var streamLimit = typeof options.streamLimit === "number" ? options.streamLimit : 480;
     return {
       nodes: cloneTrendNodes(),
+      nodeLibrary: cloneTrendNodeLibrary(),
+      groupPaths: cloneTrendGroupPaths(),
       streams: cloneTrendStreams(streamLimit),
       suggestions: cloneTrendSuggestions(),
       scenarios: cloneTrendScenarios(),
@@ -3123,14 +3607,32 @@
       return null;
     }
     var now = new Date().toISOString();
-    var id = payload.id || uuid();
+    var id = typeof payload.id === "string" && payload.id.trim() ? payload.id.trim() : uuid();
+    var originalId = typeof payload.originalId === "string" && payload.originalId.trim() ? payload.originalId.trim() : null;
     var node = findTrendNodeById(id);
+    if (!node && originalId && originalId !== id) {
+      node = renameTrendGroupId(originalId, id);
+      if (!node) {
+        node = findTrendNodeById(id);
+      }
+    }
     var base = node || {
       id: id,
       createdAt: now,
       children: []
     };
     base.updatedAt = now;
+    var parentId = null;
+    if (typeof payload.parentId === "string" && payload.parentId && payload.parentId !== id) {
+      var parentCandidate = findTrendNodeById(payload.parentId);
+      if (parentCandidate) {
+        var invalid = collectTrendDescendantIds(id);
+        if (invalid.indexOf(payload.parentId) === -1) {
+          parentId = payload.parentId;
+        }
+      }
+    }
+    base.parentId = parentId;
     if (typeof payload.name === "string" && payload.name.trim()) {
       base.name = payload.name.trim();
     } else if (!base.name) {
@@ -3202,8 +3704,16 @@
         if (!childInput || typeof childInput !== "object") {
           continue;
         }
-        var childId = childInput.id || uuid();
-        var existing = findTrendChild(base, childId) || { id: childId };
+        var childId = childInput.id && String(childInput.id).trim() ? String(childInput.id).trim() : uuid();
+        var originalChildId = childInput.originalId && String(childInput.originalId).trim() ? String(childInput.originalId).trim() : null;
+        var existing = findTrendChild(base, childId);
+        if (!existing && originalChildId && originalChildId !== childId) {
+          renameTrendChildId(base.id, originalChildId, childId);
+          existing = findTrendChild(base, childId);
+        }
+        if (!existing) {
+          existing = { id: childId };
+        }
         existing.updatedAt = now;
         if (typeof existing.createdAt !== "string") {
           existing.createdAt = now;
@@ -3249,6 +3759,7 @@
         } else if (typeof existing.manualStep !== "number") {
           existing.manualStep = base.manualStep;
         }
+        delete existing.originalId;
         nextChildren.push(existing);
       }
       base.children = nextChildren;
@@ -3261,6 +3772,7 @@
     if (!node) {
       state.tools.trend.nodes.push(base);
     }
+    rebuildTrendNodeLibrary();
     saveState();
     emitTrendChange();
     return base;
@@ -3271,26 +3783,49 @@
     if (!nodeId) {
       return;
     }
+    var idsToRemove = collectTrendDescendantIds(nodeId);
+    idsToRemove.push(nodeId);
+    var removalSet = {};
+    for (var r = 0; r < idsToRemove.length; r += 1) {
+      removalSet[idsToRemove[r]] = true;
+    }
+    var nextNodes = [];
     var removed = false;
-    for (var i = state.tools.trend.nodes.length - 1; i >= 0; i -= 1) {
-      if (state.tools.trend.nodes[i] && state.tools.trend.nodes[i].id === nodeId) {
-        state.tools.trend.nodes.splice(i, 1);
+    for (var i = 0; i < state.tools.trend.nodes.length; i += 1) {
+      var group = state.tools.trend.nodes[i];
+      if (group && removalSet[group.id]) {
         removed = true;
+        continue;
+      }
+      nextNodes.push(group);
+      if (group && Array.isArray(group.manualTargets)) {
+        group.manualTargets = group.manualTargets.filter(function (target) {
+          return target && target.nodeId && !removalSet[target.nodeId];
+        });
       }
     }
-    if (removed) {
-      var remainingStreams = [];
-      for (var s = 0; s < state.tools.trend.streams.length; s += 1) {
-        var stream = state.tools.trend.streams[s];
-        if (!stream || stream.nodeId === nodeId) {
-          continue;
-        }
-        remainingStreams.push(stream);
-      }
-      state.tools.trend.streams = remainingStreams;
-      saveState();
-      emitTrendChange();
+    if (!removed) {
+      return;
     }
+    state.tools.trend.nodes = nextNodes;
+    state.tools.trend.streams = state.tools.trend.streams.filter(function (stream) {
+      return stream && !removalSet[stream.nodeId];
+    });
+    state.tools.trend.suggestions = state.tools.trend.suggestions.filter(function (suggestion) {
+      return suggestion && !removalSet[suggestion.nodeId];
+    });
+    state.tools.trend.forecasts = state.tools.trend.forecasts.filter(function (forecast) {
+      return forecast && !removalSet[forecast.nodeId];
+    });
+    state.tools.trend.history = state.tools.trend.history.filter(function (entry) {
+      return !entry || !entry.nodeId || !removalSet[entry.nodeId];
+    });
+    state.tools.trend.feedback = state.tools.trend.feedback.filter(function (entry) {
+      return !entry || !entry.nodeId || !removalSet[entry.nodeId];
+    });
+    rebuildTrendNodeLibrary();
+    saveState();
+    emitTrendChange();
   }
 
   function updateTrendSettings(patch) {
@@ -3490,9 +4025,10 @@
       var ratio = span ? diff / (span + 1) : 0;
       centerFactor = Math.max(0.35, Math.min(1.1, 1 - Math.min(0.8, ratio)));
     }
-    var weight = base * rangeFactor * centerFactor;
+    var affinity = computeTrendGroupAffinity(sourceNode, targetNode);
+    var weight = base * rangeFactor * centerFactor * affinity;
     if (!isFinite(weight) || weight <= 0) {
-      weight = base * 0.5;
+      weight = base * affinity * 0.5;
     }
     return Math.max(0.2, Math.min(1.5, parseFloat(weight.toFixed(3))));
   }
@@ -3518,9 +4054,10 @@
       var ratio = span ? diff / (span + 1) : 0;
       centerFactor = Math.max(0.35, Math.min(1.25, 1 - Math.min(0.85, ratio)));
     }
-    var weight = base * centerFactor;
+    var affinity = computeTrendGroupAffinity(manualNode, targetNode);
+    var weight = base * centerFactor * affinity;
     if (!isFinite(weight) || weight <= 0) {
-      weight = 0.5;
+      weight = 0.5 * affinity;
     }
     return Math.max(0.25, Math.min(2, parseFloat(weight.toFixed(3))));
   }

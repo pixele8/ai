@@ -233,9 +233,12 @@
       return draft;
     }
 
+    var initialSnapshot = services.getSnapshot ? services.getSnapshot({}) : null;
     var state = {
       services: services,
-      snapshot: services.getSnapshot ? services.getSnapshot({}) : null,
+      snapshot: initialSnapshot,
+      nodeLibrary: initialSnapshot && initialSnapshot.nodeLibrary ? initialSnapshot.nodeLibrary : [],
+      groupPaths: initialSnapshot && initialSnapshot.groupPaths ? initialSnapshot.groupPaths : {},
       editingNodeId: null,
       editingSubNodes: [],
       selectedRange: 180,
@@ -244,14 +247,135 @@
       scenarios: services.listScenarios ? services.listScenarios() : [],
       activeScenarioId: null,
       scenarioChartKey: null,
+      pendingParentId: null,
+      pendingNodeKey: null,
       unsubscribe: null
     };
     state.scenarioDraft = createScenarioDraft(state.snapshot, null);
 
+    function ensureEditingChildren(list) {
+      if (!Array.isArray(list)) {
+        return [];
+      }
+      for (var i = 0; i < list.length; i += 1) {
+        var item = list[i];
+        if (!item || typeof item !== "object") {
+          list[i] = { id: generateId(), name: "节点", originalId: null };
+          item = list[i];
+        }
+        if (item.id) {
+          item.id = String(item.id).trim();
+        }
+        if (!item.id) {
+          item.id = generateId();
+        }
+        if (item.originalId) {
+          item.originalId = String(item.originalId).trim();
+        }
+        if (!item.originalId) {
+          item.originalId = item.id;
+        }
+      }
+      return list;
+    }
+
+    function isGroupIdTaken(candidate, originalId) {
+      var value = typeof candidate === "string" ? candidate.trim() : "";
+      if (!value) {
+        return false;
+      }
+      if (originalId && value === originalId) {
+        return false;
+      }
+      var nodes = (state.snapshot && state.snapshot.nodes) || [];
+      for (var i = 0; i < nodes.length; i += 1) {
+        var group = nodes[i];
+        if (!group || !group.id) {
+          continue;
+        }
+        if (group.id === value) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function generateUniqueGroupId() {
+      var attempt = generateId();
+      var guard = 0;
+      while (isGroupIdTaken(attempt) && guard < 20) {
+        attempt = generateId();
+        guard += 1;
+      }
+      return attempt;
+    }
+
+    function isNodeIdTaken(candidate, originalId) {
+      var value = typeof candidate === "string" ? candidate.trim() : "";
+      if (!value) {
+        return false;
+      }
+      if (originalId && value === originalId) {
+        return false;
+      }
+      var nodes = (state.snapshot && state.snapshot.nodes) || [];
+      for (var i = 0; i < nodes.length; i += 1) {
+        var group = nodes[i];
+        if (!group || !Array.isArray(group.children)) {
+          continue;
+        }
+        for (var j = 0; j < group.children.length; j += 1) {
+          var child = group.children[j];
+          if (!child || !child.id) {
+            continue;
+          }
+          if (child.id === value && (!originalId || child.id !== originalId)) {
+            return true;
+          }
+        }
+      }
+      var editing = state.editingSubNodes || [];
+      for (var k = 0; k < editing.length; k += 1) {
+        var node = editing[k];
+        if (!node || !node.id) {
+          continue;
+        }
+        if (node.id === value && (!originalId || node.originalId !== originalId)) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function promptNodeIdentifier(defaultValue, originalId) {
+      var attempt = defaultValue || generateId();
+      while (true) {
+        var input = window.prompt("节点唯一 ID", attempt);
+        if (input === null) {
+          return null;
+        }
+        input = input.trim();
+        if (!input) {
+          input = generateId();
+        }
+        if (!isNodeIdTaken(input, originalId)) {
+          return input;
+        }
+        if (services.toast) {
+          services.toast("该节点 ID 已存在，请重新输入");
+        } else {
+          window.alert("该节点 ID 已存在，请重新输入");
+        }
+        attempt = input;
+      }
+    }
+
     var nodeListEl = document.getElementById("trendNodeList");
     var nodeForm = document.getElementById("trendNodeForm");
+    var nodeKeyInput = document.getElementById("trendNodeKey");
     var nodeNameInput = document.getElementById("trendNodeName");
     var nodeNoteInput = document.getElementById("trendNodeNote");
+    var nodeParentSelect = document.getElementById("trendNodeParent");
     var nodeUnitInput = document.getElementById("trendNodeUnit");
     var nodeManualSelect = document.getElementById("trendNodeManual");
     var nodeSimulationSelect = document.getElementById("trendNodeSimulation");
@@ -368,11 +492,25 @@
 
     function syncSnapshot(snapshot) {
       state.snapshot = snapshot || services.getSnapshot({});
+      state.nodeLibrary = (state.snapshot && state.snapshot.nodeLibrary) || [];
+      state.groupPaths = (state.snapshot && state.snapshot.groupPaths) || {};
       state.scenarios = (state.snapshot && state.snapshot.scenarios) || [];
-      if (!state.editingNodeId && state.snapshot && state.snapshot.nodes && state.snapshot.nodes.length) {
-        state.editingNodeId = state.snapshot.nodes[0].id;
-        state.editingSubNodes = clone(state.snapshot.nodes[0].children) || [];
+      var availableNodes = (state.snapshot && state.snapshot.nodes) || [];
+      if (state.editingNodeId) {
+        var current = findNode(state.editingNodeId);
+        if (!current && availableNodes.length) {
+          state.editingNodeId = availableNodes[0].id;
+          state.editingSubNodes = ensureEditingChildren(clone(availableNodes[0].children) || []);
+        } else if (current) {
+          state.editingSubNodes = ensureEditingChildren(clone(current.children) || []);
+        }
+      } else if (availableNodes.length) {
+        state.editingNodeId = availableNodes[0].id;
+        state.editingSubNodes = ensureEditingChildren(clone(availableNodes[0].children) || []);
+      } else {
+        state.editingSubNodes = [];
       }
+      state.pendingParentId = null;
       if (!state.scenarioDraft) {
         state.scenarioDraft = createScenarioDraft(state.snapshot, null);
       }
@@ -386,7 +524,8 @@
     function handleNodeSelection(nodeId) {
       state.editingNodeId = nodeId;
       var node = findNode(nodeId);
-      state.editingSubNodes = node ? clone(node.children) || [] : [];
+      state.editingSubNodes = node ? ensureEditingChildren(clone(node.children) || []) : [];
+      state.pendingParentId = null;
       renderForm();
       renderChart();
     }
@@ -417,6 +556,50 @@
       return null;
     }
 
+    function formatGroupPathLabel(groupId) {
+      if (!groupId) {
+        return "";
+      }
+      var path = (state.groupPaths && state.groupPaths[groupId]) || [];
+      if (!path.length) {
+        var fallback = findNode(groupId);
+        return fallback && fallback.name ? fallback.name : "节点组";
+      }
+      var labels = [];
+      for (var i = 0; i < path.length; i += 1) {
+        var group = findNode(path[i]);
+        if (group && group.name) {
+          labels.push(group.name);
+        } else {
+          labels.push("节点组");
+        }
+      }
+      return labels.join(" / ");
+    }
+
+    function collectDescendantIdsLocal(groupId) {
+      var result = [];
+      if (!groupId || !state.snapshot || !state.snapshot.nodes) {
+        return result;
+      }
+      var nodes = state.snapshot.nodes;
+      var queue = [groupId];
+      while (queue.length) {
+        var current = queue.shift();
+        for (var i = 0; i < nodes.length; i += 1) {
+          var candidate = nodes[i];
+          if (!candidate || !candidate.parentId) {
+            continue;
+          }
+          if (candidate.parentId === current && result.indexOf(candidate.id) === -1) {
+            result.push(candidate.id);
+            queue.push(candidate.id);
+          }
+        }
+      }
+      return result;
+    }
+
     function buildManualTargetValue(nodeId, subNodeId) {
       if (!nodeId) {
         return "";
@@ -435,10 +618,11 @@
       if (target.subNodeId) {
         var child = findSubNode(target.nodeId, target.subNodeId);
         if (child) {
-          return node.name + " · " + child.name;
+          var baseLabel = formatGroupPathLabel(node.id) || node.name || "节点组";
+          return baseLabel + " · " + child.name;
         }
       }
-      return node.name;
+      return formatGroupPathLabel(node.id) || node.name;
     }
 
     function renderManualImpactOptions(currentNode) {
@@ -457,13 +641,21 @@
           selected[key] = true;
         });
       }
+      var blocked = {};
+      if (currentNode && currentNode.id) {
+        blocked[currentNode.id] = true;
+        var descendantIds = collectDescendantIdsLocal(currentNode.id);
+        for (var b = 0; b < descendantIds.length; b += 1) {
+          blocked[descendantIds[b]] = true;
+        }
+      }
       nodes.forEach(function (candidate) {
-        if (!candidate || !candidate.id || (currentNode && candidate.id === currentNode.id)) {
+        if (!candidate || !candidate.id || blocked[candidate.id]) {
           return;
         }
         var option = document.createElement("option");
         option.value = candidate.id;
-        option.textContent = candidate.name;
+        option.textContent = formatGroupPathLabel(candidate.id) || candidate.name;
         if (selected[candidate.id]) {
           option.selected = true;
         }
@@ -476,7 +668,8 @@
             var childValue = buildManualTargetValue(candidate.id, child.id);
             var childOption = document.createElement("option");
             childOption.value = childValue;
-            childOption.textContent = candidate.name + " · " + child.name;
+            var baseLabel = formatGroupPathLabel(candidate.id) || candidate.name;
+            childOption.textContent = baseLabel + " · " + child.name;
             if (selected[childValue]) {
               childOption.selected = true;
             }
@@ -498,68 +691,167 @@
       }
       nodeListEl.innerHTML = "";
       var nodes = (state.snapshot && state.snapshot.nodes) || [];
-      nodes.forEach(function (node) {
-        var item = document.createElement("div");
-        item.className = "trend-node-item" + (node.id === state.editingNodeId ? " active" : "");
-        item.setAttribute("role", "treeitem");
-        var title = document.createElement("div");
-        title.className = "trend-node-name";
-        title.textContent = node.name + " (" + node.unit + ")";
-        item.appendChild(title);
-        if (node.note) {
-          var note = document.createElement("div");
-          note.className = "trend-node-note";
-          note.textContent = node.note;
-          item.appendChild(note);
-        }
-        var meta = document.createElement("div");
-        meta.className = "trend-node-meta";
-        var bounds = [];
-        if (typeof node.lower === "number") {
-          bounds.push("下限 " + node.lower);
-        }
-        if (typeof node.center === "number") {
-          bounds.push("中值 " + node.center);
-        }
-        if (typeof node.upper === "number") {
-          bounds.push("上限 " + node.upper);
-        }
-        if (node.manual) {
-          bounds.push("手动节点");
-        }
-        if (node.simulate === false) {
-          bounds.push("演示停用");
-        }
-        if (node.manual && Array.isArray(node.manualTargets) && node.manualTargets.length) {
-          var impactLabels = [];
-          node.manualTargets.forEach(function (target) {
-            var label = resolveManualTargetLabel(target);
-            if (label) {
-              impactLabels.push(label);
-            }
-          });
-          if (impactLabels.length) {
-            bounds.push("影响 " + impactLabels.join("、"));
-          }
-        }
-        meta.textContent = bounds.join(" · ");
-        item.appendChild(meta);
-        item.addEventListener("click", function () {
-          handleNodeSelection(node.id);
-        });
-        nodeListEl.appendChild(item);
-      });
       if (!nodes.length) {
         var empty = document.createElement("div");
         empty.className = "trend-node-empty";
         empty.textContent = "暂无节点组，请先创建。";
         nodeListEl.appendChild(empty);
+        return;
       }
+      var tree = buildGroupTree(nodes);
+      renderGroupEntries(tree);
+
+      function buildGroupTree(list) {
+        var map = {};
+        var roots = [];
+        for (var i = 0; i < list.length; i += 1) {
+          var group = list[i];
+          if (!group || !group.id) {
+            continue;
+          }
+          map[group.id] = {
+            data: group,
+            id: group.id,
+            parentId: group.parentId || null,
+            groups: [],
+            order: i,
+            depth: 0
+          };
+        }
+        for (var key in map) {
+          if (!Object.prototype.hasOwnProperty.call(map, key)) {
+            continue;
+          }
+          var entry = map[key];
+          if (entry.parentId && map[entry.parentId]) {
+            map[entry.parentId].groups.push(entry);
+          } else {
+            roots.push(entry);
+          }
+        }
+        function assignDepth(entry, depth) {
+          entry.depth = depth;
+          entry.groups.sort(function (a, b) {
+            return a.order - b.order;
+          });
+          for (var j = 0; j < entry.groups.length; j += 1) {
+            assignDepth(entry.groups[j], depth + 1);
+          }
+        }
+        roots.sort(function (a, b) {
+          return a.order - b.order;
+        });
+        for (var r = 0; r < roots.length; r += 1) {
+          assignDepth(roots[r], 0);
+        }
+        return roots;
+      }
+
+      function renderGroupEntries(entries) {
+        for (var i = 0; i < entries.length; i += 1) {
+          var entry = entries[i];
+          if (!entry || !entry.data) {
+            continue;
+          }
+          var node = entry.data;
+          var item = document.createElement("div");
+          item.className = "trend-node-item" + (node.id === state.editingNodeId ? " active" : "");
+          item.setAttribute("role", "treeitem");
+          item.style.paddingLeft = (entry.depth * 20 + 12) + "px";
+          var title = document.createElement("div");
+          title.className = "trend-node-name";
+          title.textContent = node.name + " (" + (node.unit || "") + ")";
+          item.appendChild(title);
+          if (node.note) {
+            var note = document.createElement("div");
+            note.className = "trend-node-note";
+            note.textContent = node.note;
+            item.appendChild(note);
+          }
+          var meta = document.createElement("div");
+          meta.className = "trend-node-meta";
+          var bounds = [];
+          if (typeof node.lower === "number") {
+            bounds.push("下限 " + node.lower);
+          }
+          if (typeof node.center === "number") {
+            bounds.push("中值 " + node.center);
+          }
+          if (typeof node.upper === "number") {
+            bounds.push("上限 " + node.upper);
+          }
+          var childCount = Array.isArray(node.children) ? node.children.length : 0;
+          bounds.push("节点 " + childCount);
+          if (node.manual) {
+            bounds.push("手动节点");
+          }
+          if (node.simulate === false) {
+            bounds.push("演示停用");
+          }
+          if (node.manual && Array.isArray(node.manualTargets) && node.manualTargets.length) {
+            var impactLabels = [];
+            node.manualTargets.forEach(function (target) {
+              var label = resolveManualTargetLabel(target);
+              if (label) {
+                impactLabels.push(label);
+              }
+            });
+            if (impactLabels.length) {
+              bounds.push("影响 " + impactLabels.join("、"));
+            }
+          }
+          meta.textContent = bounds.join(" · ");
+          item.appendChild(meta);
+          item.addEventListener("click", function (groupId) {
+            return function () {
+              handleNodeSelection(groupId);
+            };
+          }(node.id));
+          nodeListEl.appendChild(item);
+          if (entry.groups && entry.groups.length) {
+            renderGroupEntries(entry.groups);
+          }
+        }
+      }
+    }
+
+    function populateParentOptions(currentId) {
+      if (!nodeParentSelect) {
+        return;
+      }
+      nodeParentSelect.innerHTML = "";
+      var placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "顶层节点组";
+      nodeParentSelect.appendChild(placeholder);
+      var nodes = (state.snapshot && state.snapshot.nodes) || [];
+      var blocked = {};
+      if (currentId) {
+        blocked[currentId] = true;
+        var descendants = collectDescendantIdsLocal(currentId);
+        for (var i = 0; i < descendants.length; i += 1) {
+          blocked[descendants[i]] = true;
+        }
+      }
+      nodes.forEach(function (group) {
+        if (!group || !group.id || blocked[group.id]) {
+          return;
+        }
+        var option = document.createElement("option");
+        option.value = group.id;
+        option.textContent = formatGroupPathLabel(group.id) || group.name;
+        nodeParentSelect.appendChild(option);
+      });
     }
 
     function renderForm() {
       var node = state.editingNodeId ? findNode(state.editingNodeId) : null;
       if (!node) {
+        if (nodeKeyInput) {
+          var pendingKey = state.pendingNodeKey || generateUniqueGroupId();
+          state.pendingNodeKey = pendingKey;
+          nodeKeyInput.value = pendingKey;
+        }
         nodeNameInput.value = "";
         if (nodeNoteInput) {
           nodeNoteInput.value = "";
@@ -584,9 +876,17 @@
         if (manualImpactSelect) {
           manualImpactSelect.innerHTML = "";
         }
+        if (nodeParentSelect) {
+          populateParentOptions(null);
+          nodeParentSelect.value = state.pendingParentId || "";
+        }
         renderSubNodes();
         return;
       }
+      if (nodeKeyInput) {
+        nodeKeyInput.value = node.id || "";
+      }
+      state.pendingNodeKey = null;
       nodeNameInput.value = node.name || "";
       if (nodeNoteInput) {
         nodeNoteInput.value = node.note || "";
@@ -595,6 +895,10 @@
       nodeManualSelect.value = node.manual ? "true" : "false";
       if (nodeSimulationSelect) {
         nodeSimulationSelect.value = node.simulate === false ? "false" : "true";
+      }
+      if (nodeParentSelect) {
+        populateParentOptions(node.id);
+        nodeParentSelect.value = node.parentId || "";
       }
       nodeLowerInput.value = typeof node.lower === "number" ? node.lower : "";
       if (nodeCenterInput) {
@@ -646,6 +950,7 @@
         var info = document.createElement("div");
         info.className = "trend-subnode-meta";
         var parts = [];
+        parts.push("ID " + (item.id || "--"));
         if (typeof item.lower === "number") {
           parts.push("下限 " + item.lower);
         }
@@ -689,6 +994,16 @@
       if (!node) {
         return;
       }
+      var baseId = node.id || generateId();
+      var originalId = node.originalId || baseId;
+      var idValue = promptNodeIdentifier(baseId, originalId);
+      if (!idValue) {
+        return;
+      }
+      idValue = idValue.trim();
+      if (!idValue) {
+        return;
+      }
       var name = window.prompt("节点名称", node.name || "");
       if (!name) {
         return;
@@ -699,6 +1014,8 @@
       var upper = window.prompt("上限 (可空)", typeof node.upper === "number" ? node.upper : "");
       var manual = window.confirm("是否为手动调整节点？当前值：" + (node.manual ? "是" : "否"));
       var step = window.prompt("单次标准调整量", typeof node.manualStep === "number" ? node.manualStep : "");
+      node.id = idValue;
+      node.originalId = originalId;
       node.name = name;
       node.unit = unit || node.unit;
       node.lower = lower === "" ? null : parseFloat(lower);
@@ -710,6 +1027,14 @@
     }
 
     function addSubNode() {
+      var newId = promptNodeIdentifier(generateId(), null);
+      if (!newId) {
+        return;
+      }
+      newId = newId.trim();
+      if (!newId) {
+        return;
+      }
       var name = window.prompt("节点名称", "辅助传感器");
       if (!name) {
         return;
@@ -721,7 +1046,8 @@
       var manual = window.confirm("是否为手动调整节点？");
       var step = window.prompt("单次标准调整量", manualStepInput.value || "");
       state.editingSubNodes.push({
-        id: generateId(),
+        id: newId,
+        originalId: newId,
         name: name,
         unit: unit || nodeUnitInput.value || "",
         lower: lower === "" ? null : parseFloat(lower),
@@ -735,8 +1061,15 @@
 
     function serializeNodeForm() {
       var manual = nodeManualSelect.value === "true";
+      var keyValue = nodeKeyInput && nodeKeyInput.value ? nodeKeyInput.value.trim() : "";
+      if (!keyValue) {
+        keyValue = generateUniqueGroupId();
+        if (nodeKeyInput) {
+          nodeKeyInput.value = keyValue;
+        }
+      }
       var payload = {
-        id: state.editingNodeId,
+        id: keyValue,
         name: nodeNameInput.value.trim(),
         note: nodeNoteInput && nodeNoteInput.value ? nodeNoteInput.value.trim() : "",
         unit: nodeUnitInput.value.trim() || "℃",
@@ -747,9 +1080,13 @@
         upper: nodeUpperInput.value ? parseFloat(nodeUpperInput.value) : null,
         positionMode: nodePositionSelect.value,
         positionRef: nodeRefSelect.value || null,
-        children: clone(state.editingSubNodes) || [],
+        parentId: nodeParentSelect && nodeParentSelect.value ? nodeParentSelect.value : null,
+        children: ensureEditingChildren(clone(state.editingSubNodes) || []),
         simulate: !nodeSimulationSelect || nodeSimulationSelect.value !== "false"
       };
+      if (state.editingNodeId && state.editingNodeId !== keyValue) {
+        payload.originalId = state.editingNodeId;
+      }
       if (manual && manualImpactSelect) {
         var targets = [];
         for (var i = 0; i < manualImpactSelect.options.length; i += 1) {
@@ -782,7 +1119,9 @@
       summaryEl.innerHTML = "";
       var metrics = [];
       var nodes = (state.snapshot && state.snapshot.nodes) || [];
-      metrics.push({ label: "节点数", value: nodes.length });
+      metrics.push({ label: "节点组", value: nodes.length });
+      var library = state.nodeLibrary || [];
+      metrics.push({ label: "节点总数", value: library.length });
       var suggestions = (state.snapshot && state.snapshot.suggestions) || [];
       var activeCount = suggestions.filter(function (item) { return item && item.status === "active"; }).length;
       metrics.push({ label: "活跃建议", value: activeCount });
@@ -1929,9 +2268,20 @@
 
     if (addNodeBtn) {
       addNodeBtn.addEventListener("click", function () {
+        state.pendingParentId = state.editingNodeId || null;
         state.editingNodeId = null;
+        state.pendingNodeKey = generateUniqueGroupId();
         state.editingSubNodes = [];
         renderForm();
+      });
+    }
+
+    if (nodeKeyInput) {
+      nodeKeyInput.addEventListener("change", function () {
+        var value = nodeKeyInput.value ? nodeKeyInput.value.trim() : "";
+        if (!state.editingNodeId) {
+          state.pendingNodeKey = value || state.pendingNodeKey;
+        }
       });
     }
 
@@ -2003,8 +2353,13 @@
           services.toast && services.toast("请输入节点名称");
           return;
         }
+        if (isGroupIdTaken(payload.id, payload.originalId || state.editingNodeId || null)) {
+          services.toast && services.toast("节点组 ID 已存在，请更换");
+          return;
+        }
         var saved = services.upsertNode(payload);
         state.editingNodeId = saved && saved.id ? saved.id : payload.id;
+        state.pendingNodeKey = null;
         services.toast && services.toast("节点组已保存");
       });
     }
