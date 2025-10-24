@@ -42,6 +42,13 @@
   var floatingFavoriteMinimized = false;
   var floatingFavoriteExpanded = false;
   var floatingFavoritePosition = null;
+  var trendSubscribers = [];
+  var trendBeaconUnsubscribe = null;
+  var trendBeaconState = { open: false };
+  var trendDemoTimer = null;
+  var trendDemoLastTick = 0;
+  var trendBeaconRoot = null;
+  var trendBeaconDocListenerAttached = false;
   var FAVORITE_OVERLAY_STATE_KEY = "aiFavoriteOverlayState";
   var SESSION_LIST_MIN = 7;
   var SESSION_LIST_STEP = 5;
@@ -575,6 +582,7 @@
       overlay.className = "favorite-overlay hidden";
       overlay.innerHTML = "";
       persistFloatingFavoriteState();
+      renderTrendBeacon();
       return;
     }
     var bank = null;
@@ -715,6 +723,223 @@
     overlay.appendChild(body);
     keepFloatingFavoriteVisible(overlay);
     persistFloatingFavoriteState();
+    renderTrendBeacon();
+  }
+
+  function ensureTrendBeaconElements() {
+    if (!document.body) {
+      return null;
+    }
+    if (trendBeaconRoot && document.body.contains(trendBeaconRoot)) {
+      return trendBeaconRoot;
+    }
+    var root = document.createElement("div");
+    root.id = "trendBeacon";
+    root.className = "trend-beacon hidden";
+    var toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "trend-beacon-toggle";
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.innerHTML = '<span class="trend-beacon-dot" aria-hidden="true"></span><span class="trend-beacon-text">趋势监控</span>';
+    toggle.addEventListener("click", function (evt) {
+      evt.preventDefault();
+      toggleTrendBeacon();
+    });
+    root.appendChild(toggle);
+    var panel = document.createElement("div");
+    panel.className = "trend-beacon-panel";
+    panel.setAttribute("role", "dialog");
+    panel.setAttribute("aria-label", "趋势建议");
+    panel.innerHTML = '' +
+      '<header class="trend-beacon-header"><div class="trend-beacon-title">趋势分析建议</div>' +
+      '<button type="button" class="trend-beacon-close">关闭</button></header>' +
+      '<div class="trend-beacon-body"><div class="trend-beacon-summary"></div><div class="trend-beacon-list" role="list"></div></div>' +
+      '<footer class="trend-beacon-footer">' +
+      '<a class="trend-beacon-link" href="ai-trend.html">进入趋势分析工作台</a>' +
+      '<button type="button" class="trend-beacon-history">查看历史记录</button>' +
+      '</footer>';
+    root.appendChild(panel);
+    document.body.appendChild(root);
+    var closeBtn = panel.querySelector(".trend-beacon-close");
+    if (closeBtn) {
+      closeBtn.addEventListener("click", function () {
+        closeTrendBeacon();
+      });
+    }
+    var historyBtn = panel.querySelector(".trend-beacon-history");
+    if (historyBtn) {
+      historyBtn.addEventListener("click", function () {
+        window.location.href = "ai-trend-history.html";
+      });
+    }
+    if (!trendBeaconDocListenerAttached) {
+      document.addEventListener("click", handleTrendBeaconDocumentClick);
+      trendBeaconDocListenerAttached = true;
+    }
+    trendBeaconRoot = root;
+    return root;
+  }
+
+  function toggleTrendBeacon(force) {
+    ensureTrendBeaconElements();
+    if (!trendBeaconRoot) {
+      return;
+    }
+    if (typeof force === "boolean") {
+      trendBeaconState.open = force;
+    } else {
+      trendBeaconState.open = !trendBeaconState.open;
+    }
+    applyTrendBeaconState();
+  }
+
+  function handleTrendBeaconDocumentClick(evt) {
+    if (!trendBeaconRoot || !trendBeaconState.open) {
+      return;
+    }
+    if (trendBeaconRoot.contains(evt.target)) {
+      return;
+    }
+    trendBeaconState.open = false;
+    applyTrendBeaconState();
+  }
+
+  function closeTrendBeacon() {
+    toggleTrendBeacon(false);
+  }
+
+  function applyTrendBeaconState() {
+    if (!trendBeaconRoot) {
+      return;
+    }
+    var toggle = trendBeaconRoot.querySelector(".trend-beacon-toggle");
+    var panel = trendBeaconRoot.querySelector(".trend-beacon-panel");
+    if (!toggle || !panel) {
+      return;
+    }
+    if (trendBeaconState.open) {
+      trendBeaconRoot.classList.add("open");
+      panel.classList.add("open");
+      toggle.setAttribute("aria-expanded", "true");
+    } else {
+      trendBeaconRoot.classList.remove("open");
+      panel.classList.remove("open");
+      toggle.setAttribute("aria-expanded", "false");
+    }
+  }
+
+  function renderTrendBeaconContent(snapshot) {
+    ensureTrendBeaconElements();
+    if (!trendBeaconRoot) {
+      return;
+    }
+    snapshot = snapshot || getTrendSnapshot();
+    var toggleText = trendBeaconRoot.querySelector(".trend-beacon-text");
+    var dot = trendBeaconRoot.querySelector(".trend-beacon-dot");
+    var summary = trendBeaconRoot.querySelector(".trend-beacon-summary");
+    var list = trendBeaconRoot.querySelector(".trend-beacon-list");
+    if (!toggleText || !dot || !summary || !list) {
+      return;
+    }
+    var suggestions = (snapshot.suggestions || []).filter(function (item) {
+      return item && item.status === "active";
+    });
+    suggestions.sort(function (a, b) {
+      var diff = (b.severity || 0) - (a.severity || 0);
+      if (diff !== 0) {
+        return diff;
+      }
+      var timeDiff = new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime();
+      if (timeDiff !== 0) {
+        return timeDiff;
+      }
+      return (a.label || "").localeCompare(b.label || "");
+    });
+    if (suggestions.length === 0) {
+      trendBeaconRoot.classList.add("idle");
+      toggleText.textContent = "趋势平稳";
+      summary.textContent = "当前各节点运行在安全区间内。";
+      list.innerHTML = "";
+      dot.setAttribute("data-state", "idle");
+    } else {
+      trendBeaconRoot.classList.remove("idle");
+      toggleText.textContent = suggestions[0].label || suggestions[0].summary || "有新的趋势建议";
+      dot.setAttribute("data-state", suggestions[0].severity >= 3 ? "alert" : "warn");
+      summary.textContent = "共 " + suggestions.length + " 条活跃建议，点击查看详情。";
+      list.innerHTML = "";
+      for (var i = 0; i < suggestions.length; i += 1) {
+        var item = suggestions[i];
+        var entry = document.createElement("article");
+        entry.className = "trend-beacon-entry";
+        entry.setAttribute("role", "listitem");
+        var header = document.createElement("div");
+        header.className = "trend-beacon-entry-head";
+        var title = document.createElement("div");
+        title.className = "trend-beacon-entry-title";
+        title.textContent = item.label || item.summary;
+        header.appendChild(title);
+        var badge = document.createElement("span");
+        badge.className = "trend-beacon-entry-badge";
+        badge.textContent = item.statusLabel || "建议";
+        header.appendChild(badge);
+        entry.appendChild(header);
+        var detail = document.createElement("div");
+        detail.className = "trend-beacon-entry-detail";
+        detail.innerHTML = item.detail && item.detail.length ? item.detail.map(function (line) {
+          return '<span>' + escapeHtml(line) + '</span>';
+        }).join("") : "<span>暂无更多描述</span>";
+        entry.appendChild(detail);
+        var actions = document.createElement("div");
+        actions.className = "trend-beacon-entry-actions";
+        var acceptBtn = document.createElement("button");
+        acceptBtn.type = "button";
+        acceptBtn.className = "trend-beacon-accept";
+        acceptBtn.textContent = "采纳";
+        acceptBtn.addEventListener("click", (function (suggestionId) {
+          return function () {
+            acceptTrendSuggestion(suggestionId, "采纳自悬浮建议");
+          };
+        })(item.id));
+        var rejectBtn = document.createElement("button");
+        rejectBtn.type = "button";
+        rejectBtn.className = "trend-beacon-reject";
+        rejectBtn.textContent = "暂不采纳";
+        rejectBtn.addEventListener("click", (function (suggestionId) {
+          return function () {
+            rejectTrendSuggestion(suggestionId, "悬浮面板拒绝");
+          };
+        })(item.id));
+        var focusBtn = document.createElement("button");
+        focusBtn.type = "button";
+        focusBtn.className = "trend-beacon-focus";
+        focusBtn.textContent = "定位";
+        focusBtn.addEventListener("click", (function (suggestionId) {
+          return function () {
+            window.location.href = "ai-trend.html#" + suggestionId;
+          };
+        })(item.id));
+        actions.appendChild(acceptBtn);
+        actions.appendChild(rejectBtn);
+        actions.appendChild(focusBtn);
+        entry.appendChild(actions);
+        list.appendChild(entry);
+      }
+    }
+    trendBeaconRoot.classList.remove("hidden");
+    applyTrendBeaconState();
+  }
+
+  function renderTrendBeacon() {
+    ensureTrendBeaconElements();
+    if (!trendBeaconRoot) {
+      return;
+    }
+    if (!trendBeaconUnsubscribe) {
+      trendBeaconUnsubscribe = subscribeTrend(function (snapshot) {
+        renderTrendBeaconContent(snapshot);
+      });
+    }
+    renderTrendBeaconContent();
   }
 
   function createSessionFavorite(bank, session, options) {
@@ -1696,7 +1921,8 @@
           topN: 5,
           chunkSize: 400,
           chunkOverlap: 80
-        }
+        },
+        tools: {}
       };
     }
     if (!state.adminFlags) {
@@ -1790,6 +2016,7 @@
     if (!Array.isArray(state.tools.visionCorrections)) {
       state.tools.visionCorrections = [];
     }
+    ensureTrendStore();
     for (var vh = 0; vh < state.tools.visionHistory.length; vh += 1) {
       var inference = state.tools.visionHistory[vh];
       if (!inference.id) {
@@ -2419,6 +2646,1194 @@
       state.settings.contaminationGroups = DEFAULT_CONTAM_GROUPS.slice();
     }
     return state.settings.contaminationGroups.slice();
+  }
+
+  function ensureTrendStore() {
+    if (!state.tools || typeof state.tools !== "object") {
+      state.tools = {};
+    }
+    if (!state.tools.trend || typeof state.tools.trend !== "object") {
+      state.tools.trend = {
+        nodes: [],
+        streams: [],
+        suggestions: [],
+        history: [],
+        feedback: [],
+        settings: {
+          sampleIntervalMs: 60000,
+          lookbackMinutes: 120,
+          predictionMinutes: 30,
+          outputTarget: { center: 0, lower: -1, upper: 1 },
+          mesEndpoints: []
+        },
+        model: { version: 1, calibrations: {} },
+        demo: { enabled: false, intervalMs: 60000, amplitude: 0.2, volatility: 0.35 }
+      };
+    }
+    var trend = state.tools.trend;
+    if (!Array.isArray(trend.nodes)) {
+      trend.nodes = [];
+    }
+    if (!Array.isArray(trend.streams)) {
+      trend.streams = [];
+    }
+    if (!Array.isArray(trend.suggestions)) {
+      trend.suggestions = [];
+    }
+    if (!Array.isArray(trend.history)) {
+      trend.history = [];
+    }
+    if (!Array.isArray(trend.feedback)) {
+      trend.feedback = [];
+    }
+    if (!trend.settings || typeof trend.settings !== "object") {
+      trend.settings = {
+        sampleIntervalMs: 60000,
+        lookbackMinutes: 120,
+        predictionMinutes: 30,
+        outputTarget: { center: 0, lower: -1, upper: 1 },
+        mesEndpoints: []
+      };
+    }
+    if (typeof trend.settings.sampleIntervalMs !== "number" || trend.settings.sampleIntervalMs <= 0) {
+      trend.settings.sampleIntervalMs = 60000;
+    }
+    if (typeof trend.settings.lookbackMinutes !== "number" || trend.settings.lookbackMinutes <= 0) {
+      trend.settings.lookbackMinutes = 120;
+    }
+    if (typeof trend.settings.predictionMinutes !== "number" || trend.settings.predictionMinutes <= 0) {
+      trend.settings.predictionMinutes = 30;
+    }
+    if (!trend.settings.outputTarget || typeof trend.settings.outputTarget !== "object") {
+      trend.settings.outputTarget = { center: 0, lower: -1, upper: 1 };
+    }
+    if (typeof trend.settings.outputTarget.center !== "number") {
+      trend.settings.outputTarget.center = 0;
+    }
+    if (typeof trend.settings.outputTarget.lower !== "number") {
+      trend.settings.outputTarget.lower = trend.settings.outputTarget.center - 1;
+    }
+    if (typeof trend.settings.outputTarget.upper !== "number") {
+      trend.settings.outputTarget.upper = trend.settings.outputTarget.center + 1;
+    }
+    if (!Array.isArray(trend.settings.mesEndpoints)) {
+      trend.settings.mesEndpoints = [];
+    }
+    if (!trend.model || typeof trend.model !== "object") {
+      trend.model = { version: 1, calibrations: {} };
+    }
+    if (!trend.model.calibrations || typeof trend.model.calibrations !== "object") {
+      trend.model.calibrations = {};
+    }
+    if (!trend.demo || typeof trend.demo !== "object") {
+      trend.demo = { enabled: false, intervalMs: trend.settings.sampleIntervalMs, amplitude: 0.2, volatility: 0.35 };
+    }
+    if (typeof trend.demo.intervalMs !== "number" || trend.demo.intervalMs <= 0) {
+      trend.demo.intervalMs = trend.settings.sampleIntervalMs;
+    }
+    if (typeof trend.demo.amplitude !== "number") {
+      trend.demo.amplitude = 0.2;
+    }
+    if (typeof trend.demo.volatility !== "number") {
+      trend.demo.volatility = 0.35;
+    }
+    for (var tn = 0; tn < trend.nodes.length; tn += 1) {
+      var node = trend.nodes[tn];
+      if (!node || typeof node !== "object") {
+        trend.nodes[tn] = {
+          id: uuid(),
+          name: "节点",
+          unit: "℃",
+          positionMode: "after",
+          positionRef: null,
+          lower: null,
+          upper: null,
+          manual: false,
+          manualStep: 0,
+          children: []
+        };
+        continue;
+      }
+      if (!node.id) {
+        node.id = uuid();
+      }
+      if (typeof node.name !== "string" || !node.name.trim()) {
+        node.name = "节点";
+      }
+      node.name = node.name.trim();
+      if (typeof node.unit !== "string" || !node.unit.trim()) {
+        node.unit = "℃";
+      }
+      node.unit = node.unit.trim();
+      if (node.positionMode !== "after" && node.positionMode !== "parallel" && node.positionMode !== "same") {
+        node.positionMode = "after";
+      }
+      if (typeof node.positionRef !== "string") {
+        node.positionRef = null;
+      }
+      if (typeof node.lower !== "number" && node.lower !== null) {
+        node.lower = null;
+      }
+      if (typeof node.upper !== "number" && node.upper !== null) {
+        node.upper = null;
+      }
+      if (typeof node.manual !== "boolean") {
+        node.manual = false;
+      }
+      if (typeof node.manualStep !== "number") {
+        node.manualStep = 0;
+      }
+      if (!Array.isArray(node.children)) {
+        node.children = [];
+      }
+      for (var sc = 0; sc < node.children.length; sc += 1) {
+        var child = node.children[sc];
+        if (!child || typeof child !== "object") {
+          node.children[sc] = {
+            id: uuid(),
+            name: "子节点",
+            unit: node.unit,
+            lower: node.lower,
+            upper: node.upper,
+            manual: node.manual,
+            manualStep: node.manualStep
+          };
+          continue;
+        }
+        if (!child.id) {
+          child.id = uuid();
+        }
+        if (typeof child.name !== "string" || !child.name.trim()) {
+          child.name = "子节点";
+        } else {
+          child.name = child.name.trim();
+        }
+        if (typeof child.unit !== "string" || !child.unit.trim()) {
+          child.unit = node.unit;
+        } else {
+          child.unit = child.unit.trim();
+        }
+        if (typeof child.lower !== "number" && child.lower !== null) {
+          child.lower = node.lower;
+        }
+        if (typeof child.upper !== "number" && child.upper !== null) {
+          child.upper = node.upper;
+        }
+        if (typeof child.manual !== "boolean") {
+          child.manual = node.manual;
+        }
+        if (typeof child.manualStep !== "number") {
+          child.manualStep = node.manualStep;
+        }
+      }
+    }
+    if (trend.streams.length > 2000) {
+      trend.streams = trend.streams.slice(trend.streams.length - 2000);
+    }
+    if (trend.history.length > 1000) {
+      trend.history = trend.history.slice(trend.history.length - 1000);
+    }
+    if (trend.feedback.length > 2000) {
+      trend.feedback = trend.feedback.slice(trend.feedback.length - 2000);
+    }
+  }
+
+  function cloneTrendNodes() {
+    ensureTrendStore();
+    try {
+      return JSON.parse(JSON.stringify(state.tools.trend.nodes));
+    } catch (err) {
+      console.warn("cloneTrendNodes failed", err);
+      return [];
+    }
+  }
+
+  function cloneTrendStreams(limit) {
+    ensureTrendStore();
+    var streams = state.tools.trend.streams || [];
+    if (typeof limit === "number" && limit > 0 && streams.length > limit) {
+      streams = streams.slice(streams.length - limit);
+    }
+    try {
+      return JSON.parse(JSON.stringify(streams));
+    } catch (err) {
+      console.warn("cloneTrendStreams failed", err);
+      return [];
+    }
+  }
+
+  function cloneTrendSuggestions() {
+    ensureTrendStore();
+    try {
+      return JSON.parse(JSON.stringify(state.tools.trend.suggestions));
+    } catch (err) {
+      console.warn("cloneTrendSuggestions failed", err);
+      return [];
+    }
+  }
+
+  function cloneTrendHistory() {
+    ensureTrendStore();
+    try {
+      return JSON.parse(JSON.stringify(state.tools.trend.history));
+    } catch (err) {
+      console.warn("cloneTrendHistory failed", err);
+      return [];
+    }
+  }
+
+  function cloneTrendFeedback() {
+    ensureTrendStore();
+    try {
+      return JSON.parse(JSON.stringify(state.tools.trend.feedback));
+    } catch (err) {
+      console.warn("cloneTrendFeedback failed", err);
+      return [];
+    }
+  }
+
+  function cloneTrendSettings() {
+    ensureTrendStore();
+    try {
+      return JSON.parse(JSON.stringify(state.tools.trend.settings));
+    } catch (err) {
+      console.warn("cloneTrendSettings failed", err);
+      return {
+        sampleIntervalMs: 60000,
+        lookbackMinutes: 120,
+        predictionMinutes: 30,
+        outputTarget: { center: 0, lower: -1, upper: 1 },
+        mesEndpoints: []
+      };
+    }
+  }
+
+  function findTrendNodeById(nodeId) {
+    ensureTrendStore();
+    if (!nodeId) {
+      return null;
+    }
+    for (var i = 0; i < state.tools.trend.nodes.length; i += 1) {
+      if (state.tools.trend.nodes[i] && state.tools.trend.nodes[i].id === nodeId) {
+        return state.tools.trend.nodes[i];
+      }
+    }
+    return null;
+  }
+
+  function findTrendChild(node, childId) {
+    if (!node || !Array.isArray(node.children)) {
+      return null;
+    }
+    for (var i = 0; i < node.children.length; i += 1) {
+      if (node.children[i] && node.children[i].id === childId) {
+        return node.children[i];
+      }
+    }
+    return null;
+  }
+
+  function sanitizeTrendSample(sample) {
+    if (!sample || typeof sample !== "object") {
+      return null;
+    }
+    var node = findTrendNodeById(sample.nodeId);
+    if (!node) {
+      return null;
+    }
+    var child = null;
+    if (sample.subNodeId) {
+      child = findTrendChild(node, sample.subNodeId);
+      if (!child) {
+        return null;
+      }
+    }
+    var parsedValue = typeof sample.value === "number" ? sample.value : parseFloat(sample.value);
+    if (isNaN(parsedValue)) {
+      return null;
+    }
+    var nowIso = new Date().toISOString();
+    return {
+      id: sample.id || uuid(),
+      nodeId: node.id,
+      subNodeId: child ? child.id : null,
+      value: parsedValue,
+      source: sample.source || "demo",
+      confidence: typeof sample.confidence === "number" ? sample.confidence : 0,
+      capturedAt: sample.capturedAt || nowIso,
+      receivedAt: nowIso,
+      manual: !!sample.manual,
+      adjustment: sample.adjustment || null
+    };
+  }
+
+  function getTrendSnapshot(options) {
+    ensureTrendStore();
+    options = options || {};
+    var streamLimit = typeof options.streamLimit === "number" ? options.streamLimit : 480;
+    return {
+      nodes: cloneTrendNodes(),
+      streams: cloneTrendStreams(streamLimit),
+      suggestions: cloneTrendSuggestions(),
+      history: cloneTrendHistory(),
+      feedback: cloneTrendFeedback(),
+      settings: cloneTrendSettings(),
+      model: JSON.parse(JSON.stringify(state.tools.trend.model || { version: 1, calibrations: {} })),
+      demo: JSON.parse(JSON.stringify(state.tools.trend.demo || { enabled: false, intervalMs: 60000 }))
+    };
+  }
+
+  function emitTrendChange() {
+    if (!trendSubscribers || trendSubscribers.length === 0) {
+      return;
+    }
+    var snapshot = getTrendSnapshot();
+    for (var i = 0; i < trendSubscribers.length; i += 1) {
+      try {
+        trendSubscribers[i](snapshot);
+      } catch (err) {
+        console.error("trend subscriber error", err);
+      }
+    }
+  }
+
+  function subscribeTrend(callback) {
+    if (typeof callback !== "function") {
+      return function () {};
+    }
+    trendSubscribers.push(callback);
+    try {
+      callback(getTrendSnapshot());
+    } catch (err) {
+      console.error("trend init callback error", err);
+    }
+    return function () {
+      var index = trendSubscribers.indexOf(callback);
+      if (index !== -1) {
+        trendSubscribers.splice(index, 1);
+      }
+    };
+  }
+
+  function upsertTrendNode(payload) {
+    ensureTrendStore();
+    if (!payload || typeof payload !== "object") {
+      return null;
+    }
+    var now = new Date().toISOString();
+    var id = payload.id || uuid();
+    var node = findTrendNodeById(id);
+    var base = node || {
+      id: id,
+      createdAt: now,
+      children: []
+    };
+    base.updatedAt = now;
+    if (typeof payload.name === "string" && payload.name.trim()) {
+      base.name = payload.name.trim();
+    } else if (!base.name) {
+      base.name = "节点";
+    }
+    if (typeof payload.unit === "string" && payload.unit.trim()) {
+      base.unit = payload.unit.trim();
+    } else if (!base.unit) {
+      base.unit = "℃";
+    }
+    if (payload.positionMode === "after" || payload.positionMode === "parallel" || payload.positionMode === "same") {
+      base.positionMode = payload.positionMode;
+    } else if (!base.positionMode) {
+      base.positionMode = "after";
+    }
+    if (typeof payload.positionRef === "string" && payload.positionRef) {
+      base.positionRef = payload.positionRef;
+    } else if (payload.positionRef === null) {
+      base.positionRef = null;
+    } else if (typeof base.positionRef !== "string") {
+      base.positionRef = null;
+    }
+    if (typeof payload.lower === "number" || payload.lower === null) {
+      base.lower = payload.lower;
+    } else if (typeof base.lower !== "number" && base.lower !== null) {
+      base.lower = null;
+    }
+    if (typeof payload.upper === "number" || payload.upper === null) {
+      base.upper = payload.upper;
+    } else if (typeof base.upper !== "number" && base.upper !== null) {
+      base.upper = null;
+    }
+    if (typeof payload.manual === "boolean") {
+      base.manual = payload.manual;
+    } else if (typeof base.manual !== "boolean") {
+      base.manual = false;
+    }
+    if (typeof payload.manualStep === "number") {
+      base.manualStep = payload.manualStep;
+    } else if (typeof base.manualStep !== "number") {
+      base.manualStep = 0;
+    }
+    if (!Array.isArray(base.children)) {
+      base.children = [];
+    }
+    if (Array.isArray(payload.children)) {
+      var nextChildren = [];
+      for (var i = 0; i < payload.children.length; i += 1) {
+        var childInput = payload.children[i];
+        if (!childInput || typeof childInput !== "object") {
+          continue;
+        }
+        var childId = childInput.id || uuid();
+        var existing = findTrendChild(base, childId) || { id: childId };
+        existing.updatedAt = now;
+        if (typeof existing.createdAt !== "string") {
+          existing.createdAt = now;
+        }
+        if (typeof childInput.name === "string" && childInput.name.trim()) {
+          existing.name = childInput.name.trim();
+        } else if (!existing.name) {
+          existing.name = "子节点";
+        }
+        if (typeof childInput.unit === "string" && childInput.unit.trim()) {
+          existing.unit = childInput.unit.trim();
+        } else if (!existing.unit) {
+          existing.unit = base.unit;
+        }
+        if (typeof childInput.lower === "number" || childInput.lower === null) {
+          existing.lower = childInput.lower;
+        } else if (typeof existing.lower !== "number" && existing.lower !== null) {
+          existing.lower = base.lower;
+        }
+        if (typeof childInput.upper === "number" || childInput.upper === null) {
+          existing.upper = childInput.upper;
+        } else if (typeof existing.upper !== "number" && existing.upper !== null) {
+          existing.upper = base.upper;
+        }
+        if (typeof childInput.manual === "boolean") {
+          existing.manual = childInput.manual;
+        } else if (typeof existing.manual !== "boolean") {
+          existing.manual = base.manual;
+        }
+        if (typeof childInput.manualStep === "number") {
+          existing.manualStep = childInput.manualStep;
+        } else if (typeof existing.manualStep !== "number") {
+          existing.manualStep = base.manualStep;
+        }
+        nextChildren.push(existing);
+      }
+      base.children = nextChildren;
+    }
+    if (!node) {
+      state.tools.trend.nodes.push(base);
+    }
+    saveState();
+    emitTrendChange();
+    return base;
+  }
+
+  function removeTrendNode(nodeId) {
+    ensureTrendStore();
+    if (!nodeId) {
+      return;
+    }
+    var removed = false;
+    for (var i = state.tools.trend.nodes.length - 1; i >= 0; i -= 1) {
+      if (state.tools.trend.nodes[i] && state.tools.trend.nodes[i].id === nodeId) {
+        state.tools.trend.nodes.splice(i, 1);
+        removed = true;
+      }
+    }
+    if (removed) {
+      var remainingStreams = [];
+      for (var s = 0; s < state.tools.trend.streams.length; s += 1) {
+        var stream = state.tools.trend.streams[s];
+        if (!stream || stream.nodeId === nodeId) {
+          continue;
+        }
+        remainingStreams.push(stream);
+      }
+      state.tools.trend.streams = remainingStreams;
+      saveState();
+      emitTrendChange();
+    }
+  }
+
+  function updateTrendSettings(patch) {
+    ensureTrendStore();
+    if (!patch || typeof patch !== "object") {
+      return cloneTrendSettings();
+    }
+    var settings = state.tools.trend.settings;
+    if (typeof patch.sampleIntervalMs === "number" && patch.sampleIntervalMs > 0) {
+      settings.sampleIntervalMs = patch.sampleIntervalMs;
+    }
+    if (typeof patch.lookbackMinutes === "number" && patch.lookbackMinutes > 0) {
+      settings.lookbackMinutes = patch.lookbackMinutes;
+    }
+    if (typeof patch.predictionMinutes === "number" && patch.predictionMinutes > 0) {
+      settings.predictionMinutes = patch.predictionMinutes;
+    }
+    if (patch.outputTarget && typeof patch.outputTarget === "object") {
+      if (typeof patch.outputTarget.center === "number") {
+        settings.outputTarget.center = patch.outputTarget.center;
+      }
+      if (typeof patch.outputTarget.lower === "number") {
+        settings.outputTarget.lower = patch.outputTarget.lower;
+      }
+      if (typeof patch.outputTarget.upper === "number") {
+        settings.outputTarget.upper = patch.outputTarget.upper;
+      }
+    }
+    saveState();
+    emitTrendChange();
+    return cloneTrendSettings();
+  }
+
+  function recordTrendManualAdjustment(payload) {
+    ensureTrendStore();
+    if (!payload || typeof payload !== "object") {
+      return null;
+    }
+    var node = findTrendNodeById(payload.nodeId);
+    if (!node) {
+      return null;
+    }
+    var child = null;
+    if (payload.subNodeId) {
+      child = findTrendChild(node, payload.subNodeId);
+      if (!child) {
+        return null;
+      }
+    }
+    var now = new Date().toISOString();
+    var entry = {
+      id: uuid(),
+      nodeId: node.id,
+      subNodeId: child ? child.id : null,
+      amount: typeof payload.amount === "number" ? payload.amount : 0,
+      note: typeof payload.note === "string" ? payload.note.trim() : "",
+      createdAt: now,
+      createdBy: currentUser ? currentUser.username : "",
+      type: payload.type || "manual-adjust"
+    };
+    state.tools.trend.history.push({
+      id: uuid(),
+      nodeId: entry.nodeId,
+      subNodeId: entry.subNodeId,
+      kind: "adjustment",
+      createdAt: now,
+      meta: entry
+    });
+    saveState();
+    emitTrendChange();
+    return entry;
+  }
+
+  function recordTrendSamples(samples, options) {
+    ensureTrendStore();
+    if (!Array.isArray(samples) || samples.length === 0) {
+      return;
+    }
+    options = options || {};
+    var sanitized = [];
+    for (var i = 0; i < samples.length; i += 1) {
+      var cleaned = sanitizeTrendSample(samples[i]);
+      if (cleaned) {
+        sanitized.push(cleaned);
+      }
+    }
+    if (sanitized.length === 0) {
+      return;
+    }
+    var trend = state.tools.trend;
+    Array.prototype.push.apply(trend.streams, sanitized);
+    if (trend.streams.length > 2400) {
+      trend.streams = trend.streams.slice(trend.streams.length - 2400);
+    }
+    saveState();
+    recomputeTrendAnalytics(options && options.skipEmit);
+    if (!options || !options.skipEmit) {
+      emitTrendChange();
+    }
+  }
+
+  function calcSlope(points) {
+    if (!points || points.length < 2) {
+      return 0;
+    }
+    var first = points[0];
+    var last = points[points.length - 1];
+    if (!first || !last) {
+      return 0;
+    }
+    var dt = new Date(last.capturedAt).getTime() - new Date(first.capturedAt).getTime();
+    if (!dt) {
+      return 0;
+    }
+    return (last.value - first.value) / (dt / 60000);
+  }
+
+  function calcRangeStatus(value, lower, upper) {
+    if (typeof value !== "number") {
+      return "未知";
+    }
+    if (typeof lower === "number" && value < lower) {
+      return "超下限";
+    }
+    if (typeof upper === "number" && value > upper) {
+      return "超上限";
+    }
+    if (typeof lower === "number" && value < lower + (typeof upper === "number" ? (upper - lower) * 0.1 : 1)) {
+      return "偏低";
+    }
+    if (typeof upper === "number" && value > upper - (typeof lower === "number" ? (upper - lower) * 0.1 : 1)) {
+      return "偏高";
+    }
+    return "平稳";
+  }
+
+  function summarizeDuration(points, lower, upper) {
+    if (!points || points.length === 0) {
+      return 0;
+    }
+    var thresholdTime = null;
+    for (var i = points.length - 1; i >= 0; i -= 1) {
+      var pt = points[i];
+      var status = calcRangeStatus(pt.value, lower, upper);
+      if (status === "平稳") {
+        break;
+      }
+      thresholdTime = pt.capturedAt;
+    }
+    if (!thresholdTime) {
+      return 0;
+    }
+    var diff = new Date(points[points.length - 1].capturedAt).getTime() - new Date(thresholdTime).getTime();
+    if (diff <= 0) {
+      return 0;
+    }
+    return Math.round(diff / 60000);
+  }
+
+  function foldTrendSuggestionsMap() {
+    ensureTrendStore();
+    var map = {};
+    for (var i = 0; i < state.tools.trend.suggestions.length; i += 1) {
+      var item = state.tools.trend.suggestions[i];
+      if (!item || !item.id) {
+        continue;
+      }
+      map[item.id] = item;
+    }
+    return map;
+  }
+
+  function computeSimilarity(a, b) {
+    if (!a || !b) {
+      return 0;
+    }
+    var tokensA = String(a).toLowerCase().split(/[^a-z0-9\u4e00-\u9fa5]+/).filter(Boolean);
+    var tokensB = String(b).toLowerCase().split(/[^a-z0-9\u4e00-\u9fa5]+/).filter(Boolean);
+    if (!tokensA.length || !tokensB.length) {
+      return 0;
+    }
+    var setA = {};
+    for (var i = 0; i < tokensA.length; i += 1) {
+      setA[tokensA[i]] = true;
+    }
+    var intersection = 0;
+    var union = Object.assign({}, setA);
+    for (var j = 0; j < tokensB.length; j += 1) {
+      var token = tokensB[j];
+      if (setA[token]) {
+        intersection += 1;
+      }
+      union[token] = true;
+    }
+    var unionSize = Object.keys(union).length;
+    if (unionSize === 0) {
+      return 0;
+    }
+    return intersection / unionSize;
+  }
+
+  function recomputeTrendAnalytics(skipEmit) {
+    ensureTrendStore();
+    var trend = state.tools.trend;
+    var nodes = trend.nodes;
+    var newSuggestions = [];
+    var nowIso = new Date().toISOString();
+    var lookbackMs = (trend.settings.lookbackMinutes || 120) * 60000;
+    var startTime = Date.now() - lookbackMs;
+    var streams = trend.streams;
+    var grouped = {};
+    for (var i = 0; i < streams.length; i += 1) {
+      var item = streams[i];
+      if (!item) {
+        continue;
+      }
+      var ts = new Date(item.capturedAt || item.receivedAt || nowIso).getTime();
+      if (ts < startTime) {
+        continue;
+      }
+      var key = item.nodeId + "::" + (item.subNodeId || "root");
+      if (!grouped[key]) {
+        grouped[key] = [];
+      }
+      grouped[key].push(item);
+    }
+    for (var key in grouped) {
+      if (!Object.prototype.hasOwnProperty.call(grouped, key)) {
+        continue;
+      }
+      var series = grouped[key];
+      series.sort(function (a, b) {
+        return new Date(a.capturedAt).getTime() - new Date(b.capturedAt).getTime();
+      });
+      if (!series.length) {
+        continue;
+      }
+      var parts = key.split("::");
+      var nodeId = parts[0];
+      var subNodeId = parts[1] === "root" ? null : parts[1];
+      var node = findTrendNodeById(nodeId);
+      if (!node) {
+        continue;
+      }
+      var child = subNodeId ? findTrendChild(node, subNodeId) : null;
+      var lower = child && typeof child.lower === "number" ? child.lower : node.lower;
+      var upper = child && typeof child.upper === "number" ? child.upper : node.upper;
+      var latest = series[series.length - 1];
+      var status = calcRangeStatus(latest.value, lower, upper);
+      var slope = calcSlope(series.slice(Math.max(0, series.length - 5)));
+      var duration = summarizeDuration(series, lower, upper);
+      var severity = 1;
+      if (status === "超上限" || status === "超下限") {
+        severity = 4;
+      } else if (status === "偏高" || status === "偏低") {
+        severity = 2;
+      } else {
+        severity = Math.abs(slope) > 0.15 ? 2 : 1;
+      }
+      var label = (child ? child.name : node.name) + "：" + status;
+      var summary = status;
+      if (status === "平稳") {
+        if (Math.abs(slope) > 0.15) {
+          summary = slope > 0 ? "上升趋势" : "下降趋势";
+        } else {
+          summary = "平稳";
+        }
+      }
+      var detail = [];
+      detail.push("最新值 " + latest.value.toFixed(2) + (child ? child.unit : node.unit || ""));
+      if (typeof lower === "number" || typeof upper === "number") {
+        detail.push("范围 " + (typeof lower === "number" ? lower : "-") + " ~ " + (typeof upper === "number" ? upper : "-"));
+      }
+      if (duration > 0 && status !== "平稳") {
+        detail.push(status + "持续 " + duration + " 分钟");
+      }
+      if (Math.abs(slope) > 0.05) {
+        detail.push("变化速率 " + slope.toFixed(3) + " /分钟");
+      }
+      var suggestion = {
+        id: uuid(),
+        nodeId: node.id,
+        subNodeId: child ? child.id : null,
+        label: label,
+        summary: summary,
+        detail: detail,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        severity: severity,
+        status: "active",
+        statusLabel: status,
+        latestValue: latest.value,
+        unit: child ? child.unit : node.unit,
+        slope: slope,
+        duration: duration,
+        source: "analysis"
+      };
+      newSuggestions.push(suggestion);
+    }
+    var existing = foldTrendSuggestionsMap();
+    var merged = [];
+    for (var ns = 0; ns < newSuggestions.length; ns += 1) {
+      var incoming = newSuggestions[ns];
+      var mergedExisting = null;
+      for (var id in existing) {
+        if (!Object.prototype.hasOwnProperty.call(existing, id)) {
+          continue;
+        }
+        var candidate = existing[id];
+        if (!candidate || candidate.status !== "active") {
+          continue;
+        }
+        if (candidate.nodeId === incoming.nodeId && candidate.subNodeId === incoming.subNodeId) {
+          var similarity = computeSimilarity(candidate.summary, incoming.summary);
+          if (similarity > 0.6) {
+            mergedExisting = candidate;
+            delete existing[id];
+            break;
+          }
+        }
+      }
+      if (mergedExisting) {
+        mergedExisting.updatedAt = incoming.updatedAt;
+        mergedExisting.summary = incoming.summary;
+        mergedExisting.detail = incoming.detail;
+        mergedExisting.severity = incoming.severity;
+        mergedExisting.statusLabel = incoming.statusLabel;
+        mergedExisting.latestValue = incoming.latestValue;
+        mergedExisting.unit = incoming.unit;
+        mergedExisting.slope = incoming.slope;
+        mergedExisting.duration = incoming.duration;
+        mergedExisting.source = incoming.source;
+        merged.push(mergedExisting);
+      } else {
+        merged.push(incoming);
+      }
+    }
+    for (var leftoverId in existing) {
+      if (!Object.prototype.hasOwnProperty.call(existing, leftoverId)) {
+        continue;
+      }
+      var stale = existing[leftoverId];
+      if (!stale || stale.status !== "active") {
+        continue;
+      }
+      stale.status = "resolved";
+      stale.resolvedAt = nowIso;
+      trend.history.push({
+        id: uuid(),
+        kind: "auto-resolve",
+        nodeId: stale.nodeId,
+        subNodeId: stale.subNodeId,
+        createdAt: nowIso,
+        meta: { suggestionId: stale.id }
+      });
+      merged.push(stale);
+    }
+    trend.suggestions = merged;
+    saveState();
+    if (!skipEmit) {
+      emitTrendChange();
+    }
+  }
+
+  function startTrendDemo(options) {
+    ensureTrendStore();
+    options = options || {};
+    state.tools.trend.demo.enabled = true;
+    if (typeof options.intervalMs === "number" && options.intervalMs > 0) {
+      state.tools.trend.demo.intervalMs = options.intervalMs;
+    }
+    if (typeof options.amplitude === "number") {
+      state.tools.trend.demo.amplitude = options.amplitude;
+    }
+    if (typeof options.volatility === "number") {
+      state.tools.trend.demo.volatility = options.volatility;
+    }
+    if (trendDemoTimer) {
+      window.clearInterval(trendDemoTimer);
+    }
+    var interval = state.tools.trend.demo.intervalMs || state.tools.trend.settings.sampleIntervalMs || 60000;
+    function tickDemo() {
+      ensureTrendStore();
+      var nodes = state.tools.trend.nodes;
+      if (!nodes.length) {
+        return;
+      }
+      var samples = [];
+      trendDemoLastTick += 1;
+      for (var i = 0; i < nodes.length; i += 1) {
+        var node = nodes[i];
+        var base = typeof node.lower === "number" && typeof node.upper === "number"
+          ? (node.lower + node.upper) / 2
+          : state.tools.trend.settings.outputTarget.center;
+        var amplitude = state.tools.trend.demo.amplitude || 0.2;
+        var volatility = state.tools.trend.demo.volatility || 0.35;
+        var jitter = Math.sin(trendDemoLastTick / (5 + i)) * amplitude * (i + 1);
+        var random = (Math.random() - 0.5) * volatility;
+        var manualShift = 0;
+        if (node.manual) {
+          manualShift = (Math.random() - 0.5) * (node.manualStep || 1);
+        }
+        var value = base + jitter + random + manualShift;
+        if (typeof node.lower === "number") {
+          value = Math.max(node.lower - 0.25 * Math.abs(node.lower || 1), value);
+        }
+        if (typeof node.upper === "number") {
+          value = Math.min(node.upper + 0.25 * Math.abs(node.upper || 1), value);
+        }
+        samples.push({
+          nodeId: node.id,
+          value: value,
+          source: "demo",
+          capturedAt: new Date().toISOString(),
+          confidence: 0.6 + Math.random() * 0.35
+        });
+        if (Array.isArray(node.children)) {
+          for (var c = 0; c < node.children.length; c += 1) {
+            var child = node.children[c];
+            var childValue = value + (Math.random() - 0.5) * (child.manualStep || 0.5);
+            samples.push({
+              nodeId: node.id,
+              subNodeId: child.id,
+              value: childValue,
+              source: "demo",
+              capturedAt: new Date().toISOString(),
+              confidence: 0.55 + Math.random() * 0.3
+            });
+          }
+        }
+      }
+      recordTrendSamples(samples, { skipEmit: true });
+      recomputeTrendAnalytics(true);
+      emitTrendChange();
+    }
+    tickDemo();
+    trendDemoTimer = window.setInterval(tickDemo, interval);
+    saveState();
+    emitTrendChange();
+  }
+
+  function stopTrendDemo() {
+    ensureTrendStore();
+    state.tools.trend.demo.enabled = false;
+    if (trendDemoTimer) {
+      window.clearInterval(trendDemoTimer);
+      trendDemoTimer = null;
+    }
+    saveState();
+    emitTrendChange();
+  }
+
+  function isTrendDemoActive() {
+    ensureTrendStore();
+    return !!state.tools.trend.demo.enabled;
+  }
+
+  function acceptTrendSuggestion(id, note) {
+    ensureTrendStore();
+    if (!id) {
+      return;
+    }
+    for (var i = 0; i < state.tools.trend.suggestions.length; i += 1) {
+      var item = state.tools.trend.suggestions[i];
+      if (item && item.id === id) {
+        item.status = "accepted";
+        item.resolvedAt = new Date().toISOString();
+        item.note = typeof note === "string" ? note.trim() : item.note;
+        state.tools.trend.history.push({
+          id: uuid(),
+          kind: "accept",
+          nodeId: item.nodeId,
+          subNodeId: item.subNodeId,
+          createdAt: item.resolvedAt,
+          meta: { suggestionId: id, note: item.note || "" }
+        });
+        break;
+      }
+    }
+    saveState();
+    emitTrendChange();
+  }
+
+  function rejectTrendSuggestion(id, reason, correction) {
+    ensureTrendStore();
+    if (!id) {
+      return;
+    }
+    for (var i = 0; i < state.tools.trend.suggestions.length; i += 1) {
+      var item = state.tools.trend.suggestions[i];
+      if (item && item.id === id) {
+        item.status = "rejected";
+        item.resolvedAt = new Date().toISOString();
+        item.note = typeof reason === "string" ? reason.trim() : item.note;
+        if (correction && typeof correction === "object") {
+          recordTrendFeedback({
+            suggestionId: id,
+            rating: typeof correction.rating === "number" ? correction.rating : 0,
+            note: correction.note || "",
+            expected: correction.expected || "",
+            user: correction.user || (currentUser ? currentUser.username : "")
+          });
+        }
+        state.tools.trend.history.push({
+          id: uuid(),
+          kind: "reject",
+          nodeId: item.nodeId,
+          subNodeId: item.subNodeId,
+          createdAt: item.resolvedAt,
+          meta: { suggestionId: id, note: item.note || "" }
+        });
+        break;
+      }
+    }
+    saveState();
+    emitTrendChange();
+  }
+
+  function recordTrendFeedback(feedback) {
+    ensureTrendStore();
+    if (!feedback || typeof feedback !== "object") {
+      return;
+    }
+    var now = new Date().toISOString();
+    var entry = {
+      id: uuid(),
+      suggestionId: feedback.suggestionId || null,
+      nodeId: feedback.nodeId || null,
+      subNodeId: feedback.subNodeId || null,
+      rating: typeof feedback.rating === "number" ? feedback.rating : 0,
+      note: typeof feedback.note === "string" ? feedback.note.trim() : "",
+      expected: typeof feedback.expected === "string" ? feedback.expected.trim() : "",
+      createdAt: now,
+      createdBy: feedback.user || (currentUser ? currentUser.username : "")
+    };
+    state.tools.trend.feedback.push(entry);
+    if (entry.nodeId) {
+      if (!state.tools.trend.model.calibrations[entry.nodeId]) {
+        state.tools.trend.model.calibrations[entry.nodeId] = { ratingSum: 0, ratingCount: 0 };
+      }
+      var calibration = state.tools.trend.model.calibrations[entry.nodeId];
+      calibration.ratingSum += entry.rating;
+      calibration.ratingCount += 1;
+    }
+    state.tools.trend.history.push({
+      id: uuid(),
+      kind: "feedback",
+      nodeId: entry.nodeId,
+      subNodeId: entry.subNodeId,
+      createdAt: now,
+      meta: entry
+    });
+    saveState();
+    emitTrendChange();
+  }
+
+  function removeTrendHistoryEntries(ids) {
+    ensureTrendStore();
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return;
+    }
+    var set = {};
+    for (var i = 0; i < ids.length; i += 1) {
+      set[ids[i]] = true;
+    }
+    state.tools.trend.history = state.tools.trend.history.filter(function (item) {
+      return !item || !set[item.id];
+    });
+    saveState();
+    emitTrendChange();
+  }
+
+  function clearTrendHistory(options) {
+    ensureTrendStore();
+    options = options || {};
+    if (options.kind) {
+      state.tools.trend.history = state.tools.trend.history.filter(function (item) {
+        return item && item.kind !== options.kind;
+      });
+    } else {
+      state.tools.trend.history = [];
+    }
+    saveState();
+    emitTrendChange();
+  }
+
+  function registerTrendMesEndpoint(endpoint) {
+    ensureTrendStore();
+    if (!endpoint || typeof endpoint !== "object") {
+      return null;
+    }
+    if (!state.tools.trend.settings.mesEndpoints) {
+      state.tools.trend.settings.mesEndpoints = [];
+    }
+    var descriptor = {
+      id: endpoint.id || uuid(),
+      name: endpoint.name || "MES 数据源",
+      type: endpoint.type || "rest",
+      url: endpoint.url || "",
+      database: endpoint.database || "",
+      table: endpoint.table || "",
+      enabled: typeof endpoint.enabled === "boolean" ? endpoint.enabled : true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      notes: endpoint.notes || "",
+      format: endpoint.format || "json"
+    };
+    state.tools.trend.settings.mesEndpoints.push(descriptor);
+    saveState();
+    emitTrendChange();
+    return descriptor;
+  }
+
+  function updateTrendMesEndpoint(id, patch) {
+    ensureTrendStore();
+    if (!id || !patch) {
+      return null;
+    }
+    var endpoints = state.tools.trend.settings.mesEndpoints || [];
+    for (var i = 0; i < endpoints.length; i += 1) {
+      if (endpoints[i] && endpoints[i].id === id) {
+        var target = endpoints[i];
+        if (typeof patch.name === "string" && patch.name.trim()) {
+          target.name = patch.name.trim();
+        }
+        if (typeof patch.type === "string") {
+          target.type = patch.type;
+        }
+        if (typeof patch.url === "string") {
+          target.url = patch.url;
+        }
+        if (typeof patch.database === "string") {
+          target.database = patch.database;
+        }
+        if (typeof patch.table === "string") {
+          target.table = patch.table;
+        }
+        if (typeof patch.enabled === "boolean") {
+          target.enabled = patch.enabled;
+        }
+        if (typeof patch.notes === "string") {
+          target.notes = patch.notes;
+        }
+        if (typeof patch.format === "string") {
+          target.format = patch.format;
+        }
+        target.updatedAt = new Date().toISOString();
+        saveState();
+        emitTrendChange();
+        return target;
+      }
+    }
+    return null;
+  }
+
+  function removeTrendMesEndpoint(id) {
+    ensureTrendStore();
+    if (!id) {
+      return;
+    }
+    var endpoints = state.tools.trend.settings.mesEndpoints || [];
+    for (var i = endpoints.length - 1; i >= 0; i -= 1) {
+      if (endpoints[i] && endpoints[i].id === id) {
+        endpoints.splice(i, 1);
+      }
+    }
+    saveState();
+    emitTrendChange();
+  }
+
+  function listTrendMesEndpoints() {
+    ensureTrendStore();
+    return cloneTrendSettings().mesEndpoints || [];
+  }
+
+  function fetchTrendSamplesFromEndpoint(descriptor, params) {
+    return new Promise(function (resolve) {
+      console.info("fetchTrendSamplesFromEndpoint placeholder", descriptor, params);
+      resolve({ samples: [], meta: { message: "MES 接口尚未接入" } });
+    });
   }
 
   function ensureVisionStore() {
@@ -7891,6 +9306,15 @@
     } catch (err) {
       console.warn(err);
     }
+    stopTrendDemo();
+    if (trendBeaconUnsubscribe) {
+      try {
+        trendBeaconUnsubscribe();
+      } catch (err) {
+        console.warn("trend beacon unsubscribe failed", err);
+      }
+      trendBeaconUnsubscribe = null;
+    }
     currentUser = null;
     window.location.href = "login.html";
   }
@@ -9123,6 +10547,7 @@
     renderBankList();
     updateBankBadge();
     renderFloatingFavorite();
+    renderTrendBeacon();
     if (window.AIToolsVision && typeof window.AIToolsVision.mount === "function") {
       window.AIToolsVision.mount({
         getGroups: getContaminationGroups,
@@ -9165,6 +10590,98 @@
     var logoutBtn = document.getElementById("logoutButton");
     if (logoutBtn) {
       logoutBtn.addEventListener("click", logout);
+    }
+  }
+
+  function initTrendPage() {
+    requireAuth();
+    setNavUserInfo();
+    ensureActiveBank();
+    renderBankList();
+    updateBankBadge();
+    renderFloatingFavorite();
+    renderTrendBeacon();
+    var createBankBtn = document.getElementById("createBank");
+    if (createBankBtn) {
+      createBankBtn.addEventListener("click", createBank);
+    }
+    var logoutBtn = document.getElementById("logoutButton");
+    if (logoutBtn) {
+      logoutBtn.addEventListener("click", logout);
+    }
+    if (window.AIToolsTrend && typeof window.AIToolsTrend.mount === "function") {
+      window.AIToolsTrend.mount({
+        getSnapshot: getTrendSnapshot,
+        subscribe: subscribeTrend,
+        upsertNode: upsertTrendNode,
+        removeNode: removeTrendNode,
+        updateSettings: updateTrendSettings,
+        recordSamples: recordTrendSamples,
+        recordManual: recordTrendManualAdjustment,
+        startDemo: startTrendDemo,
+        stopDemo: stopTrendDemo,
+        isDemoActive: isTrendDemoActive,
+        registerEndpoint: registerTrendMesEndpoint,
+        updateEndpoint: updateTrendMesEndpoint,
+        removeEndpoint: removeTrendMesEndpoint,
+        listEndpoints: listTrendMesEndpoints,
+        fetchFromEndpoint: fetchTrendSamplesFromEndpoint,
+        acceptSuggestion: acceptTrendSuggestion,
+        rejectSuggestion: rejectTrendSuggestion,
+        feedback: recordTrendFeedback,
+        toast: showToast,
+        getUser: function () {
+          if (!currentUser) {
+            return null;
+          }
+          return {
+            id: currentUser.id,
+            username: currentUser.username,
+            role: currentUser.role
+          };
+        },
+        getActiveBank: function () {
+          var bank = getActiveBank();
+          if (!bank) {
+            return null;
+          }
+          return { id: bank.id, name: bank.name };
+        }
+      });
+    }
+  }
+
+  function initTrendHistoryPage() {
+    requireAuth();
+    setNavUserInfo();
+    ensureActiveBank();
+    renderBankList();
+    updateBankBadge();
+    renderFloatingFavorite();
+    renderTrendBeacon();
+    var createBankBtn = document.getElementById("createBank");
+    if (createBankBtn) {
+      createBankBtn.addEventListener("click", createBank);
+    }
+    var logoutBtn = document.getElementById("logoutButton");
+    if (logoutBtn) {
+      logoutBtn.addEventListener("click", logout);
+    }
+    if (window.AIToolsTrendHistory && typeof window.AIToolsTrendHistory.mount === "function") {
+      window.AIToolsTrendHistory.mount({
+        getSnapshot: getTrendSnapshot,
+        subscribe: subscribeTrend,
+        listEndpoints: listTrendMesEndpoints,
+        removeEndpoint: removeTrendMesEndpoint,
+        registerEndpoint: registerTrendMesEndpoint,
+        updateEndpoint: updateTrendMesEndpoint,
+        acceptSuggestion: acceptTrendSuggestion,
+        rejectSuggestion: rejectTrendSuggestion,
+        feedback: recordTrendFeedback,
+        clearHistory: clearTrendHistory,
+        removeHistoryEntries: removeTrendHistoryEntries,
+        toast: showToast
+      });
     }
   }
 
@@ -9211,6 +10728,10 @@
         initVisionHistoryPage();
       } else if (page === "vision") {
         initVisionPage();
+      } else if (page === "trend") {
+        initTrendPage();
+      } else if (page === "trend-history") {
+        initTrendHistoryPage();
       } else {
         initNavigation();
       }
@@ -9222,4 +10743,13 @@
   } else {
     boot();
   }
+
+  if (!window.TrendDataBridge) {
+    window.TrendDataBridge = {};
+  }
+  window.TrendDataBridge.register = registerTrendMesEndpoint;
+  window.TrendDataBridge.update = updateTrendMesEndpoint;
+  window.TrendDataBridge.remove = removeTrendMesEndpoint;
+  window.TrendDataBridge.list = listTrendMesEndpoints;
+  window.TrendDataBridge.fetch = fetchTrendSamplesFromEndpoint;
 })();
