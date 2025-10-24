@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>趋势分析档案中心 · 虹小聊</title>
+<link rel="stylesheet" href="styles/app.css">
+</head>
+<body data-page="trend-history">
+<div class="app-shell">
+  <aside class="sidebar" id="bankSidebar">
+    <div class="brand"><img class="brand-logo" src="assets/logo.png" alt="虹小聊 logo"><span class="brand-name">虹小聊</span></div>
+    <div class="nav-group">
+      <a class="nav-link" href="index.html">对话</a>
+      <a class="nav-link" href="kb.html">知识库</a>
+      <a class="nav-link" href="favorites.html">收藏夹</a>
+      <a class="nav-link" href="decision.html">决策链</a>
+      <a class="nav-link active" href="ai-tools.html">AI 工具箱</a>
+      <a class="nav-link" href="admin.html">系统</a>
+    </div>
+    <div class="sidebar-section">
+      <div class="section-title">记忆库</div>
+      <div class="badge-list" id="bankList"></div>
+      <button class="ghost-button" id="createBank">新建记忆库</button>
+    </div>
+    <a class="ghost-button toolbox-link" href="ai-tools.html">返回工具箱</a>
+    <button class="ghost-button" id="logoutButton">退出登录</button>
+  </aside>
+  <main class="main-panel trend-history-main">
+    <header class="main-header">
+      <div class="header-info">
+        <div class="header-title">趋势分析档案中心</div>
+        <div class="header-sub">按节点与时间检索建议、人工反馈及 MES 数据源配置，支持导出与批量清理。</div>
+      </div>
+      <div class="user-info" id="userInfo"></div>
+    </header>
+    <section class="panel trend-history-panel">
+      <div class="trend-history-forecast-panel">
+        <div class="trend-history-forecast-header">
+          <h2>预测快照</h2>
+          <span class="trend-history-forecast-sub">同步趋势工作台的最新预测结果</span>
+        </div>
+        <div class="trend-history-forecast-list" id="trendHistoryForecasts"></div>
+      </div>
+      <div class="trend-history-toolbar">
+        <div class="trend-history-filters">
+          <label for="trendHistoryGroup">分组</label>
+          <select id="trendHistoryGroup"></select>
+          <label for="trendHistorySearch">检索</label>
+          <input id="trendHistorySearch" type="search" placeholder="输入节点、建议或备注关键字">
+        </div>
+        <div class="trend-history-actions">
+          <button type="button" class="ghost-button" id="trendHistoryExport">导出选中</button>
+          <button type="button" class="ghost-button danger" id="trendHistoryClear">批量清理</button>
+        </div>
+      </div>
+      <div class="trend-history-layout">
+        <aside class="trend-history-sidebar">
+          <h2>建议档案</h2>
+          <div id="trendHistoryList" class="trend-history-list" role="listbox"></div>
+        </aside>
+        <section class="trend-history-detail" aria-live="polite">
+          <div class="trend-history-placeholder" id="trendHistoryPlaceholder">请选择左侧档案查看详情。</div>
+          <div class="trend-history-detail-body hidden" id="trendHistoryDetail">
+            <header class="trend-history-detail-header">
+              <div>
+                <div class="trend-history-detail-title" id="trendHistoryDetailTitle"></div>
+                <div class="trend-history-detail-meta" id="trendHistoryDetailMeta"></div>
+              </div>
+              <div class="trend-history-detail-actions">
+                <button type="button" class="ghost-button" id="trendHistoryAccept">标记采纳</button>
+                <button type="button" class="ghost-button" id="trendHistoryReject">标记拒绝</button>
+              </div>
+            </header>
+            <section class="trend-history-section">
+              <h3>建议详情</h3>
+              <div id="trendHistoryDetailSummary"></div>
+            </section>
+            <section class="trend-history-section">
+              <h3>曲线回放</h3>
+              <canvas id="trendHistoryChart" aria-label="历史趋势"></canvas>
+              <div class="trend-history-chart-legend" id="trendHistoryChartLegend"></div>
+              <div class="trend-history-chart-toolbar">
+                <button type="button" class="ghost-button" data-range="60">1 小时</button>
+                <button type="button" class="ghost-button" data-range="180">3 小时</button>
+                <button type="button" class="ghost-button" data-range="720">12 小时</button>
+              </div>
+            </section>
+            <section class="trend-history-section">
+              <h3>人工订正</h3>
+              <ul id="trendHistoryFeedback"></ul>
+            </section>
+            <section class="trend-history-section">
+              <h3>关联 MES 数据源</h3>
+              <div id="trendHistoryEndpoint"></div>
+            </section>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+</div>
+<script src="scripts/app.js"></script>
+<script src="scripts/tools-trend-history.js"></script>
+</body>
+</html>
