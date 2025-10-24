@@ -555,6 +555,149 @@
     ctx.setLineDash([]);
   }
 
+  function normalizeSeriesWindow(series, minutes) {
+    if (!Array.isArray(series) || !series.length) {
+      return [];
+    }
+    var cutoff = null;
+    if (typeof minutes === "number" && minutes > 0) {
+      cutoff = Date.now() - minutes * 60000;
+    }
+    var normalized = series
+      .filter(function (point) {
+        if (!point || typeof point.value !== "number" || !point.capturedAt) {
+          return false;
+        }
+        if (!cutoff) {
+          return true;
+        }
+        var ts = new Date(point.capturedAt).getTime();
+        return isFinite(ts) && ts >= cutoff;
+      })
+      .map(function (point) {
+        return { capturedAt: point.capturedAt, value: point.value };
+      })
+      .sort(function (a, b) {
+        return new Date(a.capturedAt) - new Date(b.capturedAt);
+      });
+    return normalized;
+  }
+
+  function summarizeFluctuations(series) {
+    var tolerance = 1e-6;
+    var up = 0;
+    var down = 0;
+    if (Array.isArray(series)) {
+      for (var i = 1; i < series.length; i += 1) {
+        var prev = series[i - 1];
+        var current = series[i];
+        if (!prev || !current) {
+          continue;
+        }
+        var delta = current.value - prev.value;
+        if (delta > tolerance) {
+          up += 1;
+        } else if (delta < -tolerance) {
+          down += 1;
+        }
+      }
+    }
+    var total = up + down;
+    return {
+      up: up,
+      down: down,
+      total: total,
+      upRatio: total ? up / total : 0,
+      downRatio: total ? down / total : 0
+    };
+  }
+
+  function formatFluctuationSummary(summary) {
+    if (!summary || !summary.total) {
+      return "波动数据不足";
+    }
+    var upPercent = Math.round(summary.upRatio * 1000) / 10;
+    var downPercent = Math.round(summary.downRatio * 1000) / 10;
+    return (
+      "上升 " + summary.up + " 次 (" + upPercent + "%) · 下降 " + summary.down + " 次 (" + downPercent + "%)"
+    );
+  }
+
+  function evaluateTrendProfile(profile) {
+    if (!profile) {
+      return { text: "数据不足", level: "warning" };
+    }
+    var label = profile.label || "平稳";
+    var duration = profile.durationMinutes || 0;
+    var text;
+    var level = "normal";
+    if (label === "平稳") {
+      text = "平稳运行";
+    } else if (label === "缓慢上升") {
+      text = "缓慢上升，建议关注";
+      level = "notice";
+    } else if (label === "上升") {
+      text = "持续上升，需检查上下游";
+      level = "warning";
+    } else if (label === "极速上升") {
+      text = "极速上升，立即检查";
+      level = "critical";
+    } else if (label === "缓慢下降") {
+      text = "缓慢下降，可观察";
+      level = "notice";
+    } else if (label === "极速下降" || label === "下降") {
+      text = "快速下降，请警惕";
+      level = "warning";
+    } else {
+      text = label;
+    }
+    if (duration > 0) {
+      text += " · 持续 " + duration + " 分钟";
+    }
+    return { text: text, level: level };
+  }
+
+  function computeIntervalProfiles(series, selectedRange) {
+    var intervals = [
+      { key: "day", label: "日趋势", minutes: 1440 },
+      { key: "month", label: "月趋势", minutes: 43200 },
+      { key: "quarter", label: "季度趋势", minutes: 129600 }
+    ];
+    if (selectedRange && selectedRange > 0) {
+      intervals.push({ key: "custom", label: "自定义 (" + selectedRange + " 分钟)", minutes: selectedRange });
+    }
+    var results = [];
+    for (var i = 0; i < intervals.length; i += 1) {
+      var config = intervals[i];
+      var windowSeries = normalizeSeriesWindow(series, config.minutes);
+      if (windowSeries.length < 2) {
+        results.push({
+          label: config.label,
+          slope: "--",
+          duration: "--",
+          evaluation: "数据不足",
+          evaluationLevel: "warning",
+          fluctuations: "--"
+        });
+        continue;
+      }
+      var profile = analyzeTrendProfile(windowSeries, { windowSize: Math.min(windowSeries.length, 60) });
+      var evaluation = evaluateTrendProfile(profile);
+      var slopeText = typeof profile.slope === "number" ? profile.slope.toFixed(3) : "--";
+      var durationText = profile.durationMinutes ? profile.durationMinutes + " 分钟" : "--";
+      var fluctuationSummary = formatFluctuationSummary(summarizeFluctuations(windowSeries));
+      results.push({
+        label: config.label,
+        slope: slopeText,
+        duration: durationText,
+        evaluation: evaluation.text,
+        evaluationLevel: evaluation.level,
+        fluctuations: fluctuationSummary
+      });
+    }
+    return results;
+  }
+
   function mount(services) {
     if (!services) {
       return;
@@ -604,6 +747,8 @@
       scenarioChartKey: null,
       pendingParentId: null,
       pendingNodeKey: null,
+      explorerPath: [],
+      nodeModalState: null,
       unsubscribe: null
     };
     state.scenarioDraft = createScenarioDraft(state.snapshot, null);
@@ -665,6 +810,16 @@
       return attempt;
     }
 
+    function generateUniqueNodeId() {
+      var attempt = generateId();
+      var guard = 0;
+      while (isNodeIdTaken(attempt) && guard < 50) {
+        attempt = generateId();
+        guard += 1;
+      }
+      return attempt;
+    }
+
     function isNodeIdTaken(candidate, originalId) {
       var value = typeof candidate === "string" ? candidate.trim() : "";
       if (!value) {
@@ -702,52 +857,50 @@
       return false;
     }
 
-    function promptNodeIdentifier(defaultValue, originalId) {
-      var attempt = defaultValue || generateId();
-      while (true) {
-        var input = window.prompt("节点唯一 ID", attempt);
-        if (input === null) {
-          return null;
-        }
-        input = input.trim();
-        if (!input) {
-          input = generateId();
-        }
-        if (!isNodeIdTaken(input, originalId)) {
-          return input;
-        }
-        if (services.toast) {
-          services.toast("该节点 ID 已存在，请重新输入");
-        } else {
-          window.alert("该节点 ID 已存在，请重新输入");
-        }
-        attempt = input;
-      }
-    }
-
-    var nodeListEl = document.getElementById("trendNodeList");
+    var explorerContainer = document.getElementById("trendNodeList");
+    var explorerGridEl = document.getElementById("trendExplorerGrid");
+    var explorerEmptyEl = document.getElementById("trendExplorerEmpty");
+    var explorerBreadcrumbEl = document.getElementById("trendExplorerBreadcrumb");
+    var explorerUpBtn = document.getElementById("trendExplorerUp");
+    var explorerAddGroupBtn = document.getElementById("trendExplorerAddGroup");
+    var explorerAddNodeBtn = document.getElementById("trendExplorerAddNode");
+    var explorerMenuEl = document.getElementById("trendExplorerMenu");
+    var explorerMenuContext = null;
     var nodeForm = document.getElementById("trendNodeForm");
     var nodeKeyInput = document.getElementById("trendNodeKey");
     var nodeNameInput = document.getElementById("trendNodeName");
     var nodeNoteInput = document.getElementById("trendNodeNote");
     var nodeParentSelect = document.getElementById("trendNodeParent");
-    var nodeUnitInput = document.getElementById("trendNodeUnit");
-    var nodeManualSelect = document.getElementById("trendNodeManual");
-    var nodeSimulationSelect = document.getElementById("trendNodeSimulation");
-    var nodeLowerInput = document.getElementById("trendNodeLower");
-    var nodeCenterInput = document.getElementById("trendNodeCenter");
-    var nodeUpperInput = document.getElementById("trendNodeUpper");
     var nodePositionSelect = document.getElementById("trendNodePosition");
     var nodeRefField = document.getElementById("trendNodeRefField");
     var nodeRefSelect = document.getElementById("trendNodeRef");
-    var manualStepField = document.getElementById("trendManualStepField");
-    var manualStepInput = document.getElementById("trendManualStep");
-    var manualImpactField = document.getElementById("trendManualImpactField");
-    var manualImpactSelect = document.getElementById("trendManualImpact");
+    var groupBoundsInfoEl = document.getElementById("trendGroupBoundsInfo");
+    var groupAnalyticsEl = document.getElementById("trendGroupAnalytics");
     var addNodeBtn = document.getElementById("trendAddNode");
     var deleteNodeBtn = document.getElementById("trendDeleteNode");
     var addSubNodeBtn = document.getElementById("trendAddSubNode");
     var subNodeListEl = document.getElementById("trendSubNodeList");
+    var nodeModalEl = document.getElementById("trendNodeModal");
+    var nodeModalForm = document.getElementById("trendNodeModalForm");
+    var nodeModalCloseBtn = document.getElementById("trendNodeModalClose");
+    var nodeModalCancelBtn = document.getElementById("trendNodeModalCancel");
+    var nodeModalDetailBtn = document.getElementById("trendNodeModalDetail");
+    var nodeModalEditBtn = document.getElementById("trendNodeModalEdit");
+    var nodeModalSaveBtn = document.getElementById("trendNodeModalSave");
+    var nodeModalKeyInput = document.getElementById("trendNodeModalKey");
+    var nodeModalNameInput = document.getElementById("trendNodeModalName");
+    var nodeModalUnitInput = document.getElementById("trendNodeModalUnit");
+    var nodeModalSimulateSelect = document.getElementById("trendNodeModalSimulate");
+    var nodeModalLowerInput = document.getElementById("trendNodeModalLower");
+    var nodeModalCenterInput = document.getElementById("trendNodeModalCenter");
+    var nodeModalUpperInput = document.getElementById("trendNodeModalUpper");
+    var nodeModalManualSelect = document.getElementById("trendNodeModalManual");
+    var nodeModalManualFields = document.getElementById("trendNodeModalManualFields");
+    var nodeModalStepInput = document.getElementById("trendNodeModalStep");
+    var nodeModalImpactSelect = document.getElementById("trendNodeModalImpact");
+    var nodeModalChart = document.getElementById("trendNodeModalChart");
+    var nodeModalMeta = document.getElementById("trendNodeModalMeta");
+    var nodeModalAnalytics = document.getElementById("trendNodeModalAnalytics");
     var startDemoBtn = document.getElementById("trendStartDemo");
     var stopDemoBtn = document.getElementById("trendStopDemo");
     var manualAdjustBtn = document.getElementById("trendManualAdjust");
@@ -867,6 +1020,7 @@
       } else {
         state.editingSubNodes = [];
       }
+      ensureExplorerPathValid();
       state.pendingParentId = null;
       if (!state.scenarioDraft) {
         state.scenarioDraft = createScenarioDraft(state.snapshot, null);
@@ -883,8 +1037,10 @@
       var node = findNode(nodeId);
       state.editingSubNodes = node ? ensureEditingChildren(clone(node.children) || []) : [];
       state.pendingParentId = null;
+      syncExplorerToNode(nodeId);
       renderForm();
       renderChart();
+      renderNodeList();
     }
 
     function findNode(nodeId) {
@@ -898,6 +1054,43 @@
         }
       }
       return null;
+    }
+
+    function buildAncestorPath(nodeId) {
+      var path = [];
+      var visited = {};
+      var current = nodeId ? findNode(nodeId) : null;
+      while (current && current.parentId) {
+        if (visited[current.parentId]) {
+          break;
+        }
+        visited[current.parentId] = true;
+        path.unshift(current.parentId);
+        current = findNode(current.parentId);
+      }
+      return path;
+    }
+
+    function ensureExplorerPathValid() {
+      if (!Array.isArray(state.explorerPath)) {
+        state.explorerPath = [];
+        return;
+      }
+      var next = [];
+      for (var i = 0; i < state.explorerPath.length; i += 1) {
+        var candidate = state.explorerPath[i];
+        if (candidate && findNode(candidate)) {
+          next.push(candidate);
+        } else {
+          break;
+        }
+      }
+      state.explorerPath = next;
+    }
+
+    function syncExplorerToNode(nodeId) {
+      var ancestors = buildAncestorPath(nodeId);
+      state.explorerPath = ancestors;
     }
 
     function findSubNode(nodeId, subNodeId) {
@@ -983,10 +1176,10 @@
     }
 
     function renderManualImpactOptions(currentNode) {
-      if (!manualImpactSelect || !manualImpactField) {
+      if (!nodeModalImpactSelect || !nodeModalManualFields) {
         return;
       }
-      manualImpactSelect.innerHTML = "";
+      nodeModalImpactSelect.innerHTML = "";
       var nodes = (state.snapshot && state.snapshot.nodes) || [];
       var selected = {};
       if (currentNode && Array.isArray(currentNode.manualTargets)) {
@@ -1016,7 +1209,7 @@
         if (selected[candidate.id]) {
           option.selected = true;
         }
-        manualImpactSelect.appendChild(option);
+        nodeModalImpactSelect.appendChild(option);
         if (Array.isArray(candidate.children)) {
           candidate.children.forEach(function (child) {
             if (!child || !child.id) {
@@ -1030,145 +1223,593 @@
             if (selected[childValue]) {
               childOption.selected = true;
             }
-            manualImpactSelect.appendChild(childOption);
+            nodeModalImpactSelect.appendChild(childOption);
           });
         }
       });
-      manualImpactField.hidden = !(currentNode && currentNode.manual);
-      if (!manualImpactSelect.options.length) {
-        manualImpactSelect.disabled = true;
+      if (!nodeModalImpactSelect.options.length) {
+        nodeModalImpactSelect.disabled = true;
+      }
+      applyNodeModalMode(state.nodeModalState ? state.nodeModalState.mode : "edit");
+    }
+
+
+    function getExplorerContext() {
+      var context = {
+        path: Array.isArray(state.explorerPath) ? state.explorerPath.slice() : [],
+        currentId: null,
+        group: null,
+        groups: [],
+        nodes: []
+      };
+      if (context.path.length) {
+        context.currentId = context.path[context.path.length - 1];
+        context.group = findNode(context.currentId);
+      }
+      var list = (state.snapshot && state.snapshot.nodes) || [];
+      for (var i = 0; i < list.length; i += 1) {
+        var entry = list[i];
+        if (!entry || !entry.id) {
+          continue;
+        }
+        var parentId = entry.parentId || null;
+        if (parentId === (context.currentId || null)) {
+          context.groups.push(entry);
+        }
+      }
+      if (context.group && Array.isArray(context.group.children)) {
+        for (var j = 0; j < context.group.children.length; j += 1) {
+          var child = context.group.children[j];
+          if (!child || !child.id) {
+            continue;
+          }
+          context.nodes.push({
+            id: child.id,
+            name: child.name,
+            unit: child.unit,
+            lower: child.lower,
+            center: child.center,
+            upper: child.upper,
+            manual: child.manual,
+            manualStep: child.manualStep,
+            parentId: context.group.id
+          });
+        }
+      }
+      return context;
+    }
+
+    function formatExplorerBound(value) {
+      if (typeof value !== "number" || !isFinite(value)) {
+        return "";
+      }
+      var fixed = value.toFixed(3);
+      while (fixed.indexOf('.') !== -1 && (fixed.charAt(fixed.length - 1) === '0' || fixed.charAt(fixed.length - 1) === '.')) {
+        fixed = fixed.substring(0, fixed.length - 1);
+      }
+      return fixed;
+    }
+
+    function createExplorerItem(type, record, parentId) {
+      var item = document.createElement("div");
+      var className = "trend-explorer-item" + (type === "group" ? " is-group" : " is-node");
+      if (type === "group" && state.editingNodeId === record.id) {
+        className += " is-active";
+      }
+      item.className = className;
+      item.setAttribute("data-type", type);
+      if (record.id) {
+        item.setAttribute("data-id", record.id);
+      }
+      if (parentId) {
+        item.setAttribute("data-parent", parentId);
+      }
+      var icon = document.createElement("div");
+      icon.className = "trend-explorer-icon";
+      item.appendChild(icon);
+      var name = document.createElement("div");
+      name.className = "trend-explorer-name";
+      name.textContent = record.name || (type === "group" ? "节点组" : "节点");
+      item.appendChild(name);
+      var meta = document.createElement("div");
+      meta.className = "trend-explorer-meta";
+      var parts = [];
+      if (record.id) {
+        parts.push("ID " + record.id);
+      }
+      if (type === "group") {
+        var count = 0;
+        if (Array.isArray(record.children)) {
+          count = record.children.length;
+        } else if (typeof record.nodeCount === "number") {
+          count = record.nodeCount;
+        }
+        parts.push("节点 " + count);
+        var aggregate = summarizeGroupChildren(Array.isArray(record.children) ? record.children : []);
+        if (aggregate.displayUnit) {
+          parts.push("涵盖单位 " + aggregate.displayUnit);
+        }
+        if (aggregate.lower !== null && aggregate.upper !== null) {
+          parts.push("节点区间 " + aggregate.lower.toFixed(3) + " ~ " + aggregate.upper.toFixed(3));
+        } else if (aggregate.center !== null) {
+          parts.push("节点中值约 " + aggregate.center.toFixed(3));
+        }
+        if (record.simulate === false) {
+          parts.push("演示停用");
+        }
       } else {
-        manualImpactSelect.disabled = false;
+        if (record.unit) {
+          parts.push("单位 " + record.unit);
+        }
+        if (typeof record.lower === "number") {
+          parts.push("下限 " + formatExplorerBound(record.lower));
+        }
+        if (typeof record.center === "number") {
+          parts.push("中值 " + formatExplorerBound(record.center));
+        }
+        if (typeof record.upper === "number") {
+          parts.push("上限 " + formatExplorerBound(record.upper));
+        }
+        if (record.manual) {
+          parts.push("手动节点");
+        }
+      }
+      meta.textContent = parts.join(" · ");
+      item.appendChild(meta);
+      if (type === "group" && record.note) {
+        var note = document.createElement("div");
+        note.className = "trend-explorer-note";
+        note.textContent = record.note;
+        item.appendChild(note);
+      }
+      item.addEventListener("click", function () {
+        closeExplorerMenu();
+        if (type === "group") {
+          handleNodeSelection(record.id);
+        } else if (parentId) {
+          handleNodeSelection(parentId);
+          openNodeEditor(parentId, record.id, false);
+        }
+      });
+      item.addEventListener("dblclick", function () {
+        closeExplorerMenu();
+        if (type === "group") {
+          enterExplorerGroup(record.id);
+        } else if (parentId) {
+          openNodeEditor(parentId, record.id, true);
+        }
+      });
+      item.addEventListener("contextmenu", function (evt) {
+        openExplorerMenu(evt, {
+          type: type,
+          id: record.id,
+          parentId: type === "group" ? record.id : parentId
+        });
+      });
+      return item;
+    }
+
+    function renderExplorerBreadcrumb(context) {
+      if (!explorerBreadcrumbEl) {
+        return;
+      }
+      explorerBreadcrumbEl.innerHTML = "";
+      var path = context && context.path ? context.path : [];
+      var rootBtn = document.createElement("button");
+      rootBtn.type = "button";
+      rootBtn.textContent = "顶层节点组";
+      rootBtn.setAttribute("data-depth", "0");
+      explorerBreadcrumbEl.appendChild(rootBtn);
+      for (var i = 0; i < path.length; i += 1) {
+        var group = findNode(path[i]);
+        var crumb = document.createElement("button");
+        crumb.type = "button";
+        crumb.textContent = group && group.name ? group.name : "节点组";
+        crumb.setAttribute("data-depth", String(i + 1));
+        explorerBreadcrumbEl.appendChild(crumb);
       }
     }
 
     function renderNodeList() {
-      if (!nodeListEl) {
+      if (!explorerGridEl) {
         return;
       }
-      nodeListEl.innerHTML = "";
-      var nodes = (state.snapshot && state.snapshot.nodes) || [];
-      if (!nodes.length) {
-        var empty = document.createElement("div");
-        empty.className = "trend-node-empty";
-        empty.textContent = "暂无节点组，请先创建。";
-        nodeListEl.appendChild(empty);
+      ensureExplorerPathValid();
+      closeExplorerMenu();
+      var context = getExplorerContext();
+      renderExplorerBreadcrumb(context);
+      if (explorerAddNodeBtn) {
+        explorerAddNodeBtn.disabled = !context.currentId;
+      }
+      if (explorerUpBtn) {
+        explorerUpBtn.disabled = !context.path.length;
+      }
+      explorerGridEl.innerHTML = "";
+      var hasContent = false;
+      var i;
+      for (i = 0; i < context.groups.length; i += 1) {
+        var groupItem = createExplorerItem("group", context.groups[i], context.currentId);
+        explorerGridEl.appendChild(groupItem);
+        hasContent = true;
+      }
+      for (i = 0; i < context.nodes.length; i += 1) {
+        var nodeItem = createExplorerItem("node", context.nodes[i], context.currentId);
+        explorerGridEl.appendChild(nodeItem);
+        hasContent = true;
+      }
+      if (explorerEmptyEl) {
+        explorerEmptyEl.hidden = hasContent;
+        if (!hasContent) {
+          explorerEmptyEl.textContent = context.currentId ? "该节点组下暂无内容，右键创建子节点组或节点。" : "暂无节点组，请使用右键菜单或按钮创建。";
+        }
+      }
+    }
+
+
+    function resolveExplorerItemElement(element) {
+      var current = element;
+      while (current && current !== explorerContainer) {
+        if (current.classList && current.classList.contains("trend-explorer-item")) {
+          return current;
+        }
+        current = current.parentNode;
+      }
+      return null;
+    }
+
+    function enterExplorerGroup(groupId) {
+      if (!groupId) {
         return;
       }
-      var tree = buildGroupTree(nodes);
-      renderGroupEntries(tree);
-
-      function buildGroupTree(list) {
-        var map = {};
-        var roots = [];
-        for (var i = 0; i < list.length; i += 1) {
-          var group = list[i];
-          if (!group || !group.id) {
-            continue;
-          }
-          map[group.id] = {
-            data: group,
-            id: group.id,
-            parentId: group.parentId || null,
-            groups: [],
-            order: i,
-            depth: 0
-          };
+      ensureExplorerPathValid();
+      var path = Array.isArray(state.explorerPath) ? state.explorerPath.slice() : [];
+      var index = -1;
+      for (var i = 0; i < path.length; i += 1) {
+        if (path[i] === groupId) {
+          index = i;
+          break;
         }
-        for (var key in map) {
-          if (!Object.prototype.hasOwnProperty.call(map, key)) {
-            continue;
-          }
-          var entry = map[key];
-          if (entry.parentId && map[entry.parentId]) {
-            map[entry.parentId].groups.push(entry);
-          } else {
-            roots.push(entry);
-          }
-        }
-        function assignDepth(entry, depth) {
-          entry.depth = depth;
-          entry.groups.sort(function (a, b) {
-            return a.order - b.order;
-          });
-          for (var j = 0; j < entry.groups.length; j += 1) {
-            assignDepth(entry.groups[j], depth + 1);
-          }
-        }
-        roots.sort(function (a, b) {
-          return a.order - b.order;
-        });
-        for (var r = 0; r < roots.length; r += 1) {
-          assignDepth(roots[r], 0);
-        }
-        return roots;
       }
+      if (index !== -1) {
+        state.explorerPath = path.slice(0, index + 1);
+      } else {
+        path.push(groupId);
+        state.explorerPath = path;
+      }
+      renderNodeList();
+    }
 
-      function renderGroupEntries(entries) {
-        for (var i = 0; i < entries.length; i += 1) {
-          var entry = entries[i];
-          if (!entry || !entry.data) {
-            continue;
-          }
-          var node = entry.data;
-          var item = document.createElement("div");
-          item.className = "trend-node-item" + (node.id === state.editingNodeId ? " active" : "");
-          item.setAttribute("role", "treeitem");
-          item.style.paddingLeft = (entry.depth * 20 + 12) + "px";
-          var title = document.createElement("div");
-          title.className = "trend-node-name";
-          title.textContent = node.name + " (" + (node.unit || "") + ")";
-          item.appendChild(title);
-          if (node.note) {
-            var note = document.createElement("div");
-            note.className = "trend-node-note";
-            note.textContent = node.note;
-            item.appendChild(note);
-          }
-          var meta = document.createElement("div");
-          meta.className = "trend-node-meta";
-          var bounds = [];
-          if (typeof node.lower === "number") {
-            bounds.push("下限 " + node.lower);
-          }
-          if (typeof node.center === "number") {
-            bounds.push("中值 " + node.center);
-          }
-          if (typeof node.upper === "number") {
-            bounds.push("上限 " + node.upper);
-          }
-          var childCount = Array.isArray(node.children) ? node.children.length : 0;
-          bounds.push("节点 " + childCount);
-          if (node.manual) {
-            bounds.push("手动节点");
-          }
-          if (node.simulate === false) {
-            bounds.push("演示停用");
-          }
-          if (node.manual && Array.isArray(node.manualTargets) && node.manualTargets.length) {
-            var impactLabels = [];
-            node.manualTargets.forEach(function (target) {
-              var label = resolveManualTargetLabel(target);
-              if (label) {
-                impactLabels.push(label);
-              }
-            });
-            if (impactLabels.length) {
-              bounds.push("影响 " + impactLabels.join("、"));
-            }
-          }
-          meta.textContent = bounds.join(" · ");
-          item.appendChild(meta);
-          item.addEventListener("click", function (groupId) {
+    function exitExplorerGroup() {
+      if (!Array.isArray(state.explorerPath) || !state.explorerPath.length) {
+        return;
+      }
+      state.explorerPath.pop();
+      renderNodeList();
+    }
+
+    function navigateExplorerToDepth(depth) {
+      if (!Array.isArray(state.explorerPath)) {
+        state.explorerPath = [];
+        renderNodeList();
+        return;
+      }
+      var nextDepth = depth;
+      if (typeof nextDepth !== "number") {
+        nextDepth = parseInt(nextDepth, 10);
+      }
+      if (isNaN(nextDepth) || nextDepth < 0) {
+        nextDepth = 0;
+      }
+      if (nextDepth > state.explorerPath.length) {
+        nextDepth = state.explorerPath.length;
+      }
+      state.explorerPath = state.explorerPath.slice(0, nextDepth);
+      renderNodeList();
+    }
+
+    function openExplorerMenu(evt, context) {
+      if (!explorerMenuEl) {
+        return;
+      }
+      if (!context) {
+        return;
+      }
+      evt.preventDefault();
+      closeExplorerMenu();
+      buildExplorerMenu(context);
+      if (!explorerMenuEl.childNodes.length) {
+        return;
+      }
+      explorerMenuContext = context;
+      var rect = explorerContainer ? explorerContainer.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+      var scrollLeft = explorerContainer ? explorerContainer.scrollLeft : 0;
+      var scrollTop = explorerContainer ? explorerContainer.scrollTop : 0;
+      var left = evt.clientX - rect.left + scrollLeft;
+      var top = evt.clientY - rect.top + scrollTop;
+      if (left < 0) {
+        left = 0;
+      }
+      if (top < 0) {
+        top = 0;
+      }
+      explorerMenuEl.style.left = left + "px";
+      explorerMenuEl.style.top = top + "px";
+      explorerMenuEl.hidden = false;
+      var menuRect = explorerMenuEl.getBoundingClientRect();
+      var containerRect = explorerContainer ? explorerContainer.getBoundingClientRect() : rect;
+      var maxLeft = (containerRect.width || rect.width) - menuRect.width - 12;
+      var maxTop = (containerRect.height || rect.height) - menuRect.height - 12;
+      if (maxLeft < 0) {
+        maxLeft = 0;
+      }
+      if (maxTop < 0) {
+        maxTop = 0;
+      }
+      var adjustedLeft = left;
+      var adjustedTop = top;
+      if (adjustedLeft > maxLeft) {
+        adjustedLeft = maxLeft;
+      }
+      if (adjustedTop > maxTop) {
+        adjustedTop = maxTop;
+      }
+      explorerMenuEl.style.left = adjustedLeft + "px";
+      explorerMenuEl.style.top = adjustedTop + "px";
+    }
+
+    function closeExplorerMenu() {
+      if (explorerMenuEl) {
+        explorerMenuEl.hidden = true;
+      }
+      explorerMenuContext = null;
+    }
+
+    function buildExplorerMenu(context) {
+      if (!explorerMenuEl) {
+        return;
+      }
+      explorerMenuEl.innerHTML = "";
+      var actions = [];
+      if (!context) {
+        return;
+      }
+      if (context.type === "group") {
+        actions.push({
+          label: "打开节点组",
+          handler: function (groupId) {
             return function () {
-              handleNodeSelection(groupId);
+              enterExplorerGroup(groupId);
             };
-          }(node.id));
-          nodeListEl.appendChild(item);
-          if (entry.groups && entry.groups.length) {
-            renderGroupEntries(entry.groups);
-          }
+          }(context.id)
+        });
+        actions.push({
+          label: "查看趋势",
+          handler: function (groupId) {
+            return function () {
+              viewGroupTrend(groupId);
+            };
+          }(context.id)
+        });
+        actions.push("divider");
+        actions.push({
+          label: "新建子节点组",
+          handler: function (groupId) {
+            return function () {
+              startCreateGroup(groupId);
+            };
+          }(context.id)
+        });
+        actions.push({
+          label: "新建节点",
+          handler: function (groupId) {
+            return function () {
+              startCreateNode(groupId);
+            };
+          }(context.id)
+        });
+        actions.push("divider");
+        actions.push({
+          label: "重命名",
+          handler: function (groupId) {
+            return function () {
+              editGroup(groupId);
+            };
+          }(context.id)
+        });
+        actions.push({
+          label: "编辑备注",
+          handler: function (groupId) {
+            return function () {
+              editGroupNote(groupId);
+            };
+          }(context.id)
+        });
+      } else if (context.type === "node") {
+        actions.push({
+          label: "查看节点详情",
+          handler: function (groupId, nodeId) {
+            return function () {
+              openNodeEditor(groupId, nodeId, false);
+            };
+          }(context.parentId, context.id)
+        });
+        actions.push({
+          label: "编辑节点",
+          handler: function (groupId, nodeId) {
+            return function () {
+              openNodeEditor(groupId, nodeId, true);
+            };
+          }(context.parentId, context.id)
+        });
+        actions.push({
+          label: "查看所属节点组趋势",
+          handler: function (groupId) {
+            return function () {
+              viewGroupTrend(groupId);
+            };
+          }(context.parentId)
+        });
+      } else {
+        actions.push({
+          label: "新建节点组",
+          handler: function (parentId) {
+            return function () {
+              startCreateGroup(parentId || null);
+            };
+          }(context.parentId || null)
+        });
+        if (context.parentId) {
+          actions.push({
+            label: "新建节点",
+            handler: function (parentId) {
+              return function () {
+                startCreateNode(parentId);
+              };
+            }(context.parentId)
+          });
         }
+      }
+      for (var i = 0; i < actions.length; i += 1) {
+        var action = actions[i];
+        if (action === "divider") {
+          var hr = document.createElement("hr");
+          explorerMenuEl.appendChild(hr);
+          continue;
+        }
+        if (!action || typeof action.handler !== "function") {
+          continue;
+        }
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = action.label;
+        btn.addEventListener("click", (function (handler) {
+          return function () {
+            handler();
+            closeExplorerMenu();
+          };
+        })(action.handler));
+        explorerMenuEl.appendChild(btn);
+      }
+    }
+
+    function startCreateGroup(parentId) {
+      closeExplorerMenu();
+      state.pendingParentId = parentId || "";
+      state.editingNodeId = null;
+      state.pendingNodeKey = generateUniqueGroupId();
+      state.editingSubNodes = [];
+      renderForm();
+      if (nodeNameInput) {
+        window.setTimeout(function () {
+          try {
+            nodeNameInput.focus();
+            nodeNameInput.select();
+          } catch (err) {}
+        }, 0);
+      }
+    }
+
+    function startCreateNode(parentId) {
+      closeExplorerMenu();
+      if (!parentId) {
+        if (services.toast) {
+          services.toast("请先选择节点组");
+        }
+        return;
+      }
+      handleNodeSelection(parentId);
+      addSubNode();
+    }
+
+    function editGroup(groupId) {
+      closeExplorerMenu();
+      if (!groupId) {
+        return;
+      }
+      handleNodeSelection(groupId);
+      if (nodeNameInput) {
+        window.setTimeout(function () {
+          try {
+            nodeNameInput.focus();
+            nodeNameInput.select();
+          } catch (err) {}
+        }, 0);
+      }
+    }
+
+    function editGroupNote(groupId) {
+      closeExplorerMenu();
+      if (!groupId) {
+        return;
+      }
+      handleNodeSelection(groupId);
+      if (nodeNoteInput) {
+        window.setTimeout(function () {
+          try {
+            nodeNoteInput.focus();
+          } catch (err) {}
+        }, 0);
+      }
+    }
+
+    function viewGroupTrend(groupId) {
+      closeExplorerMenu();
+      if (!groupId) {
+        return;
+      }
+      handleNodeSelection(groupId);
+    }
+
+    function openNodeEditor(groupId, nodeId, allowEdit) {
+      if (!groupId || !nodeId) {
+        return;
+      }
+      handleNodeSelection(groupId);
+      if (!state.editingSubNodes || !state.editingSubNodes.length) {
+        return;
+      }
+      var index = -1;
+      for (var i = 0; i < state.editingSubNodes.length; i += 1) {
+        var sub = state.editingSubNodes[i];
+        if (sub && sub.id === nodeId) {
+          index = i;
+          break;
+        }
+      }
+      if (index === -1) {
+        if (services.toast) {
+          services.toast("未找到该节点");
+        }
+        return;
+      }
+      if (allowEdit) {
+        openNodeModal(index, { isNew: false, mode: "edit" });
+      } else {
+        openNodeModal(index, { isNew: false, mode: "view" });
+      }
+    }
+
+    function handleExplorerDocumentClick(evt) {
+      if (!explorerMenuEl || explorerMenuEl.hidden) {
+        return;
+      }
+      var target = evt.target;
+      if (target === explorerMenuEl) {
+        return;
+      }
+      if (explorerMenuEl.contains(target)) {
+        return;
+      }
+      closeExplorerMenu();
+    }
+
+    function handleExplorerKeydown(evt) {
+      if (!explorerMenuEl || explorerMenuEl.hidden) {
+        return;
+      }
+      var key = evt.key || evt.keyCode;
+      if (key === "Escape" || key === "Esc" || key === 27) {
+        closeExplorerMenu();
       }
     }
 
@@ -1201,6 +1842,130 @@
       });
     }
 
+    function summarizeGroupChildren(children) {
+      if (!Array.isArray(children)) {
+        children = [];
+      }
+      var units = [];
+      var firstUnit = "";
+      var lowers = [];
+      var uppers = [];
+      var centers = [];
+      var manualCount = 0;
+      children.forEach(function (child) {
+        if (!child || typeof child !== "object") {
+          return;
+        }
+        if (child.unit && units.indexOf(child.unit) === -1) {
+          units.push(child.unit);
+          if (!firstUnit) {
+            firstUnit = child.unit;
+          }
+        }
+        if (typeof child.lower === "number") {
+          lowers.push(child.lower);
+        }
+        if (typeof child.upper === "number") {
+          uppers.push(child.upper);
+        }
+        if (typeof child.center === "number") {
+          centers.push(child.center);
+        }
+        if (child.manual) {
+          manualCount += 1;
+        }
+      });
+      var displayUnit = "";
+      if (units.length === 1) {
+        displayUnit = units[0];
+      } else if (units.length > 1) {
+        displayUnit = "多种";
+      }
+      var lower = lowers.length ? Math.min.apply(null, lowers) : null;
+      var upper = uppers.length ? Math.max.apply(null, uppers) : null;
+      var center = null;
+      if (centers.length) {
+        var sum = 0;
+        centers.forEach(function (value) {
+          sum += value;
+        });
+        center = sum / centers.length;
+      }
+      return {
+        storedUnit: firstUnit || "",
+        displayUnit: displayUnit,
+        lower: typeof lower === "number" ? parseFloat(lower.toFixed(3)) : null,
+        upper: typeof upper === "number" ? parseFloat(upper.toFixed(3)) : null,
+        center: typeof center === "number" ? parseFloat(center.toFixed(3)) : null,
+        manualCount: manualCount
+      };
+    }
+
+    function renderGroupSummary(group) {
+      var children = state.editingSubNodes || [];
+      var summary = summarizeGroupChildren(children);
+      if (groupBoundsInfoEl) {
+        if (!children.length) {
+          groupBoundsInfoEl.textContent = "暂无节点，请新增监测点";
+        } else {
+          var infoParts = ["节点数 " + children.length];
+          if (summary.displayUnit) {
+            infoParts.push("涵盖单位 " + summary.displayUnit);
+          }
+          if (summary.lower !== null && summary.upper !== null) {
+            infoParts.push("区间 " + summary.lower.toFixed(3) + " ~ " + summary.upper.toFixed(3));
+          } else if (summary.center !== null) {
+            infoParts.push("中值约 " + summary.center.toFixed(3));
+          }
+          if (summary.manualCount) {
+            infoParts.push("手动节点 " + summary.manualCount + " 个");
+          }
+          groupBoundsInfoEl.textContent = infoParts.join(" · ");
+        }
+      }
+      if (groupAnalyticsEl) {
+        groupAnalyticsEl.innerHTML = "";
+        var series = group && group.id ? collectFullSeries(group.id, null) : [];
+        if (!series.length) {
+          var empty = document.createElement("div");
+          empty.className = "trend-group-analytics-empty";
+          empty.textContent = "暂无趋势数据";
+          groupAnalyticsEl.appendChild(empty);
+        } else {
+          var analytics = computeIntervalProfiles(series, state.selectedRange || 180);
+          var table = document.createElement("table");
+          var thead = document.createElement("thead");
+          var headRow = document.createElement("tr");
+          ["时间窗口", "斜率", "持续时间", "评价", "波动"].forEach(function (label) {
+            var th = document.createElement("th");
+            th.textContent = label;
+            headRow.appendChild(th);
+          });
+          thead.appendChild(headRow);
+          table.appendChild(thead);
+          var tbody = document.createElement("tbody");
+          analytics.forEach(function (entry) {
+            var tr = document.createElement("tr");
+            var evalClass = entry.evaluationLevel === "warning" || entry.evaluationLevel === "critical"
+              ? "trend-analytics-warning"
+              : "trend-analytics-eval";
+            var cells = [entry.label, entry.slope, entry.duration, entry.evaluation, entry.fluctuations];
+            for (var i = 0; i < cells.length; i += 1) {
+              var td = document.createElement("td");
+              td.textContent = cells[i];
+              if (i === 3) {
+                td.className = evalClass;
+              }
+              tr.appendChild(td);
+            }
+            tbody.appendChild(tr);
+          });
+          table.appendChild(tbody);
+          groupAnalyticsEl.appendChild(table);
+        }
+      }
+    }
+
     function renderForm() {
       var node = state.editingNodeId ? findNode(state.editingNodeId) : null;
       if (!node) {
@@ -1213,31 +1978,19 @@
         if (nodeNoteInput) {
           nodeNoteInput.value = "";
         }
-        nodeUnitInput.value = "℃";
-        nodeManualSelect.value = "false";
-        if (nodeSimulationSelect) {
-          nodeSimulationSelect.value = "true";
-        }
-        nodeLowerInput.value = "";
-        if (nodeCenterInput) {
-          nodeCenterInput.value = "";
-        }
-        nodeUpperInput.value = "";
-        nodePositionSelect.value = "after";
-        manualStepInput.value = "";
-        manualStepField.hidden = true;
-        nodeRefField.hidden = true;
-        if (manualImpactField) {
-          manualImpactField.hidden = true;
-        }
-        if (manualImpactSelect) {
-          manualImpactSelect.innerHTML = "";
-        }
         if (nodeParentSelect) {
           populateParentOptions(null);
           nodeParentSelect.value = state.pendingParentId || "";
         }
+        if (nodePositionSelect) {
+          nodePositionSelect.value = "after";
+        }
+        if (nodeRefField) {
+          nodeRefField.hidden = true;
+        }
+        state.editingSubNodes = ensureEditingChildren([]);
         renderSubNodes();
+        renderGroupSummary(null);
         return;
       }
       if (nodeKeyInput) {
@@ -1248,40 +2001,35 @@
       if (nodeNoteInput) {
         nodeNoteInput.value = node.note || "";
       }
-      nodeUnitInput.value = node.unit || "";
-      nodeManualSelect.value = node.manual ? "true" : "false";
-      if (nodeSimulationSelect) {
-        nodeSimulationSelect.value = node.simulate === false ? "false" : "true";
-      }
       if (nodeParentSelect) {
         populateParentOptions(node.id);
         nodeParentSelect.value = node.parentId || "";
       }
-      nodeLowerInput.value = typeof node.lower === "number" ? node.lower : "";
-      if (nodeCenterInput) {
-        nodeCenterInput.value = typeof node.center === "number" ? node.center : "";
+      if (nodePositionSelect) {
+        nodePositionSelect.value = node.positionMode || "after";
       }
-      nodeUpperInput.value = typeof node.upper === "number" ? node.upper : "";
-      nodePositionSelect.value = node.positionMode || "after";
-      manualStepInput.value = typeof node.manualStep === "number" ? node.manualStep : "";
-      manualStepField.hidden = !(node.manual || nodeManualSelect.value === "true");
-      var nodes = (state.snapshot && state.snapshot.nodes) || [];
-      nodeRefSelect.innerHTML = "";
-      nodes.forEach(function (candidate) {
-        if (candidate.id === node.id) {
-          return;
+      if (nodeRefSelect) {
+        nodeRefSelect.innerHTML = "";
+        var nodes = (state.snapshot && state.snapshot.nodes) || [];
+        nodes.forEach(function (candidate) {
+          if (!candidate || candidate.id === node.id) {
+            return;
+          }
+          var option = document.createElement("option");
+          option.value = candidate.id;
+          option.textContent = formatGroupPathLabel(candidate.id) || candidate.name;
+          nodeRefSelect.appendChild(option);
+        });
+        if (node.positionRef) {
+          nodeRefSelect.value = node.positionRef;
         }
-        var option = document.createElement("option");
-        option.value = candidate.id;
-        option.textContent = candidate.name;
-        nodeRefSelect.appendChild(option);
-      });
-      if (node.positionRef) {
-        nodeRefSelect.value = node.positionRef;
       }
-      nodeRefField.hidden = nodePositionSelect.value === "after";
-      renderManualImpactOptions(node);
+      if (nodeRefField) {
+        nodeRefField.hidden = !nodePositionSelect || nodePositionSelect.value === "after";
+      }
+      state.editingSubNodes = node ? ensureEditingChildren(clone(node.children) || []) : [];
       renderSubNodes();
+      renderGroupSummary(node);
     }
 
     function renderSubNodes() {
@@ -1302,20 +2050,19 @@
         card.className = "trend-subnode-item";
         var header = document.createElement("div");
         header.className = "trend-subnode-title";
-        header.textContent = item.name + " (" + (item.unit || "") + ")";
+        header.textContent = (item.name || ("节点 " + (index + 1)));
         card.appendChild(header);
         var info = document.createElement("div");
         info.className = "trend-subnode-meta";
         var parts = [];
         parts.push("ID " + (item.id || "--"));
-        if (typeof item.lower === "number") {
-          parts.push("下限 " + item.lower);
+        if (item.unit) {
+          parts.push("单位 " + item.unit);
         }
-        if (typeof item.center === "number") {
+        if (typeof item.lower === "number" && typeof item.upper === "number") {
+          parts.push("范围 " + item.lower + " ~ " + item.upper);
+        } else if (typeof item.center === "number") {
           parts.push("中值 " + item.center);
-        }
-        if (typeof item.upper === "number") {
-          parts.push("上限 " + item.upper);
         }
         if (item.manual) {
           parts.push("手动节点");
@@ -1324,11 +2071,11 @@
         card.appendChild(info);
         var tools = document.createElement("div");
         tools.className = "trend-subnode-tools";
-        var editBtn = document.createElement("button");
-        editBtn.type = "button";
-        editBtn.className = "ghost-button";
-        editBtn.textContent = "编辑";
-        editBtn.addEventListener("click", function () {
+        var viewBtn = document.createElement("button");
+        viewBtn.type = "button";
+        viewBtn.className = "ghost-button";
+        viewBtn.textContent = "查看 / 编辑";
+        viewBtn.addEventListener("click", function () {
           editSubNode(index);
         });
         var removeBtn = document.createElement("button");
@@ -1338,86 +2085,296 @@
         removeBtn.addEventListener("click", function () {
           state.editingSubNodes.splice(index, 1);
           renderSubNodes();
+          renderGroupSummary(findNode(state.editingNodeId));
         });
-        tools.appendChild(editBtn);
+        tools.appendChild(viewBtn);
         tools.appendChild(removeBtn);
         card.appendChild(tools);
         subNodeListEl.appendChild(card);
       });
     }
 
-    function editSubNode(index) {
-      var node = state.editingSubNodes[index];
-      if (!node) {
+    function updateNodeModalModeUI(editable) {
+      var controls = [
+        nodeModalKeyInput,
+        nodeModalNameInput,
+        nodeModalUnitInput,
+        nodeModalSimulateSelect,
+        nodeModalLowerInput,
+        nodeModalCenterInput,
+        nodeModalUpperInput,
+        nodeModalManualSelect,
+        nodeModalStepInput
+      ];
+      for (var i = 0; i < controls.length; i += 1) {
+        if (controls[i]) {
+          controls[i].disabled = !editable;
+        }
+      }
+      if (nodeModalImpactSelect) {
+        var shouldDisableImpact = !editable || !state.nodeModalState || !state.nodeModalState.draft || !state.nodeModalState.draft.manual;
+        nodeModalImpactSelect.disabled = shouldDisableImpact;
+      }
+      if (nodeModalSaveBtn) {
+        if (editable) {
+          nodeModalSaveBtn.classList.remove("hidden");
+        } else {
+          nodeModalSaveBtn.classList.add("hidden");
+        }
+      }
+      if (nodeModalEditBtn) {
+        if (editable) {
+          nodeModalEditBtn.classList.add("hidden");
+        } else {
+          nodeModalEditBtn.classList.remove("hidden");
+        }
+      }
+    }
+
+    function applyNodeModalMode(mode) {
+      if (!state.nodeModalState) {
         return;
       }
-      var baseId = node.id || generateId();
-      var originalId = node.originalId || baseId;
-      var idValue = promptNodeIdentifier(baseId, originalId);
-      if (!idValue) {
+      var nextMode = mode || state.nodeModalState.mode || "edit";
+      state.nodeModalState.mode = nextMode;
+      var editable = nextMode !== "view";
+      updateNodeModalModeUI(editable);
+    }
+
+    function openNodeModal(index, options) {
+      options = options || {};
+      if (!nodeModalEl || !nodeModalForm) {
         return;
       }
-      idValue = idValue.trim();
-      if (!idValue) {
+      var draft;
+      if (options.isNew) {
+        draft = {
+          id: generateUniqueNodeId(),
+          originalId: null,
+          name: "",
+          unit: summarizeGroupChildren(state.editingSubNodes || []).storedUnit || "",
+          lower: null,
+          center: null,
+          upper: null,
+          manual: false,
+          manualStep: null,
+          manualTargets: [],
+          simulate: true
+        };
+      } else {
+        var base = state.editingSubNodes[index];
+        if (!base) {
+          return;
+        }
+        draft = clone(base) || {};
+        draft.originalId = draft.originalId || draft.id;
+      }
+      var mode = options.mode || (options.isNew ? "edit" : "edit");
+      state.nodeModalState = {
+        index: index,
+        isNew: !!options.isNew,
+        draft: draft,
+        mode: mode,
+        groupId: state.editingNodeId || null
+      };
+      populateNodeModal(draft);
+      applyNodeModalMode(mode);
+      nodeModalEl.classList.remove("hidden");
+    }
+
+    function closeNodeModal() {
+      if (!nodeModalEl) {
         return;
       }
-      var name = window.prompt("节点名称", node.name || "");
-      if (!name) {
+      nodeModalEl.classList.add("hidden");
+      state.nodeModalState = null;
+    }
+
+    function populateNodeModal(draft) {
+      if (!draft) {
         return;
       }
-      var unit = window.prompt("节点单位", node.unit || "");
-      var lower = window.prompt("下限 (可空)", typeof node.lower === "number" ? node.lower : "");
-      var center = window.prompt("中值 (可空)", typeof node.center === "number" ? node.center : "");
-      var upper = window.prompt("上限 (可空)", typeof node.upper === "number" ? node.upper : "");
-      var manual = window.confirm("是否为手动调整节点？当前值：" + (node.manual ? "是" : "否"));
-      var step = window.prompt("单次标准调整量", typeof node.manualStep === "number" ? node.manualStep : "");
-      node.id = idValue;
-      node.originalId = originalId;
-      node.name = name;
-      node.unit = unit || node.unit;
-      node.lower = lower === "" ? null : parseFloat(lower);
-      node.center = center === "" ? null : parseFloat(center);
-      node.upper = upper === "" ? null : parseFloat(upper);
-      node.manual = manual;
-      node.manualStep = step === "" ? node.manualStep : parseFloat(step);
+      if (nodeModalKeyInput) {
+        nodeModalKeyInput.value = draft.id || generateUniqueNodeId();
+      }
+      if (nodeModalNameInput) {
+        nodeModalNameInput.value = draft.name || "";
+      }
+      if (nodeModalUnitInput) {
+        nodeModalUnitInput.value = draft.unit || "";
+      }
+      if (nodeModalSimulateSelect) {
+        nodeModalSimulateSelect.value = draft.simulate === false ? "false" : "true";
+      }
+      if (nodeModalLowerInput) {
+        nodeModalLowerInput.value = typeof draft.lower === "number" ? draft.lower : "";
+      }
+      if (nodeModalCenterInput) {
+        nodeModalCenterInput.value = typeof draft.center === "number" ? draft.center : "";
+      }
+      if (nodeModalUpperInput) {
+        nodeModalUpperInput.value = typeof draft.upper === "number" ? draft.upper : "";
+      }
+      if (nodeModalManualSelect) {
+        nodeModalManualSelect.value = draft.manual ? "true" : "false";
+      }
+      if (nodeModalStepInput) {
+        nodeModalStepInput.value = typeof draft.manualStep === "number" ? draft.manualStep : "";
+      }
+      renderManualImpactOptions(draft);
+      if (nodeModalManualFields) {
+        nodeModalManualFields.style.display = draft.manual ? "grid" : "none";
+      }
+      var series = state.editingNodeId ? collectFullSeries(state.editingNodeId, draft.id) : [];
+      drawSeries(nodeModalChart, series, {
+        color: "#2563eb",
+        lower: typeof draft.lower === "number" ? draft.lower : null,
+        upper: typeof draft.upper === "number" ? draft.upper : null,
+        center: typeof draft.center === "number" ? draft.center : null,
+        unit: draft.unit || ""
+      });
+      if (nodeModalMeta) {
+        var metaLines = [];
+        if (series.length) {
+          var latest = series[series.length - 1];
+          metaLines.push(
+            "最新值 " + (typeof latest.value === "number" ? latest.value.toFixed(3) : "--") + (draft.unit ? " " + draft.unit : "")
+          );
+          metaLines.push("更新时间 " + formatDateTime(latest.capturedAt));
+        } else {
+          metaLines.push("暂无实时数据");
+        }
+        metaLines.push("演示模拟：" + (draft.simulate === false ? "停用" : "启用"));
+        if (draft.manual) {
+          metaLines.push("手动节点 · 标准调整 " + (draft.manualStep !== null ? draft.manualStep : 0));
+        }
+        nodeModalMeta.innerHTML = metaLines.join("<br>");
+      }
+      if (nodeModalAnalytics) {
+        nodeModalAnalytics.innerHTML = "";
+        if (!series.length) {
+          var noData = document.createElement("div");
+          noData.className = "trend-group-analytics-empty";
+          noData.textContent = "暂无趋势数据";
+          nodeModalAnalytics.appendChild(noData);
+        } else {
+          var rows = computeIntervalProfiles(series, state.selectedRange || 180);
+          var table = document.createElement("table");
+          var thead = document.createElement("thead");
+          var headRow = document.createElement("tr");
+          ["时间窗口", "斜率", "持续时间", "评价", "波动"].forEach(function (label) {
+            var th = document.createElement("th");
+            th.textContent = label;
+            headRow.appendChild(th);
+          });
+          thead.appendChild(headRow);
+          table.appendChild(thead);
+          var tbody = document.createElement("tbody");
+          rows.forEach(function (entry) {
+            var tr = document.createElement("tr");
+            var evalClass = entry.evaluationLevel === "warning" || entry.evaluationLevel === "critical"
+              ? "trend-analytics-warning"
+              : "trend-analytics-eval";
+            [entry.label, entry.slope, entry.duration, entry.evaluation, entry.fluctuations].forEach(function (value, cellIndex) {
+              var td = document.createElement("td");
+              td.textContent = value;
+              if (cellIndex === 3) {
+                td.className = evalClass;
+              }
+              tr.appendChild(td);
+            });
+            tbody.appendChild(tr);
+          });
+          table.appendChild(tbody);
+          nodeModalAnalytics.appendChild(table);
+        }
+      }
+    }
+
+    function collectNodeModalData() {
+      if (!nodeModalKeyInput) {
+        return null;
+      }
+      var key = nodeModalKeyInput.value ? nodeModalKeyInput.value.trim() : "";
+      if (!key) {
+        key = generateUniqueNodeId();
+      }
+      var draft = state.nodeModalState && state.nodeModalState.draft ? state.nodeModalState.draft : null;
+      var originalId = draft && draft.originalId ? draft.originalId : key;
+      if (isNodeIdTaken(key, originalId)) {
+        if (services.toast) {
+          services.toast("节点 ID 已存在，请重新输入");
+        }
+        return null;
+      }
+      var manual = nodeModalManualSelect && nodeModalManualSelect.value === "true";
+      var lower = nodeModalLowerInput && nodeModalLowerInput.value ? parseFloat(nodeModalLowerInput.value) : null;
+      var center = nodeModalCenterInput && nodeModalCenterInput.value ? parseFloat(nodeModalCenterInput.value) : null;
+      var upper = nodeModalUpperInput && nodeModalUpperInput.value ? parseFloat(nodeModalUpperInput.value) : null;
+      var manualStep = nodeModalStepInput && nodeModalStepInput.value ? parseFloat(nodeModalStepInput.value) : null;
+      if (lower !== null && isNaN(lower)) {
+        lower = null;
+      }
+      if (center !== null && isNaN(center)) {
+        center = null;
+      }
+      if (upper !== null && isNaN(upper)) {
+        upper = null;
+      }
+      if (manualStep !== null && isNaN(manualStep)) {
+        manualStep = null;
+      }
+      var manualTargets = [];
+      if (manual && nodeModalImpactSelect) {
+        for (var i = 0; i < nodeModalImpactSelect.options.length; i += 1) {
+          var opt = nodeModalImpactSelect.options[i];
+          if (!opt || !opt.selected || !opt.value) {
+            continue;
+          }
+          var parts = opt.value.split("::");
+          manualTargets.push({ nodeId: parts[0], subNodeId: parts.length > 1 ? parts[1] : null });
+        }
+      }
+      return {
+        id: key,
+        originalId: originalId,
+        name: nodeModalNameInput && nodeModalNameInput.value ? nodeModalNameInput.value.trim() || "节点" : "节点",
+        unit: nodeModalUnitInput && nodeModalUnitInput.value ? nodeModalUnitInput.value.trim() : "",
+        lower: lower,
+        center: center,
+        upper: upper,
+        manual: manual,
+        manualStep: manual ? (manualStep !== null ? manualStep : 0) : null,
+        manualTargets: manual ? manualTargets : [],
+        simulate: nodeModalSimulateSelect && nodeModalSimulateSelect.value === "false" ? false : true
+      };
+    }
+
+    function saveNodeModal() {
+      var data = collectNodeModalData();
+      if (!data) {
+        return;
+      }
+      if (state.nodeModalState && state.nodeModalState.isNew) {
+        data.originalId = data.originalId || data.id;
+        state.editingSubNodes.push(data);
+      } else if (state.nodeModalState) {
+        state.editingSubNodes[state.nodeModalState.index] = data;
+      }
+      closeNodeModal();
       renderSubNodes();
+      renderGroupSummary(findNode(state.editingNodeId));
     }
 
     function addSubNode() {
-      var newId = promptNodeIdentifier(generateId(), null);
-      if (!newId) {
-        return;
-      }
-      newId = newId.trim();
-      if (!newId) {
-        return;
-      }
-      var name = window.prompt("节点名称", "辅助传感器");
-      if (!name) {
-        return;
-      }
-      var unit = window.prompt("单位", nodeUnitInput.value || "℃");
-      var lower = window.prompt("下限 (可空)", nodeLowerInput.value || "");
-      var center = window.prompt("中值 (可空)", nodeCenterInput && nodeCenterInput.value ? nodeCenterInput.value : "");
-      var upper = window.prompt("上限 (可空)", nodeUpperInput.value || "");
-      var manual = window.confirm("是否为手动调整节点？");
-      var step = window.prompt("单次标准调整量", manualStepInput.value || "");
-      state.editingSubNodes.push({
-        id: newId,
-        originalId: newId,
-        name: name,
-        unit: unit || nodeUnitInput.value || "",
-        lower: lower === "" ? null : parseFloat(lower),
-        center: center === "" ? null : parseFloat(center),
-        upper: upper === "" ? null : parseFloat(upper),
-        manual: manual,
-        manualStep: step === "" ? null : parseFloat(step)
-      });
-      renderSubNodes();
+      openNodeModal(state.editingSubNodes.length, { isNew: true });
+    }
+
+    function editSubNode(index) {
+      openNodeModal(index, { isNew: false });
     }
 
     function serializeNodeForm() {
-      var manual = nodeManualSelect.value === "true";
       var keyValue = nodeKeyInput && nodeKeyInput.value ? nodeKeyInput.value.trim() : "";
       if (!keyValue) {
         keyValue = generateUniqueGroupId();
@@ -1429,42 +2386,20 @@
         id: keyValue,
         name: nodeNameInput.value.trim(),
         note: nodeNoteInput && nodeNoteInput.value ? nodeNoteInput.value.trim() : "",
-        unit: nodeUnitInput.value.trim() || "℃",
-        manual: manual,
-        manualStep: manualStepInput.value ? parseFloat(manualStepInput.value) : null,
-        lower: nodeLowerInput.value ? parseFloat(nodeLowerInput.value) : null,
-        center: nodeCenterInput && nodeCenterInput.value ? parseFloat(nodeCenterInput.value) : null,
-        upper: nodeUpperInput.value ? parseFloat(nodeUpperInput.value) : null,
-        positionMode: nodePositionSelect.value,
-        positionRef: nodeRefSelect.value || null,
+        unit: null,
+        manual: false,
+        manualStep: 0,
+        lower: null,
+        center: null,
+        upper: null,
+        positionMode: nodePositionSelect ? nodePositionSelect.value : "after",
+        positionRef: nodeRefSelect && nodeRefSelect.value ? nodeRefSelect.value : null,
         parentId: nodeParentSelect && nodeParentSelect.value ? nodeParentSelect.value : null,
         children: ensureEditingChildren(clone(state.editingSubNodes) || []),
-        simulate: !nodeSimulationSelect || nodeSimulationSelect.value !== "false"
+        simulate: true
       };
       if (state.editingNodeId && state.editingNodeId !== keyValue) {
         payload.originalId = state.editingNodeId;
-      }
-      if (manual && manualImpactSelect) {
-        var targets = [];
-        for (var i = 0; i < manualImpactSelect.options.length; i += 1) {
-          var option = manualImpactSelect.options[i];
-          if (!option || !option.selected || !option.value) {
-            continue;
-          }
-          var parts = option.value.split("::");
-          var targetNodeId = parts[0];
-          var targetSubId = parts.length > 1 ? parts[1] : null;
-          if (!targetNodeId) {
-            continue;
-          }
-          targets.push({ nodeId: targetNodeId, subNodeId: targetSubId });
-        }
-        payload.manualTargets = targets;
-      } else {
-        payload.manualTargets = [];
-      }
-      if (!payload.manualStep || isNaN(payload.manualStep)) {
-        payload.manualStep = manual ? 1 : 0;
       }
       return payload;
     }
@@ -1603,6 +2538,35 @@
       return series;
     }
 
+    function collectFullSeries(nodeId, subNodeId) {
+      var all = (state.snapshot && state.snapshot.streams) || [];
+      var series = [];
+      if (!nodeId) {
+        return series;
+      }
+      for (var i = 0; i < all.length; i += 1) {
+        var sample = all[i];
+        if (!sample || sample.nodeId !== nodeId) {
+          continue;
+        }
+        if (subNodeId) {
+          if (sample.subNodeId !== subNodeId) {
+            continue;
+          }
+        } else if (sample.subNodeId) {
+          continue;
+        }
+        if (typeof sample.value !== "number" || !sample.capturedAt) {
+          continue;
+        }
+        series.push({ capturedAt: sample.capturedAt, value: sample.value });
+      }
+      series.sort(function (a, b) {
+        return new Date(a.capturedAt) - new Date(b.capturedAt);
+      });
+      return series;
+    }
+
     function resolveNodeBounds(group, node) {
       var lower = null;
       var upper = null;
@@ -1619,14 +2583,27 @@
         }
       }
       if (group) {
-        if (lower === null && typeof group.lower === "number") {
-          lower = group.lower;
+        var aggregate = summarizeGroupChildren(Array.isArray(group.children) ? group.children : []);
+        if (lower === null) {
+          if (aggregate.lower !== null) {
+            lower = aggregate.lower;
+          } else if (typeof group.lower === "number") {
+            lower = group.lower;
+          }
         }
-        if (upper === null && typeof group.upper === "number") {
-          upper = group.upper;
+        if (upper === null) {
+          if (aggregate.upper !== null) {
+            upper = aggregate.upper;
+          } else if (typeof group.upper === "number") {
+            upper = group.upper;
+          }
         }
-        if (center === null && typeof group.center === "number") {
-          center = group.center;
+        if (center === null) {
+          if (aggregate.center !== null) {
+            center = aggregate.center;
+          } else if (typeof group.center === "number") {
+            center = group.center;
+          }
         }
       }
       if (center === null && lower !== null && upper !== null) {
@@ -1704,7 +2681,14 @@
           }
           var valueRow = document.createElement("div");
           valueRow.className = "trend-matrix-value";
-          valueRow.textContent = latest ? formatNumber(latest.value, innerNode ? innerNode.unit || group.unit : group.unit) : "--";
+          var displayUnit = "";
+          if (innerNode) {
+            displayUnit = innerNode.unit || "";
+          } else {
+            var aggregateUnit = summarizeGroupChildren(Array.isArray(group.children) ? group.children : []);
+            displayUnit = aggregateUnit.displayUnit && aggregateUnit.displayUnit !== "多种" ? aggregateUnit.displayUnit : "";
+          }
+          valueRow.textContent = latest ? formatNumber(latest.value, displayUnit) : "--";
           card.appendChild(valueRow);
           var meta = document.createElement("div");
           meta.className = "trend-matrix-meta";
@@ -2747,14 +3731,64 @@
       renderScenarioSaved();
     }
 
-    if (addNodeBtn) {
-      addNodeBtn.addEventListener("click", function () {
-        state.pendingParentId = state.editingNodeId || null;
-        state.editingNodeId = null;
-        state.pendingNodeKey = generateUniqueGroupId();
-        state.editingSubNodes = [];
-        renderForm();
+    if (explorerUpBtn) {
+      explorerUpBtn.addEventListener("click", function () {
+        exitExplorerGroup();
       });
+    }
+
+    if (explorerAddGroupBtn) {
+      explorerAddGroupBtn.addEventListener("click", function () {
+        var parentId = state.explorerPath && state.explorerPath.length ? state.explorerPath[state.explorerPath.length - 1] : null;
+        startCreateGroup(parentId);
+      });
+    }
+
+    if (explorerAddNodeBtn) {
+      explorerAddNodeBtn.addEventListener("click", function () {
+        var parentId = state.explorerPath && state.explorerPath.length ? state.explorerPath[state.explorerPath.length - 1] : null;
+        startCreateNode(parentId);
+      });
+    }
+
+    if (explorerBreadcrumbEl) {
+      explorerBreadcrumbEl.addEventListener("click", function (evt) {
+        var target = evt.target;
+        while (target && target !== explorerBreadcrumbEl) {
+          if (target.tagName && target.tagName.toLowerCase() === "button" && target.hasAttribute("data-depth")) {
+            var depthValue = target.getAttribute("data-depth");
+            var depth = parseInt(depthValue, 10);
+            navigateExplorerToDepth(isNaN(depth) ? 0 : depth);
+            break;
+          }
+          target = target.parentNode;
+        }
+      });
+    }
+
+    if (explorerContainer) {
+      explorerContainer.addEventListener("contextmenu", function (evt) {
+        var item = resolveExplorerItemElement(evt.target);
+        if (item) {
+          return;
+        }
+        openExplorerMenu(evt, {
+          type: "background",
+          parentId: state.explorerPath && state.explorerPath.length ? state.explorerPath[state.explorerPath.length - 1] : null
+        });
+      });
+      explorerContainer.addEventListener("scroll", function () {
+        closeExplorerMenu();
+      });
+    }
+
+    if (typeof document !== "undefined") {
+      document.addEventListener("click", handleExplorerDocumentClick);
+      document.addEventListener("keydown", handleExplorerKeydown);
+    }
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("resize", closeExplorerMenu);
     }
 
     if (nodeKeyInput) {
@@ -2766,20 +3800,86 @@
       });
     }
 
-    if (nodeManualSelect) {
-      nodeManualSelect.addEventListener("change", function () {
-        var isManual = nodeManualSelect.value === "true";
-        manualStepField.hidden = !isManual;
-        if (manualImpactField) {
-          manualImpactField.hidden = !isManual;
+    if (nodeModalManualSelect && nodeModalManualFields) {
+      nodeModalManualSelect.addEventListener("change", function () {
+        if (state.nodeModalState && state.nodeModalState.mode === "view") {
+          nodeModalManualSelect.value = state.nodeModalState.draft && state.nodeModalState.draft.manual ? "true" : "false";
+          return;
         }
-        if (isManual) {
-          renderManualImpactOptions(findNode(state.editingNodeId));
-        } else if (manualImpactSelect) {
-          for (var i = 0; i < manualImpactSelect.options.length; i += 1) {
-            manualImpactSelect.options[i].selected = false;
+        var isManual = nodeModalManualSelect.value === "true";
+        nodeModalManualFields.style.display = isManual ? "grid" : "none";
+        if (state.nodeModalState && state.nodeModalState.draft) {
+          state.nodeModalState.draft.manual = isManual;
+          if (!isManual) {
+            state.nodeModalState.draft.manualTargets = [];
           }
         }
+        if (isManual) {
+          renderManualImpactOptions(state.nodeModalState ? state.nodeModalState.draft : null);
+        }
+        if (!isManual && nodeModalImpactSelect) {
+          for (var i = 0; i < nodeModalImpactSelect.options.length; i += 1) {
+            nodeModalImpactSelect.options[i].selected = false;
+          }
+        }
+        applyNodeModalMode(state.nodeModalState ? state.nodeModalState.mode : "edit");
+      });
+    }
+
+    if (nodeModalForm) {
+      nodeModalForm.addEventListener("submit", function (evt) {
+        evt.preventDefault();
+        saveNodeModal();
+      });
+    }
+
+    if (nodeModalCloseBtn) {
+      nodeModalCloseBtn.addEventListener("click", function () {
+        closeNodeModal();
+      });
+    }
+
+    if (nodeModalCancelBtn) {
+      nodeModalCancelBtn.addEventListener("click", function (evt) {
+        evt.preventDefault();
+        closeNodeModal();
+      });
+    }
+
+    if (nodeModalDetailBtn) {
+      nodeModalDetailBtn.addEventListener("click", function (evt) {
+        evt.preventDefault();
+        if (!state.nodeModalState) {
+          return;
+        }
+        var groupId = state.nodeModalState.groupId || state.editingNodeId;
+        if (!groupId) {
+          return;
+        }
+        var draft = state.nodeModalState.draft;
+        if (!draft || !draft.id) {
+          return;
+        }
+        var url = "ai-trend-history.html?node=" + encodeURIComponent(groupId) + "&sub=" + encodeURIComponent(draft.id);
+        window.open(url, "_blank");
+      });
+    }
+
+    if (nodeModalEditBtn) {
+      nodeModalEditBtn.addEventListener("click", function (evt) {
+        evt.preventDefault();
+        if (!state.nodeModalState) {
+          return;
+        }
+        applyNodeModalMode("edit");
+        window.setTimeout(function () {
+          try {
+            if (nodeModalNameInput) {
+              nodeModalNameInput.focus();
+              nodeModalNameInput.select();
+            }
+          } catch (err) {}
+        }, 0);
       });
     }
 
