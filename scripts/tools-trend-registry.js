@@ -236,7 +236,12 @@
 
     function sync(snapshot) {
       state.snapshot = snapshot || (services.getSnapshot ? services.getSnapshot({}) : null);
-      state.library = deriveLibraryFromSnapshot(state.snapshot);
+      var provided = services.listLibrary ? services.listLibrary() : null;
+      if (Array.isArray(provided) && provided.length) {
+        state.library = provided.map(cloneLibraryRecord).filter(Boolean);
+      } else {
+        state.library = deriveLibraryFromSnapshot(state.snapshot);
+      }
       if (state.selectedId) {
         var exists = state.library.some(function (node) { return node && node.id === state.selectedId; });
         if (!exists) {

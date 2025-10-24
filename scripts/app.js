@@ -3317,6 +3317,12 @@
     }
   }
 
+  function listTrendRegistryRecords() {
+    ensureTrendStore();
+    rebuildTrendNodeLibrary();
+    return cloneTrendNodeLibrary();
+  }
+
   function cloneTrendGroupPaths() {
     ensureTrendStore();
     try {
@@ -3909,6 +3915,7 @@
             ? child.manualStep
             : (typeof currentGroup.manualStep === "number" ? currentGroup.manualStep : 0),
           simulate: child.simulate === false ? false : (currentGroup.simulate === false ? false : true),
+          mesSourceId: child.mesSourceId ? String(child.mesSourceId) : null,
           groupId: currentGroup.id,
           parentGroupId: currentGroup.parentId || null,
           groupPath: groupPath.slice(),
@@ -4194,6 +4201,14 @@
           existing.manualStep = childInput.manualStep;
         } else if (typeof existing.manualStep !== "number") {
           existing.manualStep = base.manualStep;
+        }
+        if (typeof childInput.mesSourceId === "string") {
+          var trimmedSource = childInput.mesSourceId.trim();
+          existing.mesSourceId = trimmedSource ? trimmedSource : null;
+        } else if (childInput.mesSourceId === null || childInput.mesSourceId === "") {
+          existing.mesSourceId = null;
+        } else if (existing.mesSourceId === undefined) {
+          existing.mesSourceId = null;
         }
         delete existing.originalId;
         nextChildren.push(existing);
@@ -13498,7 +13513,8 @@
       window.initTrendRegistryModule({
         getSnapshot: getTrendSnapshot,
         subscribe: subscribeTrend,
-        toast: showToast
+        toast: showToast,
+        listLibrary: listTrendRegistryRecords
       });
     }
   }

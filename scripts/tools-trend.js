@@ -730,6 +730,46 @@
       return draft;
     }
 
+    function listMesEndpoints(includeDisabled) {
+      var settings = state && state.snapshot && state.snapshot.settings ? state.snapshot.settings : null;
+      if (!settings || !Array.isArray(settings.mesEndpoints)) {
+        return [];
+      }
+      return settings.mesEndpoints.filter(function (endpoint) {
+        if (!endpoint || !endpoint.id) {
+          return false;
+        }
+        if (includeDisabled) {
+          return true;
+        }
+        return endpoint.enabled !== false;
+      });
+    }
+
+    function findMesEndpointById(id) {
+      if (!id) {
+        return null;
+      }
+      var endpoints = listMesEndpoints(true);
+      for (var i = 0; i < endpoints.length; i += 1) {
+        if (endpoints[i] && endpoints[i].id === id) {
+          return endpoints[i];
+        }
+      }
+      return null;
+    }
+
+    function describeMesEndpoint(endpoint) {
+      if (!endpoint) {
+        return "";
+      }
+      var label = endpoint.name || endpoint.id || "MES 数据源";
+      if (endpoint.enabled === false) {
+        label += "（停用）";
+      }
+      return label;
+    }
+
     var initialSnapshot = services.getSnapshot ? services.getSnapshot({}) : null;
     var state = {
       services: services,
@@ -777,6 +817,14 @@
         }
         if (!item.originalId) {
           item.originalId = item.id;
+        }
+        if (typeof item.mesSourceId === "string") {
+          item.mesSourceId = item.mesSourceId.trim();
+          if (!item.mesSourceId) {
+            item.mesSourceId = null;
+          }
+        } else if (item.mesSourceId === undefined) {
+          item.mesSourceId = null;
         }
       }
       return list;
@@ -901,6 +949,7 @@
     var nodeModalLowerInput = document.getElementById("trendNodeModalLower");
     var nodeModalCenterInput = document.getElementById("trendNodeModalCenter");
     var nodeModalUpperInput = document.getElementById("trendNodeModalUpper");
+    var nodeModalMesSelect = document.getElementById("trendNodeModalMes");
     var nodeModalManualSelect = document.getElementById("trendNodeModalManual");
     var nodeModalManualFields = document.getElementById("trendNodeModalManualFields");
     var nodeModalStepInput = document.getElementById("trendNodeModalStep");
@@ -1064,6 +1113,7 @@
         manual: !!record.manual,
         manualStep: typeof record.manualStep === "number" ? record.manualStep : 0,
         simulate: record.simulate === false ? false : true,
+        mesSourceId: record.mesSourceId ? String(record.mesSourceId) : null,
         note: record.note || "",
         groupId: record.groupId || null,
         parentGroupId: record.parentGroupId || null,
@@ -1440,6 +1490,7 @@
             upper: child.upper,
             manual: child.manual,
             manualStep: child.manualStep,
+            mesSourceId: child.mesSourceId || null,
             parentId: context.group.id
           });
         }
@@ -1555,6 +1606,14 @@
         }
         if (record.manual) {
           parts.push("手动节点");
+        }
+        if (record.mesSourceId) {
+          var endpoint = findMesEndpointById(record.mesSourceId);
+          if (endpoint) {
+            parts.push("MES " + describeMesEndpoint(endpoint));
+          } else {
+            parts.push("MES " + record.mesSourceId);
+          }
         }
       }
       meta.textContent = parts.join(" · ");
@@ -2830,6 +2889,14 @@
         if (item.manual) {
           parts.push("手动节点");
         }
+        if (item.mesSourceId) {
+          var mesEndpoint = findMesEndpointById(item.mesSourceId);
+          if (mesEndpoint) {
+            parts.push("MES " + describeMesEndpoint(mesEndpoint));
+          } else {
+            parts.push("MES " + item.mesSourceId);
+          }
+        }
         info.textContent = parts.join(" · ");
         card.appendChild(info);
         var tools = document.createElement("div");
@@ -2866,6 +2933,7 @@
         nodeModalLowerInput,
         nodeModalCenterInput,
         nodeModalUpperInput,
+        nodeModalMesSelect,
         nodeModalManualSelect,
         nodeModalStepInput
       ];
@@ -2922,6 +2990,7 @@
           manual: false,
           manualStep: null,
           manualTargets: [],
+          mesSourceId: null,
           simulate: true
         };
       } else {
@@ -2984,6 +3053,11 @@
       if (nodeModalStepInput) {
         nodeModalStepInput.value = typeof draft.manualStep === "number" ? draft.manualStep : "";
       }
+      var selectedMesId = draft.mesSourceId ? String(draft.mesSourceId) : "";
+      populateNodeMesOptions(selectedMesId);
+      if (nodeModalMesSelect) {
+        nodeModalMesSelect.value = selectedMesId;
+      }
       renderManualImpactOptions(draft);
       if (nodeModalManualFields) {
         nodeModalManualFields.style.display = draft.manual ? "grid" : "none";
@@ -3010,6 +3084,12 @@
         metaLines.push("演示模拟：" + (draft.simulate === false ? "停用" : "启用"));
         if (draft.manual) {
           metaLines.push("手动节点 · 标准调整 " + (draft.manualStep !== null ? draft.manualStep : 0));
+        }
+        if (selectedMesId) {
+          var mesDescriptor = findMesEndpointById(selectedMesId);
+          metaLines.push("MES 数据源：" + (mesDescriptor ? describeMesEndpoint(mesDescriptor) : selectedMesId));
+        } else {
+          metaLines.push("MES 数据源：未绑定");
         }
         nodeModalMeta.innerHTML = metaLines.join("<br>");
       }
@@ -3098,6 +3178,10 @@
           manualTargets.push({ nodeId: parts[0], subNodeId: parts.length > 1 ? parts[1] : null });
         }
       }
+      var mesSourceId = nodeModalMesSelect && nodeModalMesSelect.value ? nodeModalMesSelect.value.trim() : "";
+      if (!mesSourceId) {
+        mesSourceId = null;
+      }
       return {
         id: key,
         originalId: originalId,
@@ -3109,6 +3193,7 @@
         manual: manual,
         manualStep: manual ? (manualStep !== null ? manualStep : 0) : null,
         manualTargets: manual ? manualTargets : [],
+        mesSourceId: mesSourceId,
         simulate: nodeModalSimulateSelect && nodeModalSimulateSelect.value === "false" ? false : true
       };
     }
@@ -4638,6 +4723,13 @@
       renderScenarioForm();
       renderScenarioResult();
       renderScenarioSaved();
+      if (state.nodeModalState && state.nodeModalState.draft) {
+        var mesId = state.nodeModalState.draft.mesSourceId ? String(state.nodeModalState.draft.mesSourceId) : "";
+        populateNodeMesOptions(mesId);
+        if (nodeModalMesSelect) {
+          nodeModalMesSelect.value = mesId;
+        }
+      }
     }
 
     if (explorerUpBtn) {
@@ -4680,9 +4772,73 @@
       });
     }
 
+    function populateNodeMesOptions(selectedId) {
+      if (!nodeModalMesSelect) {
+        return;
+      }
+      nodeModalMesSelect.innerHTML = "";
+      var placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "未绑定";
+      nodeModalMesSelect.appendChild(placeholder);
+      var endpoints = listMesEndpoints(true);
+      var found = false;
+      for (var i = 0; i < endpoints.length; i += 1) {
+        var endpoint = endpoints[i];
+        if (!endpoint || !endpoint.id) {
+          continue;
+        }
+        var option = document.createElement("option");
+        option.value = endpoint.id;
+        option.textContent = describeMesEndpoint(endpoint);
+        if (endpoint.id === selectedId) {
+          option.selected = true;
+          found = true;
+        }
+        nodeModalMesSelect.appendChild(option);
+      }
+      if (selectedId && !found) {
+        var fallback = document.createElement("option");
+        fallback.value = selectedId;
+        fallback.textContent = selectedId + "（未注册）";
+        fallback.selected = true;
+        nodeModalMesSelect.appendChild(fallback);
+      }
+    }
+
     if (outputEditBtn) {
       outputEditBtn.addEventListener("click", function () {
         openTargetModal();
+      });
+    }
+
+    if (outputCard) {
+      outputCard.addEventListener("contextmenu", function (evt) {
+        evt.preventDefault();
+        openTargetModal({ mode: "view" });
+      });
+    }
+
+    if (nodeModalMesSelect) {
+      nodeModalMesSelect.addEventListener("change", function () {
+        if (!state.nodeModalState || !state.nodeModalState.draft) {
+          return;
+        }
+        var rawValue = nodeModalMesSelect.value ? nodeModalMesSelect.value.trim() : "";
+        state.nodeModalState.draft.mesSourceId = rawValue ? rawValue : null;
+        if (nodeModalMeta) {
+          var descriptor = rawValue ? findMesEndpointById(rawValue) : null;
+          var message = rawValue
+            ? "MES 数据源：" + (descriptor ? describeMesEndpoint(descriptor) : rawValue)
+            : "MES 数据源：未绑定";
+          var html = nodeModalMeta.innerHTML ? nodeModalMeta.innerHTML.split("<br>") : [];
+          if (html.length) {
+            html[html.length - 1] = message;
+          } else {
+            html.push(message);
+          }
+          nodeModalMeta.innerHTML = html.join("<br>");
+        }
       });
     }
 
