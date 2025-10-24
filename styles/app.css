@@ -304,6 +304,11 @@ textarea:focus {
   box-shadow: none;
   transform: none;
 }
+
+.input-readonly {
+  background-color: rgba(226, 232, 240, 0.45) !important;
+  cursor: default;
+}
 .context-menu {
   position: fixed;
   z-index: 1200;
@@ -6141,7 +6146,7 @@ textarea:focus {
 }
 
 .trend-explorer-menu {
-  position: absolute;
+  position: fixed;
   min-width: 200px;
   background: #ffffff;
   border: 1px solid rgba(15, 23, 42, 0.1);

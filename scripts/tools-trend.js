@@ -1447,7 +1447,7 @@
         if (type === "group") {
           handleNodeSelection(record.id);
         } else if (type === "output") {
-          openTargetModal();
+          openTargetModal({ mode: "view" });
         } else if (parentId) {
           handleNodeSelection(parentId);
           openNodeEditor(parentId, record.id, false);
@@ -1458,7 +1458,7 @@
         if (type === "group") {
           enterExplorerGroup(record.id);
         } else if (type === "output") {
-          openTargetModal();
+          openTargetModal({ mode: "edit" });
         } else if (parentId) {
           openNodeEditor(parentId, record.id, true);
         }
@@ -1629,11 +1629,10 @@
         return;
       }
       explorerMenuContext = context;
-      var rect = explorerContainer ? explorerContainer.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
-      var scrollLeft = explorerContainer ? explorerContainer.scrollLeft : 0;
-      var scrollTop = explorerContainer ? explorerContainer.scrollTop : 0;
-      var left = evt.clientX - rect.left + scrollLeft;
-      var top = evt.clientY - rect.top + scrollTop;
+      var left = evt.clientX;
+      var top = evt.clientY;
+      var viewportWidth = window.innerWidth || document.documentElement.clientWidth || explorerMenuEl.offsetWidth;
+      var viewportHeight = window.innerHeight || document.documentElement.clientHeight || explorerMenuEl.offsetHeight;
       if (left < 0) {
         left = 0;
       }
@@ -1644,22 +1643,13 @@
       explorerMenuEl.style.top = top + "px";
       explorerMenuEl.hidden = false;
       var menuRect = explorerMenuEl.getBoundingClientRect();
-      var containerRect = explorerContainer ? explorerContainer.getBoundingClientRect() : rect;
-      var maxLeft = (containerRect.width || rect.width) - menuRect.width - 12;
-      var maxTop = (containerRect.height || rect.height) - menuRect.height - 12;
-      if (maxLeft < 0) {
-        maxLeft = 0;
-      }
-      if (maxTop < 0) {
-        maxTop = 0;
-      }
       var adjustedLeft = left;
       var adjustedTop = top;
-      if (adjustedLeft > maxLeft) {
-        adjustedLeft = maxLeft;
+      if (adjustedLeft + menuRect.width > viewportWidth) {
+        adjustedLeft = Math.max(0, viewportWidth - menuRect.width - 12);
       }
-      if (adjustedTop > maxTop) {
-        adjustedTop = maxTop;
+      if (adjustedTop + menuRect.height > viewportHeight) {
+        adjustedTop = Math.max(0, viewportHeight - menuRect.height - 12);
       }
       explorerMenuEl.style.left = adjustedLeft + "px";
       explorerMenuEl.style.top = adjustedTop + "px";
@@ -1737,6 +1727,26 @@
             };
           }(context.id)
         });
+        actions.push({
+          label: "上移节点组",
+          handler: function (groupId) {
+            return function () {
+              if (services.reorderGroup) {
+                services.reorderGroup(groupId, "up");
+              }
+            };
+          }(context.id)
+        });
+        actions.push({
+          label: "下移节点组",
+          handler: function (groupId) {
+            return function () {
+              if (services.reorderGroup) {
+                services.reorderGroup(groupId, "down");
+              }
+            };
+          }(context.id)
+        });
         actions.push("divider");
         actions.push({
           label: "新建子节点组",
@@ -1768,6 +1778,14 @@
           handler: function (groupId) {
             return function () {
               openGroupModal(groupId, null);
+            };
+          }(context.id)
+        });
+        actions.push({
+          label: "删除节点组",
+          handler: function (groupId) {
+            return function () {
+              deleteGroup(groupId);
             };
           }(context.id)
         });
@@ -1804,9 +1822,15 @@
         });
       } else if (context.type === "output") {
         actions.push({
+          label: "查看引出量详情",
+          handler: function () {
+            openTargetModal({ mode: "view" });
+          }
+        });
+        actions.push({
           label: "编辑引出量目标",
           handler: function () {
-            openTargetModal();
+            openTargetModal({ mode: "edit" });
           }
         });
         actions.push({
@@ -1972,6 +1996,32 @@
       render();
     }
 
+    function deleteGroup(groupId) {
+      closeExplorerMenu();
+      if (!groupId) {
+        return;
+      }
+      var target = findNode(groupId);
+      if (!target) {
+        if (services.toast) {
+          services.toast("未找到节点组");
+        }
+        return;
+      }
+      var message = "确认删除节点组“" + (target.name || groupId) + "”及其所有子节点？";
+      if (typeof window.confirm === "function" && !window.confirm(message)) {
+        return;
+      }
+      if (services.removeNode) {
+        services.removeNode(groupId);
+      }
+      if (state.editingNodeId === groupId) {
+        state.editingNodeId = null;
+        state.editingSubNodes = [];
+      }
+      render();
+    }
+
     function populateGroupModalParentOptions(currentId) {
       if (!groupModalParentSelect) {
         return;
@@ -2100,10 +2150,40 @@
       }
     }
 
-    function openTargetModal() {
+    var targetModalMode = "edit";
+    var targetModalSubmitBtn = targetModalForm ? targetModalForm.querySelector('button[type="submit"]') : null;
+
+    function applyTargetModalMode() {
+      if (!targetModalForm) {
+        return;
+      }
+      var viewMode = targetModalMode === "view";
+      var inputs = [targetModalLowerInput, targetModalCenterInput, targetModalUpperInput];
+      for (var i = 0; i < inputs.length; i += 1) {
+        if (!inputs[i]) {
+          continue;
+        }
+        inputs[i].readOnly = viewMode;
+        inputs[i].disabled = viewMode;
+        if (viewMode) {
+          inputs[i].classList.add("input-readonly");
+        } else {
+          inputs[i].classList.remove("input-readonly");
+        }
+      }
+      if (targetModalSubmitBtn) {
+        targetModalSubmitBtn.classList.toggle("hidden", viewMode);
+      }
+      if (targetModalCancelBtn) {
+        targetModalCancelBtn.textContent = viewMode ? "关闭" : "取消";
+      }
+    }
+
+    function openTargetModal(options) {
       if (!targetModalEl || !targetModalForm) {
         return;
       }
+      targetModalMode = options && options.mode === "view" ? "view" : "edit";
       var target = state.snapshot && state.snapshot.settings ? state.snapshot.settings.outputTarget || {} : {};
       if (targetModalLowerInput) {
         targetModalLowerInput.value = typeof target.lower === "number" ? target.lower : "";
@@ -2114,10 +2194,11 @@
       if (targetModalUpperInput) {
         targetModalUpperInput.value = typeof target.upper === "number" ? target.upper : "";
       }
+      applyTargetModalMode();
       targetModalEl.classList.remove("hidden");
       window.setTimeout(function () {
         try {
-          if (targetModalCenterInput) {
+          if (targetModalCenterInput && targetModalMode !== "view") {
             targetModalCenterInput.focus();
             targetModalCenterInput.select();
           }
@@ -2135,6 +2216,10 @@
     function submitTargetModal(evt) {
       if (evt) {
         evt.preventDefault();
+      }
+      if (targetModalMode === "view") {
+        closeTargetModal();
+        return;
       }
       var centerValue = targetModalCenterInput && targetModalCenterInput.value ? parseFloat(targetModalCenterInput.value) : null;
       if (centerValue === null || isNaN(centerValue)) {
@@ -2294,6 +2379,7 @@
       if (!groupId) {
         return;
       }
+      openConsolePanel();
       handleNodeSelection(groupId);
     }
 

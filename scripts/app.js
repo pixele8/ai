@@ -4109,6 +4109,81 @@
     emitTrendChange();
   }
 
+  function reorderTrendGroup(nodeId, direction) {
+    ensureTrendStore();
+    if (!nodeId || (direction !== "up" && direction !== "down")) {
+      return;
+    }
+    var nodes = state.tools.trend.nodes || [];
+    var index = -1;
+    for (var i = 0; i < nodes.length; i += 1) {
+      if (nodes[i] && nodes[i].id === nodeId) {
+        index = i;
+        break;
+      }
+    }
+    if (index === -1) {
+      return;
+    }
+    var parentId = nodes[index] && nodes[index].parentId ? nodes[index].parentId : null;
+    var step = direction === "up" ? -1 : 1;
+    var swapIndex = index + step;
+    while (swapIndex >= 0 && swapIndex < nodes.length) {
+      var candidate = nodes[swapIndex];
+      if (candidate && (candidate.parentId || null) === parentId) {
+        break;
+      }
+      swapIndex += step;
+    }
+    if (swapIndex < 0 || swapIndex >= nodes.length) {
+      return;
+    }
+    var temp = nodes[index];
+    nodes[index] = nodes[swapIndex];
+    nodes[swapIndex] = temp;
+    saveState();
+    rebuildTrendNodeLibrary();
+    emitTrendChange();
+  }
+
+  function reorderTrendSubNode(groupId, subNodeId, direction) {
+    ensureTrendStore();
+    if (!groupId || !subNodeId || (direction !== "up" && direction !== "down")) {
+      return;
+    }
+    var group = findTrendNodeById(groupId);
+    if (!group || !Array.isArray(group.children)) {
+      return;
+    }
+    var index = -1;
+    for (var i = 0; i < group.children.length; i += 1) {
+      if (group.children[i] && group.children[i].id === subNodeId) {
+        index = i;
+        break;
+      }
+    }
+    if (index === -1) {
+      return;
+    }
+    var step = direction === "up" ? -1 : 1;
+    var swapIndex = index + step;
+    while (swapIndex >= 0 && swapIndex < group.children.length) {
+      if (group.children[swapIndex]) {
+        break;
+      }
+      swapIndex += step;
+    }
+    if (swapIndex < 0 || swapIndex >= group.children.length) {
+      return;
+    }
+    var childTemp = group.children[index];
+    group.children[index] = group.children[swapIndex];
+    group.children[swapIndex] = childTemp;
+    saveState();
+    rebuildTrendNodeLibrary();
+    emitTrendChange();
+  }
+
   function updateTrendSettings(patch) {
     ensureTrendStore();
     if (!patch || typeof patch !== "object") {
@@ -13169,6 +13244,8 @@
         subscribe: subscribeTrend,
         upsertNode: upsertTrendNode,
         removeNode: removeTrendNode,
+        reorderGroup: reorderTrendGroup,
+        reorderChild: reorderTrendSubNode,
         updateSettings: updateTrendSettings,
         recordSamples: recordTrendSamples,
         recordManual: recordTrendManualAdjustment,
