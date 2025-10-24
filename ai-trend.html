@@ -36,17 +36,21 @@
     </header>
     <section class="panel trend-panel">
       <div class="trend-grid">
-        <aside class="trend-config" aria-label="节点配置">
+        <aside class="trend-config" aria-label="节点组配置">
           <div class="trend-config-header">
-            <h2>节点拓扑</h2>
-            <button type="button" class="ghost-button" id="trendAddNode">新增节点</button>
+            <h2>节点组拓扑</h2>
+            <button type="button" class="ghost-button" id="trendAddNode">新增节点组</button>
           </div>
           <div class="trend-config-body" id="trendNodeList" role="tree"></div>
           <form id="trendNodeForm" class="trend-form" autocomplete="off">
-            <h3 id="trendFormTitle">节点详情</h3>
+            <h3 id="trendFormTitle">节点组详情</h3>
             <div class="form-field">
               <label for="trendNodeName">名称</label>
               <input id="trendNodeName" name="name" type="text" placeholder="如：降温段温度" required>
+            </div>
+            <div class="form-field">
+              <label for="trendNodeNote">备注</label>
+              <textarea id="trendNodeNote" name="note" rows="2" placeholder="记录该节点组的说明或所含节点"></textarea>
             </div>
             <div class="form-row">
               <div class="form-field">
@@ -98,14 +102,14 @@
             </div>
             <div class="trend-subnodes">
               <div class="trend-subnodes-header">
-                <h4>子节点</h4>
-                <button type="button" class="ghost-button" id="trendAddSubNode">新增子节点</button>
+                <h4>节点列表</h4>
+                <button type="button" class="ghost-button" id="trendAddSubNode">新增节点</button>
               </div>
               <div id="trendSubNodeList" role="list"></div>
             </div>
             <div class="form-actions">
-              <button type="submit" class="primary-button">保存节点</button>
-              <button type="button" class="ghost-button danger" id="trendDeleteNode">删除节点</button>
+              <button type="submit" class="primary-button">保存节点组</button>
+              <button type="button" class="ghost-button danger" id="trendDeleteNode">删除节点组</button>
             </div>
           </form>
           <div class="trend-config-footer">
@@ -138,6 +142,13 @@
               <button type="button" class="ghost-button" data-range="720">近 12 小时</button>
               <button type="button" class="ghost-button" id="trendExportCsv">导出数据</button>
             </div>
+          </div>
+          <div class="trend-matrix" id="trendMatrix">
+            <div class="trend-matrix-header">
+              <h2>节点实时矩阵</h2>
+              <p class="trend-matrix-hint">聚合展示所有节点的最新读数、状态与微型曲线，便于全局监控。</p>
+            </div>
+            <div class="trend-matrix-grid" id="trendMatrixGrid" role="list"></div>
           </div>
           <div class="trend-forecast" id="trendForecast">
             <div class="trend-forecast-header">

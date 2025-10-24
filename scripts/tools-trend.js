@@ -130,6 +130,7 @@
     var nodeListEl = document.getElementById("trendNodeList");
     var nodeForm = document.getElementById("trendNodeForm");
     var nodeNameInput = document.getElementById("trendNodeName");
+    var nodeNoteInput = document.getElementById("trendNodeNote");
     var nodeUnitInput = document.getElementById("trendNodeUnit");
     var nodeManualSelect = document.getElementById("trendNodeManual");
     var nodeLowerInput = document.getElementById("trendNodeLower");
@@ -155,6 +156,7 @@
     var targetRangeEl = document.getElementById("trendTargetRange");
     var chartCanvas = document.getElementById("trendChart");
     var chartToolbar = document.querySelector(".trend-chart-toolbar");
+    var matrixGridEl = document.getElementById("trendMatrixGrid");
     var forecastListEl = document.getElementById("trendForecastList");
     var forecastRefreshBtn = document.getElementById("trendRefreshForecast");
     var adviceListEl = document.getElementById("trendAdviceList");
@@ -308,6 +310,12 @@
         title.className = "trend-node-name";
         title.textContent = node.name + " (" + node.unit + ")";
         item.appendChild(title);
+        if (node.note) {
+          var note = document.createElement("div");
+          note.className = "trend-node-note";
+          note.textContent = node.note;
+          item.appendChild(note);
+        }
         var meta = document.createElement("div");
         meta.className = "trend-node-meta";
         var bounds = [];
@@ -345,7 +353,7 @@
       if (!nodes.length) {
         var empty = document.createElement("div");
         empty.className = "trend-node-empty";
-        empty.textContent = "暂无节点，请先创建。";
+        empty.textContent = "暂无节点组，请先创建。";
         nodeListEl.appendChild(empty);
       }
     }
@@ -354,6 +362,9 @@
       var node = state.editingNodeId ? findNode(state.editingNodeId) : null;
       if (!node) {
         nodeNameInput.value = "";
+        if (nodeNoteInput) {
+          nodeNoteInput.value = "";
+        }
         nodeUnitInput.value = "℃";
         nodeManualSelect.value = "false";
         nodeLowerInput.value = "";
@@ -375,6 +386,9 @@
         return;
       }
       nodeNameInput.value = node.name || "";
+      if (nodeNoteInput) {
+        nodeNoteInput.value = node.note || "";
+      }
       nodeUnitInput.value = node.unit || "";
       nodeManualSelect.value = node.manual ? "true" : "false";
       nodeLowerInput.value = typeof node.lower === "number" ? node.lower : "";
@@ -413,7 +427,7 @@
       if (!nodes.length) {
         var empty = document.createElement("div");
         empty.className = "trend-subnode-empty";
-        empty.textContent = "暂无子节点";
+        empty.textContent = "暂无节点";
         subNodeListEl.appendChild(empty);
         return;
       }
@@ -470,15 +484,15 @@
       if (!node) {
         return;
       }
-      var name = window.prompt("子节点名称", node.name || "");
+      var name = window.prompt("节点名称", node.name || "");
       if (!name) {
         return;
       }
-      var unit = window.prompt("子节点单位", node.unit || "");
+      var unit = window.prompt("节点单位", node.unit || "");
       var lower = window.prompt("下限 (可空)", typeof node.lower === "number" ? node.lower : "");
       var center = window.prompt("中值 (可空)", typeof node.center === "number" ? node.center : "");
       var upper = window.prompt("上限 (可空)", typeof node.upper === "number" ? node.upper : "");
-      var manual = window.confirm("是否手动调整节点？当前值：" + (node.manual ? "是" : "否"));
+      var manual = window.confirm("是否为手动调整节点？当前值：" + (node.manual ? "是" : "否"));
       var step = window.prompt("单次标准调整量", typeof node.manualStep === "number" ? node.manualStep : "");
       node.name = name;
       node.unit = unit || node.unit;
@@ -491,7 +505,7 @@
     }
 
     function addSubNode() {
-      var name = window.prompt("子节点名称", "辅助传感器");
+      var name = window.prompt("节点名称", "辅助传感器");
       if (!name) {
         return;
       }
@@ -499,7 +513,7 @@
       var lower = window.prompt("下限 (可空)", nodeLowerInput.value || "");
       var center = window.prompt("中值 (可空)", nodeCenterInput && nodeCenterInput.value ? nodeCenterInput.value : "");
       var upper = window.prompt("上限 (可空)", nodeUpperInput.value || "");
-      var manual = window.confirm("是否为手动调整子节点？");
+      var manual = window.confirm("是否为手动调整节点？");
       var step = window.prompt("单次标准调整量", manualStepInput.value || "");
       state.editingSubNodes.push({
         id: generateId(),
@@ -519,6 +533,7 @@
       var payload = {
         id: state.editingNodeId,
         name: nodeNameInput.value.trim(),
+        note: nodeNoteInput && nodeNoteInput.value ? nodeNoteInput.value.trim() : "",
         unit: nodeUnitInput.value.trim() || "℃",
         manual: manual,
         manualStep: manualStepInput.value ? parseFloat(manualStepInput.value) : null,
@@ -644,6 +659,154 @@
         return new Date(a.capturedAt) - new Date(b.capturedAt);
       });
       drawSeries(chartCanvas, series, { color: "#2563eb" });
+    }
+
+    function collectNodeSeries(nodeId, subNodeId) {
+      var all = (state.snapshot && state.snapshot.streams) || [];
+      var series = [];
+      if (!nodeId) {
+        return series;
+      }
+      var rangeMinutes = state.selectedRange || 180;
+      var cutoff = Date.now() - rangeMinutes * 60000;
+      for (var i = 0; i < all.length; i += 1) {
+        var sample = all[i];
+        if (!sample || sample.nodeId !== nodeId) {
+          continue;
+        }
+        if (sample.subNodeId && sample.subNodeId !== subNodeId) {
+          continue;
+        }
+        if (!sample.subNodeId && subNodeId) {
+          continue;
+        }
+        var ts = new Date(sample.capturedAt).getTime();
+        if (ts < cutoff) {
+          continue;
+        }
+        series.push({ capturedAt: sample.capturedAt, value: sample.value });
+      }
+      series.sort(function (a, b) {
+        return new Date(a.capturedAt) - new Date(b.capturedAt);
+      });
+      return series;
+    }
+
+    function resolveNodeBounds(group, node) {
+      var lower = null;
+      var upper = null;
+      var center = null;
+      if (node) {
+        if (typeof node.lower === "number") {
+          lower = node.lower;
+        }
+        if (typeof node.upper === "number") {
+          upper = node.upper;
+        }
+        if (typeof node.center === "number") {
+          center = node.center;
+        }
+      }
+      if (group) {
+        if (lower === null && typeof group.lower === "number") {
+          lower = group.lower;
+        }
+        if (upper === null && typeof group.upper === "number") {
+          upper = group.upper;
+        }
+        if (center === null && typeof group.center === "number") {
+          center = group.center;
+        }
+      }
+      if (center === null && lower !== null && upper !== null) {
+        center = (lower + upper) / 2;
+      }
+      return { lower: lower, upper: upper, center: center };
+    }
+
+    function describeLevel(value, bounds) {
+      if (value === null || value === undefined || isNaN(value)) {
+        return { label: "暂无数据", tone: "idle" };
+      }
+      if (bounds.upper !== null && value > bounds.upper) {
+        return { label: "超上限", tone: "alert" };
+      }
+      if (bounds.lower !== null && value < bounds.lower) {
+        return { label: "超下限", tone: "alert" };
+      }
+      var span = bounds.upper !== null && bounds.lower !== null ? bounds.upper - bounds.lower : null;
+      if (span !== null && span > 0) {
+        var highThreshold = bounds.upper - span * 0.1;
+        var lowThreshold = bounds.lower + span * 0.1;
+        if (value >= highThreshold) {
+          return { label: "偏高", tone: "warn" };
+        }
+        if (value <= lowThreshold) {
+          return { label: "偏低", tone: "warn" };
+        }
+      }
+      return { label: "平稳", tone: "ok" };
+    }
+
+    function renderNodeMatrix() {
+      if (!matrixGridEl) {
+        return;
+      }
+      matrixGridEl.innerHTML = "";
+      var nodes = (state.snapshot && state.snapshot.nodes) || [];
+      if (!nodes.length) {
+        var empty = document.createElement("div");
+        empty.className = "trend-matrix-empty";
+        empty.textContent = "暂无节点数据";
+        matrixGridEl.appendChild(empty);
+        return;
+      }
+      nodes.forEach(function (group) {
+        var groupNodes = Array.isArray(group.children) && group.children.length ? group.children : [null];
+        groupNodes.forEach(function (innerNode) {
+          var series = collectNodeSeries(group.id, innerNode ? innerNode.id : null);
+          var latest = series.length ? series[series.length - 1] : null;
+          var bounds = resolveNodeBounds(group, innerNode);
+          var level = describeLevel(latest ? latest.value : null, bounds);
+          var slope = calcSlope(series.slice(-Math.min(series.length, 10)));
+          var trendLabel = slope > 0.05 ? "上升" : slope < -0.05 ? "下降" : "平稳";
+          var card = document.createElement("div");
+          card.className = "trend-matrix-card";
+          card.setAttribute("role", "listitem");
+          var head = document.createElement("div");
+          head.className = "trend-matrix-head";
+          var title = document.createElement("div");
+          title.className = "trend-matrix-title";
+          title.textContent = innerNode ? group.name + " · " + innerNode.name : group.name;
+          head.appendChild(title);
+          var badge = document.createElement("span");
+          badge.className = "trend-matrix-status trend-matrix-status-" + level.tone;
+          badge.textContent = level.label;
+          head.appendChild(badge);
+          card.appendChild(head);
+          if (group.note && !innerNode) {
+            var note = document.createElement("div");
+            note.className = "trend-matrix-note";
+            note.textContent = group.note;
+            card.appendChild(note);
+          }
+          var valueRow = document.createElement("div");
+          valueRow.className = "trend-matrix-value";
+          valueRow.textContent = latest ? formatNumber(latest.value, innerNode ? innerNode.unit || group.unit : group.unit) : "--";
+          card.appendChild(valueRow);
+          var meta = document.createElement("div");
+          meta.className = "trend-matrix-meta";
+          meta.textContent = (latest ? formatTime(latest.capturedAt) + " 更新" : "无数据") + " · 趋势 " + trendLabel;
+          card.appendChild(meta);
+          var spark = document.createElement("canvas");
+          spark.className = "trend-matrix-spark";
+          card.appendChild(spark);
+          matrixGridEl.appendChild(card);
+          window.requestAnimationFrame(function () {
+            drawSeries(spark, series.slice(-20), { color: "#0ea5e9" });
+          });
+        });
+      });
     }
 
     function renderForecasts() {
@@ -986,6 +1149,7 @@
       renderTargetCard();
       renderDemoStatus();
       renderChart();
+      renderNodeMatrix();
       renderForecasts();
       renderAdvice();
       renderEndpoints();
@@ -1034,7 +1198,7 @@
         }
         var saved = services.upsertNode(payload);
         state.editingNodeId = saved && saved.id ? saved.id : payload.id;
-        services.toast && services.toast("节点已保存");
+        services.toast && services.toast("节点组已保存");
       });
     }
 
@@ -1043,7 +1207,7 @@
         if (!state.editingNodeId) {
           return;
         }
-        if (window.confirm("确认删除当前节点？")) {
+        if (window.confirm("确认删除当前节点组？")) {
           services.removeNode(state.editingNodeId);
           state.editingNodeId = null;
           state.editingSubNodes = [];
@@ -1071,7 +1235,7 @@
     if (manualAdjustBtn) {
       manualAdjustBtn.addEventListener("click", function () {
         if (!state.editingNodeId) {
-          services.toast && services.toast("请选择节点");
+          services.toast && services.toast("请选择节点组");
           return;
         }
         var amountStr = window.prompt("请输入本次调整量", "0.5");
@@ -1100,6 +1264,7 @@
         }
         state.selectedRange = parseInt(target.getAttribute("data-range"), 10) || 180;
         renderChart();
+        renderNodeMatrix();
       });
     }
 

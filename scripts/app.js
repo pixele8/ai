@@ -2801,7 +2801,7 @@
         if (!child || typeof child !== "object") {
           node.children[sc] = {
             id: uuid(),
-            name: "子节点",
+            name: "节点",
             unit: node.unit,
             lower: node.lower,
             upper: node.upper,
@@ -2814,7 +2814,7 @@
           child.id = uuid();
         }
         if (typeof child.name !== "string" || !child.name.trim()) {
-          child.name = "子节点";
+          child.name = "节点";
         } else {
           child.name = child.name.trim();
         }
@@ -3078,6 +3078,11 @@
     } else if (!base.name) {
       base.name = "节点";
     }
+    if (typeof payload.note === "string") {
+      base.note = payload.note.trim();
+    } else if (!base.note) {
+      base.note = "";
+    }
     if (typeof payload.unit === "string" && payload.unit.trim()) {
       base.unit = payload.unit.trim();
     } else if (!base.unit) {
@@ -3143,7 +3148,7 @@
         if (typeof childInput.name === "string" && childInput.name.trim()) {
           existing.name = childInput.name.trim();
         } else if (!existing.name) {
-          existing.name = "子节点";
+          existing.name = "节点";
         }
         if (typeof childInput.unit === "string" && childInput.unit.trim()) {
           existing.unit = childInput.unit.trim();
