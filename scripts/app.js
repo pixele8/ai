@@ -2697,6 +2697,12 @@
     if (!Array.isArray(trend.nodeLibrary)) {
       trend.nodeLibrary = [];
     }
+    if (!trend.nodeRegistry || typeof trend.nodeRegistry !== "object") {
+      trend.nodeRegistry = {};
+    }
+    if (!trend.hierarchy || typeof trend.hierarchy !== "object") {
+      trend.hierarchy = { groups: {}, nodes: {} };
+    }
     if (!trend.groupPaths || typeof trend.groupPaths !== "object") {
       trend.groupPaths = {};
     }
@@ -2962,6 +2968,16 @@
     }
   }
 
+  function cloneTrendHierarchy() {
+    ensureTrendStore();
+    try {
+      return JSON.parse(JSON.stringify(state.tools.trend.hierarchy || { groups: {}, nodes: {}, version: 1 }));
+    } catch (err) {
+      console.warn("cloneTrendHierarchy failed", err);
+      return { groups: {}, nodes: {}, version: 1 };
+    }
+  }
+
   function cloneTrendStreams(limit) {
     ensureTrendStore();
     var streams = state.tools.trend.streams || [];
@@ -3126,8 +3142,13 @@
     if (!sourceNode || !targetNode) {
       return 0.6;
     }
-    var sourcePath = getTrendGroupPathFromState(sourceNode.id);
-    var targetPath = getTrendGroupPathFromState(targetNode.id);
+    ensureTrendStore();
+    var hierarchy = state.tools.trend.hierarchy || {};
+    var groups = hierarchy.groups || {};
+    var sourceEntry = groups[sourceNode.id];
+    var targetEntry = groups[targetNode.id];
+    var sourcePath = sourceEntry && Array.isArray(sourceEntry.path) ? sourceEntry.path.slice() : getTrendGroupPathFromState(sourceNode.id);
+    var targetPath = targetEntry && Array.isArray(targetEntry.path) ? targetEntry.path.slice() : getTrendGroupPathFromState(targetNode.id);
     if (!sourcePath.length || !targetPath.length) {
       return 0.6;
     }
@@ -3144,20 +3165,24 @@
     if (distance <= 0) {
       return 1;
     }
-    if (distance === 1) {
-      return 0.9;
+    var sourceIsAncestor = shared === sourcePath.length;
+    var targetIsAncestor = shared === targetPath.length;
+    if (sourceIsAncestor || targetIsAncestor) {
+      var ancestorDepthGap = Math.abs(sourcePath.length - targetPath.length);
+      var ancestorScore = 0.92 - Math.min(0.1 * Math.max(ancestorDepthGap - 1, 0), 0.3);
+      return Math.max(0.72, Math.min(0.95, ancestorScore));
     }
-    if (distance === 2) {
-      return 0.78;
+    if (distance === 2 && shared >= 1) {
+      return 0.85;
     }
-    if (distance === 3) {
-      return 0.66;
+    if (shared >= 1) {
+      var step = Math.max(0, distance - 2);
+      var layered = 0.75 - step * 0.08;
+      return Math.max(0.58, Math.min(0.82, layered));
     }
-    var fallback = 0.66 - (distance - 3) * 0.08;
-    if (!isFinite(fallback)) {
-      fallback = 0.5;
-    }
-    return Math.max(0.5, Math.min(0.66, fallback));
+    var separation = sourcePath.length + targetPath.length - shared * 2;
+    var fallback = 0.6 - Math.min(0.02 * Math.max(separation - 2, 0), 0.25);
+    return Math.max(0.4, Math.min(0.65, fallback));
   }
 
   function rewriteTrendKeyValue(value, oldNodeId, newNodeId, oldSubId, newSubId) {
@@ -3433,6 +3458,7 @@
     }
     var nodes = Array.isArray(state.tools.trend.nodes) ? state.tools.trend.nodes : [];
     var map = {};
+    var childrenMap = {};
     for (var i = 0; i < nodes.length; i += 1) {
       var group = nodes[i];
       if (group && group.id) {
@@ -3443,6 +3469,12 @@
           group.children = [];
         }
         map[group.id] = group;
+        if (group.parentId) {
+          if (!childrenMap[group.parentId]) {
+            childrenMap[group.parentId] = [];
+          }
+          childrenMap[group.parentId].push(group.id);
+        }
       }
     }
     var pathCache = {};
@@ -3463,6 +3495,8 @@
       return parentPath;
     }
     var library = [];
+    var nodeRegistry = {};
+    var groupHierarchy = {};
     var nowIso = new Date().toISOString();
     for (var gi = 0; gi < nodes.length; gi += 1) {
       var currentGroup = nodes[gi];
@@ -3475,6 +3509,17 @@
         var gp = map[groupPath[pi]];
         namePath.push(gp && gp.name ? gp.name : "节点组");
       }
+      groupHierarchy[currentGroup.id] = {
+        id: currentGroup.id,
+        name: currentGroup.name || "节点组",
+        parentId: currentGroup.parentId || null,
+        path: groupPath.slice(),
+        namePath: namePath.slice(),
+        depth: groupPath.length ? groupPath.length - 1 : 0,
+        ancestors: groupPath.slice(0, -1),
+        children: [],
+        siblings: []
+      };
       for (var ci = 0; ci < currentGroup.children.length; ci += 1) {
         var child = currentGroup.children[ci];
         if (!child) {
@@ -3509,10 +3554,35 @@
           updatedAt: child.updatedAt
         };
         library.push(record);
+        nodeRegistry[record.id] = record;
+      }
+    }
+    for (var parentId in childrenMap) {
+      if (!Object.prototype.hasOwnProperty.call(childrenMap, parentId)) {
+        continue;
+      }
+      var childIds = childrenMap[parentId].slice();
+      if (groupHierarchy[parentId]) {
+        groupHierarchy[parentId].children = childIds.slice();
+      }
+      for (var c = 0; c < childIds.length; c += 1) {
+        var childId = childIds[c];
+        if (!groupHierarchy[childId]) {
+          continue;
+        }
+        var siblings = [];
+        for (var s = 0; s < childIds.length; s += 1) {
+          if (childIds[s] !== childId) {
+            siblings.push(childIds[s]);
+          }
+        }
+        groupHierarchy[childId].siblings = siblings;
       }
     }
     state.tools.trend.nodeLibrary = library;
     state.tools.trend.groupPaths = pathCache;
+    state.tools.trend.nodeRegistry = nodeRegistry;
+    state.tools.trend.hierarchy = { groups: groupHierarchy, nodes: nodeRegistry, version: 1 };
   }
 
   function sanitizeTrendSample(sample) {
@@ -3557,6 +3627,7 @@
       nodes: cloneTrendNodes(),
       nodeLibrary: cloneTrendNodeLibrary(),
       groupPaths: cloneTrendGroupPaths(),
+      hierarchy: cloneTrendHierarchy(),
       streams: cloneTrendStreams(streamLimit),
       suggestions: cloneTrendSuggestions(),
       scenarios: cloneTrendScenarios(),
@@ -4248,15 +4319,16 @@
       if (!Array.isArray(list) || !nodeId) {
         return;
       }
+      var normalized = typeof weight === "number" && isFinite(weight) ? weight : 0.4;
       for (var idx = 0; idx < list.length; idx += 1) {
         if (list[idx] && list[idx].nodeId === nodeId) {
-          if (typeof weight === "number" && !isNaN(weight)) {
-            list[idx].weight = weight;
+          if (typeof normalized === "number" && !isNaN(normalized)) {
+            list[idx].weight = Math.max(list[idx].weight || 0, normalized);
           }
           return;
         }
       }
-      list.push({ nodeId: nodeId, weight: typeof weight === "number" && isFinite(weight) ? weight : 0.4 });
+      list.push({ nodeId: nodeId, weight: normalized });
     }
 
     for (var n = 0; n < nodes.length; n += 1) {
@@ -4285,6 +4357,34 @@
           var currentNodeForParallel = nodeMap[current.id];
           ensureEntry(adjacency[current.id].parallel, peerId, computeRelationshipWeight(currentNodeForParallel, peerNode, "parallel"));
           ensureEntry(adjacency[peerId].parallel, current.id, computeRelationshipWeight(peerNode, currentNodeForParallel, "parallel"));
+        }
+      }
+    }
+    var hierarchy = state.tools.trend.hierarchy || {};
+    var groupHierarchy = hierarchy.groups || {};
+    for (var groupId in groupHierarchy) {
+      if (!Object.prototype.hasOwnProperty.call(groupHierarchy, groupId)) {
+        continue;
+      }
+      var groupEntry = groupHierarchy[groupId];
+      var currentNode = nodeMap[groupId];
+      if (!groupEntry || !currentNode) {
+        continue;
+      }
+      if (groupEntry.parentId && adjacency[groupId] && adjacency[groupEntry.parentId] && nodeMap[groupEntry.parentId]) {
+        var parentNode = nodeMap[groupEntry.parentId];
+        ensureEntry(adjacency[groupId].upstream, parentNode.id, computeRelationshipWeight(currentNode, parentNode, "upstream"));
+        ensureEntry(adjacency[parentNode.id].downstream, currentNode.id, computeRelationshipWeight(parentNode, currentNode, "downstream"));
+      }
+      if (Array.isArray(groupEntry.siblings) && groupEntry.siblings.length) {
+        for (var sb = 0; sb < groupEntry.siblings.length; sb += 1) {
+          var siblingId = groupEntry.siblings[sb];
+          if (!siblingId || !adjacency[groupId] || !adjacency[siblingId] || !nodeMap[siblingId]) {
+            continue;
+          }
+          var siblingNode = nodeMap[siblingId];
+          ensureEntry(adjacency[groupId].parallel, siblingId, computeRelationshipWeight(currentNode, siblingNode, "parallel"));
+          ensureEntry(adjacency[siblingId].parallel, groupId, computeRelationshipWeight(siblingNode, currentNode, "parallel"));
         }
       }
     }

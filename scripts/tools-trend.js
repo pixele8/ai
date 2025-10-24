@@ -238,6 +238,7 @@
       services: services,
       snapshot: initialSnapshot,
       nodeLibrary: initialSnapshot && initialSnapshot.nodeLibrary ? initialSnapshot.nodeLibrary : [],
+      hierarchy: initialSnapshot && initialSnapshot.hierarchy ? initialSnapshot.hierarchy : { groups: {}, nodes: {} },
       groupPaths: initialSnapshot && initialSnapshot.groupPaths ? initialSnapshot.groupPaths : {},
       editingNodeId: null,
       editingSubNodes: [],
@@ -403,6 +404,7 @@
     var chartCanvas = document.getElementById("trendChart");
     var chartToolbar = document.querySelector(".trend-chart-toolbar");
     var matrixGridEl = document.getElementById("trendMatrixGrid");
+    var libraryListEl = document.getElementById("trendLibraryList");
     var forecastListEl = document.getElementById("trendForecastList");
     var forecastRefreshBtn = document.getElementById("trendRefreshForecast");
     var adviceListEl = document.getElementById("trendAdviceList");
@@ -493,6 +495,7 @@
     function syncSnapshot(snapshot) {
       state.snapshot = snapshot || services.getSnapshot({});
       state.nodeLibrary = (state.snapshot && state.snapshot.nodeLibrary) || [];
+      state.hierarchy = (state.snapshot && state.snapshot.hierarchy) || { groups: {}, nodes: {} };
       state.groupPaths = (state.snapshot && state.snapshot.groupPaths) || {};
       state.scenarios = (state.snapshot && state.snapshot.scenarios) || [];
       var availableNodes = (state.snapshot && state.snapshot.nodes) || [];
@@ -1351,6 +1354,101 @@
             drawSeries(spark, series.slice(-20), { color: "#0ea5e9" });
           });
         });
+      });
+    }
+
+    function renderNodeLibrary() {
+      if (!libraryListEl) {
+        return;
+      }
+      libraryListEl.innerHTML = "";
+      var library = state.nodeLibrary || [];
+      if (!library.length) {
+        var empty = document.createElement("div");
+        empty.className = "trend-library-empty";
+        empty.textContent = "尚未创建监测节点";
+        libraryListEl.appendChild(empty);
+        return;
+      }
+      var grouped = {};
+      for (var i = 0; i < library.length; i += 1) {
+        var record = library[i];
+        if (!record) {
+          continue;
+        }
+        var key = Array.isArray(record.groupPath) && record.groupPath.length
+          ? record.groupPath.join("::")
+          : "__root";
+        if (!grouped[key]) {
+          grouped[key] = {
+            label: Array.isArray(record.groupNamePath) && record.groupNamePath.length
+              ? record.groupNamePath.join(" / ")
+              : (record.groupPath && record.groupPath.length ? record.groupPath[record.groupPath.length - 1] : "未分组"),
+            nodes: []
+          };
+        }
+        grouped[key].nodes.push(record);
+      }
+      var keys = Object.keys(grouped).sort();
+      keys.forEach(function (key) {
+        var bucket = grouped[key];
+        var block = document.createElement("div");
+        block.className = "trend-library-group";
+        var head = document.createElement("div");
+        head.className = "trend-library-group-head";
+        head.textContent = bucket.label || "节点组";
+        block.appendChild(head);
+        var list = document.createElement("div");
+        list.className = "trend-library-rows";
+        bucket.nodes.sort(function (a, b) {
+          var aName = a && a.name ? a.name : "";
+          var bName = b && b.name ? b.name : "";
+          return aName.localeCompare(bName, "zh-Hans-CN");
+        });
+        bucket.nodes.forEach(function (node) {
+          if (!node) {
+            return;
+          }
+          var row = document.createElement("div");
+          row.className = "trend-library-row";
+          var title = document.createElement("div");
+          title.className = "trend-library-title";
+          title.textContent = node.name || "节点";
+          row.appendChild(title);
+          var meta = document.createElement("div");
+          meta.className = "trend-library-meta";
+          var idLabel = document.createElement("span");
+          idLabel.className = "trend-library-id";
+          idLabel.textContent = node.id || "--";
+          meta.appendChild(idLabel);
+          if (node.unit) {
+            var unitLabel = document.createElement("span");
+            unitLabel.textContent = "单位 " + node.unit;
+            meta.appendChild(unitLabel);
+          }
+          var range = document.createElement("span");
+          var lowerText = typeof node.lower === "number" ? node.lower : "--";
+          var upperText = typeof node.upper === "number" ? node.upper : "--";
+          var centerText = typeof node.center === "number" ? node.center : "--";
+          range.textContent = "范围 " + lowerText + " ~ " + upperText + " · 中值 " + centerText;
+          meta.appendChild(range);
+          if (node.manual) {
+            var manual = document.createElement("span");
+            manual.className = "trend-library-flag";
+            manual.textContent = "手动节点" + (typeof node.manualStep === "number" && node.manualStep ? " · 步长 " + node.manualStep : "");
+            meta.appendChild(manual);
+          }
+          if (node.simulate === false) {
+            var demo = document.createElement("span");
+            demo.className = "trend-library-flag muted";
+            demo.textContent = "演示停用";
+            meta.appendChild(demo);
+          }
+          row.appendChild(meta);
+          list.appendChild(row);
+        });
+        block.appendChild(list);
+        libraryListEl.appendChild(block);
       });
     }
 
@@ -2256,6 +2354,7 @@
       renderDemoStatus();
       renderChart();
       renderNodeMatrix();
+      renderNodeLibrary();
       renderForecasts();
       renderAdvice();
       renderEndpoints();
