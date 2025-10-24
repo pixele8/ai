@@ -749,6 +749,9 @@
       pendingNodeKey: null,
       explorerPath: [],
       nodeModalState: null,
+      groupModalState: null,
+      settingsModalState: null,
+      endpointModalState: null,
       unsubscribe: null
     };
     state.scenarioDraft = createScenarioDraft(state.snapshot, null);
@@ -865,6 +868,10 @@
     var explorerAddGroupBtn = document.getElementById("trendExplorerAddGroup");
     var explorerAddNodeBtn = document.getElementById("trendExplorerAddNode");
     var explorerMenuEl = document.getElementById("trendExplorerMenu");
+    var explorerConsoleBtn = document.getElementById("trendOpenConsole");
+    var consolePanelEl = document.getElementById("trendConsolePanel");
+    var consoleCloseBtn = document.getElementById("trendConsoleClose");
+    var outputEditBtn = document.getElementById("trendOutputEdit");
     var explorerMenuContext = null;
     var nodeForm = document.getElementById("trendNodeForm");
     var nodeKeyInput = document.getElementById("trendNodeKey");
@@ -901,6 +908,44 @@
     var nodeModalChart = document.getElementById("trendNodeModalChart");
     var nodeModalMeta = document.getElementById("trendNodeModalMeta");
     var nodeModalAnalytics = document.getElementById("trendNodeModalAnalytics");
+    var groupModalEl = document.getElementById("trendGroupModal");
+    var groupModalForm = document.getElementById("trendGroupModalForm");
+    var groupModalCloseBtn = document.getElementById("trendGroupModalClose");
+    var groupModalCancelBtn = document.getElementById("trendGroupModalCancel");
+    var groupModalDuplicateBtn = document.getElementById("trendGroupModalDuplicate");
+    var groupModalKeyInput = document.getElementById("trendGroupModalKey");
+    var groupModalNameInput = document.getElementById("trendGroupModalName");
+    var groupModalNoteInput = document.getElementById("trendGroupModalNote");
+    var groupModalParentSelect = document.getElementById("trendGroupModalParent");
+    var targetModalEl = document.getElementById("trendTargetModal");
+    var targetModalForm = document.getElementById("trendTargetModalForm");
+    var targetModalCloseBtn = document.getElementById("trendTargetModalClose");
+    var targetModalCancelBtn = document.getElementById("trendTargetModalCancel");
+    var targetModalLowerInput = document.getElementById("trendTargetModalLower");
+    var targetModalCenterInput = document.getElementById("trendTargetModalCenter");
+    var targetModalUpperInput = document.getElementById("trendTargetModalUpper");
+    var settingsModalEl = document.getElementById("trendSettingsModal");
+    var settingsModalCloseBtn = document.getElementById("trendSettingsModalClose");
+    var settingsModalForm = document.getElementById("trendSettingsModalForm");
+    var settingsModalSampleInput = document.getElementById("trendSettingsModalSample");
+    var settingsModalLookbackInput = document.getElementById("trendSettingsModalLookback");
+    var settingsModalPredictionInput = document.getElementById("trendSettingsModalPrediction");
+    var settingsModalLowerInput = document.getElementById("trendSettingsModalLower");
+    var settingsModalCenterInput = document.getElementById("trendSettingsModalCenter");
+    var settingsModalUpperInput = document.getElementById("trendSettingsModalUpper");
+    var settingsModalAddEndpointBtn = document.getElementById("trendSettingsModalAddEndpoint");
+    var settingsModalEndpointList = document.getElementById("trendSettingsModalEndpointList");
+    var endpointModalEl = document.getElementById("trendEndpointModal");
+    var endpointModalForm = document.getElementById("trendEndpointModalForm");
+    var endpointModalCloseBtn = document.getElementById("trendEndpointModalClose");
+    var endpointModalCancelBtn = document.getElementById("trendEndpointModalCancel");
+    var endpointModalNameInput = document.getElementById("trendEndpointModalName");
+    var endpointModalTypeSelect = document.getElementById("trendEndpointModalType");
+    var endpointModalEnabledSelect = document.getElementById("trendEndpointModalEnabled");
+    var endpointModalUrlInput = document.getElementById("trendEndpointModalUrl");
+    var endpointModalDatabaseInput = document.getElementById("trendEndpointModalDatabase");
+    var endpointModalTableInput = document.getElementById("trendEndpointModalTable");
+    var endpointModalNotesInput = document.getElementById("trendEndpointModalNotes");
     var startDemoBtn = document.getElementById("trendStartDemo");
     var stopDemoBtn = document.getElementById("trendStopDemo");
     var manualAdjustBtn = document.getElementById("trendManualAdjust");
@@ -1292,9 +1337,16 @@
 
     function createExplorerItem(type, record, parentId) {
       var item = document.createElement("div");
-      var className = "trend-explorer-item" + (type === "group" ? " is-group" : " is-node");
-      if (type === "group" && state.editingNodeId === record.id) {
-        className += " is-active";
+      var className = "trend-explorer-item";
+      if (type === "group") {
+        className += " is-group";
+        if (state.editingNodeId === record.id) {
+          className += " is-active";
+        }
+      } else if (type === "output") {
+        className += " is-output";
+      } else {
+        className += " is-node";
       }
       item.className = className;
       item.setAttribute("data-type", type);
@@ -1309,15 +1361,23 @@
       item.appendChild(icon);
       var name = document.createElement("div");
       name.className = "trend-explorer-name";
-      name.textContent = record.name || (type === "group" ? "节点组" : "节点");
+      if (record.name) {
+        name.textContent = record.name;
+      } else if (type === "group") {
+        name.textContent = "节点组";
+      } else if (type === "output") {
+        name.textContent = "引出量";
+      } else {
+        name.textContent = "节点";
+      }
       item.appendChild(name);
       var meta = document.createElement("div");
       meta.className = "trend-explorer-meta";
       var parts = [];
-      if (record.id) {
-        parts.push("ID " + record.id);
-      }
       if (type === "group") {
+        if (record.id) {
+          parts.push("ID " + record.id);
+        }
         var count = 0;
         if (Array.isArray(record.children)) {
           count = record.children.length;
@@ -1337,7 +1397,27 @@
         if (record.simulate === false) {
           parts.push("演示停用");
         }
+      } else if (type === "output") {
+        var bounds = [];
+        if (typeof record.center === "number") {
+          bounds.push("中心 " + formatExplorerBound(record.center));
+        }
+        if (typeof record.lower === "number" && typeof record.upper === "number") {
+          bounds.push("范围 " + formatExplorerBound(record.lower) + " ~ " + formatExplorerBound(record.upper));
+        }
+        if (record.unit) {
+          bounds.push("单位 " + record.unit);
+        }
+        if (bounds.length) {
+          parts.push(bounds.join(" · "));
+        }
+        if (record.note) {
+          parts.push(record.note);
+        }
       } else {
+        if (record.id) {
+          parts.push("ID " + record.id);
+        }
         if (record.unit) {
           parts.push("单位 " + record.unit);
         }
@@ -1366,6 +1446,8 @@
         closeExplorerMenu();
         if (type === "group") {
           handleNodeSelection(record.id);
+        } else if (type === "output") {
+          openTargetModal();
         } else if (parentId) {
           handleNodeSelection(parentId);
           openNodeEditor(parentId, record.id, false);
@@ -1375,6 +1457,8 @@
         closeExplorerMenu();
         if (type === "group") {
           enterExplorerGroup(record.id);
+        } else if (type === "output") {
+          openTargetModal();
         } else if (parentId) {
           openNodeEditor(parentId, record.id, true);
         }
@@ -1410,6 +1494,23 @@
       }
     }
 
+    function buildOutputExplorerRecord() {
+      if (!state.snapshot || !state.snapshot.settings) {
+        return null;
+      }
+      var settings = state.snapshot.settings;
+      var target = settings.outputTarget || {};
+      return {
+        id: "__output__",
+        name: settings.outputName || "引出量中心",
+        lower: typeof target.lower === "number" ? target.lower : null,
+        center: typeof target.center === "number" ? target.center : null,
+        upper: typeof target.upper === "number" ? target.upper : null,
+        unit: settings.outputUnit || "",
+        note: settings.outputNote || ""
+      };
+    }
+
     function renderNodeList() {
       if (!explorerGridEl) {
         return;
@@ -1426,6 +1527,13 @@
       }
       explorerGridEl.innerHTML = "";
       var hasContent = false;
+      if (!context.currentId) {
+        var outputRecord = buildOutputExplorerRecord();
+        if (outputRecord) {
+          explorerGridEl.appendChild(createExplorerItem("output", outputRecord, null));
+          hasContent = true;
+        }
+      }
       var i;
       for (i = 0; i < context.groups.length; i += 1) {
         var groupItem = createExplorerItem("group", context.groups[i], context.currentId);
@@ -1564,6 +1672,45 @@
       explorerMenuContext = null;
     }
 
+    function openConsolePanel() {
+      if (!consolePanelEl) {
+        return;
+      }
+      consolePanelEl.classList.remove("hidden");
+    }
+
+    function closeConsolePanelOverlay() {
+      if (!consolePanelEl) {
+        return;
+      }
+      consolePanelEl.classList.add("hidden");
+    }
+
+    function focusConsoleSettings() {
+      openConsolePanel();
+      if (targetCenterInput) {
+        window.setTimeout(function () {
+          try {
+            targetCenterInput.focus();
+            targetCenterInput.select();
+          } catch (err) {}
+        }, 0);
+      }
+    }
+
+    function focusConsoleMes() {
+      openConsolePanel();
+      window.setTimeout(function () {
+        try {
+          if (endpointListEl && endpointListEl.scrollIntoView) {
+            endpointListEl.scrollIntoView({ behavior: "smooth", block: "center" });
+          } else if (addEndpointBtn && addEndpointBtn.focus) {
+            addEndpointBtn.focus();
+          }
+        } catch (err) {}
+      }, 0);
+    }
+
     function buildExplorerMenu(context) {
       if (!explorerMenuEl) {
         return;
@@ -1609,20 +1756,26 @@
         });
         actions.push("divider");
         actions.push({
-          label: "重命名",
+          label: "复制节点组",
           handler: function (groupId) {
             return function () {
-              editGroup(groupId);
+              duplicateGroup(groupId);
             };
           }(context.id)
         });
         actions.push({
-          label: "编辑备注",
+          label: "编辑节点组",
           handler: function (groupId) {
             return function () {
-              editGroupNote(groupId);
+              openGroupModal(groupId, null);
             };
           }(context.id)
+        });
+        actions.push({
+          label: "打开系统设置",
+          handler: function () {
+            openSettingsModal();
+          }
         });
       } else if (context.type === "node") {
         actions.push({
@@ -1649,6 +1802,25 @@
             };
           }(context.parentId)
         });
+      } else if (context.type === "output") {
+        actions.push({
+          label: "编辑引出量目标",
+          handler: function () {
+            openTargetModal();
+          }
+        });
+        actions.push({
+          label: "打开趋势控制台",
+          handler: function () {
+            openConsolePanel();
+          }
+        });
+        actions.push({
+          label: "打开系统设置",
+          handler: function () {
+            openSettingsModal();
+          }
+        });
       } else {
         actions.push({
           label: "新建节点组",
@@ -1668,6 +1840,25 @@
             }(context.parentId)
           });
         }
+        actions.push("divider");
+        actions.push({
+          label: "打开趋势控制台",
+          handler: function () {
+            openConsolePanel();
+          }
+        });
+        actions.push({
+          label: "打开系统设置",
+          handler: function () {
+            openSettingsModal();
+          }
+        });
+        actions.push({
+          label: "打开 MES 设置",
+          handler: function () {
+            openSettingsModal();
+          }
+        });
       }
       for (var i = 0; i < actions.length; i += 1) {
         var action = actions[i];
@@ -1694,31 +1885,32 @@
 
     function startCreateGroup(parentId) {
       closeExplorerMenu();
-      state.pendingParentId = parentId || "";
-      state.editingNodeId = null;
-      state.pendingNodeKey = generateUniqueGroupId();
-      state.editingSubNodes = [];
-      renderForm();
-      if (nodeNameInput) {
-        window.setTimeout(function () {
-          try {
-            nodeNameInput.focus();
-            nodeNameInput.select();
-          } catch (err) {}
-        }, 0);
-      }
+      openGroupModal(null, parentId || null);
     }
 
     function startCreateNode(parentId) {
       closeExplorerMenu();
-      if (!parentId) {
+      var targetParent = parentId || null;
+      if (!targetParent) {
+        var context = getExplorerContext();
+        targetParent = context && context.currentId ? context.currentId : null;
+      }
+      if (!targetParent) {
         if (services.toast) {
           services.toast("请先选择节点组");
         }
         return;
       }
-      handleNodeSelection(parentId);
-      addSubNode();
+      var group = findNode(targetParent);
+      if (!group) {
+        if (services.toast) {
+          services.toast("未找到节点组");
+        }
+        return;
+      }
+      state.editingNodeId = targetParent;
+      state.editingSubNodes = ensureEditingChildren(clone(group.children) || []);
+      openNodeModal(state.editingSubNodes.length, { isNew: true });
     }
 
     function editGroup(groupId) {
@@ -1726,15 +1918,7 @@
       if (!groupId) {
         return;
       }
-      handleNodeSelection(groupId);
-      if (nodeNameInput) {
-        window.setTimeout(function () {
-          try {
-            nodeNameInput.focus();
-            nodeNameInput.select();
-          } catch (err) {}
-        }, 0);
-      }
+      openGroupModal(groupId, null);
     }
 
     function editGroupNote(groupId) {
@@ -1742,13 +1926,366 @@
       if (!groupId) {
         return;
       }
-      handleNodeSelection(groupId);
-      if (nodeNoteInput) {
-        window.setTimeout(function () {
-          try {
-            nodeNoteInput.focus();
-          } catch (err) {}
-        }, 0);
+      openGroupModal(groupId, null);
+    }
+
+    function duplicateGroup(groupId) {
+      closeExplorerMenu();
+      if (!groupId) {
+        return;
+      }
+      var source = findNode(groupId);
+      if (!source) {
+        if (services.toast) {
+          services.toast("未找到节点组");
+        }
+        return;
+      }
+      var payload = clone(source);
+      payload.originalId = null;
+      payload.id = generateUniqueGroupId();
+      payload.name = (source.name || "节点组") + " 副本";
+      payload.parentId = source.parentId || null;
+      payload.positionMode = "after";
+      payload.positionRef = null;
+      payload.children = [];
+      if (Array.isArray(source.children)) {
+        for (var i = 0; i < source.children.length; i += 1) {
+          var child = source.children[i];
+          if (!child) {
+            continue;
+          }
+          var childCopy = clone(child);
+          childCopy.originalId = child.id || child.originalId || null;
+          childCopy.id = generateUniqueNodeId();
+          payload.children.push(childCopy);
+        }
+      }
+      var saved = services.upsertNode(payload);
+      if (saved && saved.id) {
+        openConsolePanel();
+        handleNodeSelection(saved.id);
+      }
+      if (services.toast) {
+        services.toast("节点组已复制");
+      }
+      render();
+    }
+
+    function populateGroupModalParentOptions(currentId) {
+      if (!groupModalParentSelect) {
+        return;
+      }
+      groupModalParentSelect.innerHTML = "";
+      var placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "顶层节点组";
+      groupModalParentSelect.appendChild(placeholder);
+      var nodes = (state.snapshot && state.snapshot.nodes) || [];
+      var blocked = {};
+      if (currentId) {
+        blocked[currentId] = true;
+        var descendants = collectDescendantIdsLocal(currentId);
+        for (var i = 0; i < descendants.length; i += 1) {
+          blocked[descendants[i]] = true;
+        }
+      }
+      nodes.forEach(function (group) {
+        if (!group || !group.id || blocked[group.id]) {
+          return;
+        }
+        var option = document.createElement("option");
+        option.value = group.id;
+        option.textContent = formatGroupPathLabel(group.id) || group.name || "节点组";
+        groupModalParentSelect.appendChild(option);
+      });
+    }
+
+    function openGroupModal(groupId, defaultParentId) {
+      if (!groupModalEl || !groupModalForm) {
+        return;
+      }
+      var record = groupId ? findNode(groupId) : null;
+      var mode = record ? "edit" : "create";
+      state.groupModalState = {
+        mode: mode,
+        originalId: record ? record.id : null
+      };
+      populateGroupModalParentOptions(record ? record.id : null);
+      if (groupModalKeyInput) {
+        groupModalKeyInput.value = record ? record.id : generateUniqueGroupId();
+      }
+      if (groupModalNameInput) {
+        groupModalNameInput.value = record && record.name ? record.name : "";
+      }
+      if (groupModalNoteInput) {
+        groupModalNoteInput.value = record && record.note ? record.note : "";
+      }
+      if (groupModalParentSelect) {
+        var parentValue = record ? record.parentId || "" : (defaultParentId || "");
+        groupModalParentSelect.value = parentValue;
+      }
+      var titleEl = document.getElementById("trendGroupModalTitle");
+      if (titleEl) {
+        titleEl.textContent = record ? "编辑节点组" : "新建节点组";
+      }
+      if (groupModalDuplicateBtn) {
+        if (record) {
+          groupModalDuplicateBtn.classList.remove("hidden");
+        } else {
+          groupModalDuplicateBtn.classList.add("hidden");
+        }
+      }
+      groupModalEl.classList.remove("hidden");
+      window.setTimeout(function () {
+        try {
+          if (groupModalNameInput) {
+            if (record) {
+              groupModalNameInput.select();
+            }
+            groupModalNameInput.focus();
+          }
+        } catch (err) {}
+      }, 0);
+    }
+
+    function closeGroupModal() {
+      if (!groupModalEl) {
+        return;
+      }
+      groupModalEl.classList.add("hidden");
+      state.groupModalState = null;
+    }
+
+    function submitGroupModal(evt) {
+      if (evt) {
+        evt.preventDefault();
+      }
+      if (!groupModalForm) {
+        return;
+      }
+      var idValue = groupModalKeyInput && groupModalKeyInput.value ? groupModalKeyInput.value.trim() : "";
+      if (!idValue) {
+        if (services.toast) {
+          services.toast("请输入节点组标识");
+        }
+        return;
+      }
+      var originalId = state.groupModalState && state.groupModalState.originalId ? state.groupModalState.originalId : null;
+      if (isGroupIdTaken(idValue, originalId || null)) {
+        if (services.toast) {
+          services.toast("节点组 ID 已存在，请更换");
+        }
+        return;
+      }
+      var nameValue = groupModalNameInput && groupModalNameInput.value ? groupModalNameInput.value.trim() : "";
+      var noteValue = groupModalNoteInput && groupModalNoteInput.value ? groupModalNoteInput.value.trim() : "";
+      var parentValue = groupModalParentSelect && groupModalParentSelect.value ? groupModalParentSelect.value : null;
+      var payload = {
+        id: idValue,
+        originalId: originalId,
+        name: nameValue || "节点组",
+        note: noteValue,
+        parentId: parentValue,
+        positionMode: "after"
+      };
+      var saved = services.upsertNode(payload);
+      closeGroupModal();
+      if (saved && saved.id) {
+        state.editingNodeId = saved.id;
+        render();
+      }
+      if (services.toast) {
+        services.toast(originalId ? "节点组已更新" : "节点组已创建");
+      }
+    }
+
+    function openTargetModal() {
+      if (!targetModalEl || !targetModalForm) {
+        return;
+      }
+      var target = state.snapshot && state.snapshot.settings ? state.snapshot.settings.outputTarget || {} : {};
+      if (targetModalLowerInput) {
+        targetModalLowerInput.value = typeof target.lower === "number" ? target.lower : "";
+      }
+      if (targetModalCenterInput) {
+        targetModalCenterInput.value = typeof target.center === "number" ? target.center : "";
+      }
+      if (targetModalUpperInput) {
+        targetModalUpperInput.value = typeof target.upper === "number" ? target.upper : "";
+      }
+      targetModalEl.classList.remove("hidden");
+      window.setTimeout(function () {
+        try {
+          if (targetModalCenterInput) {
+            targetModalCenterInput.focus();
+            targetModalCenterInput.select();
+          }
+        } catch (err) {}
+      }, 0);
+    }
+
+    function closeTargetModal() {
+      if (!targetModalEl) {
+        return;
+      }
+      targetModalEl.classList.add("hidden");
+    }
+
+    function submitTargetModal(evt) {
+      if (evt) {
+        evt.preventDefault();
+      }
+      var centerValue = targetModalCenterInput && targetModalCenterInput.value ? parseFloat(targetModalCenterInput.value) : null;
+      if (centerValue === null || isNaN(centerValue)) {
+        if (services.toast) {
+          services.toast("请填写引出量中心");
+        }
+        return;
+      }
+      var lowerValue = targetModalLowerInput && targetModalLowerInput.value ? parseFloat(targetModalLowerInput.value) : null;
+      var upperValue = targetModalUpperInput && targetModalUpperInput.value ? parseFloat(targetModalUpperInput.value) : null;
+      services.updateSettings({
+        outputTarget: {
+          center: centerValue,
+          lower: lowerValue,
+          upper: upperValue
+        }
+      });
+      closeTargetModal();
+      if (services.toast) {
+        services.toast("引出量目标已更新");
+      }
+    }
+
+    function openSettingsModal() {
+      if (!settingsModalEl) {
+        return;
+      }
+      state.settingsModalState = { openedAt: Date.now() };
+      renderSettingsForm();
+      renderEndpoints();
+      settingsModalEl.classList.remove("hidden");
+    }
+
+    function closeSettingsModal() {
+      if (!settingsModalEl) {
+        return;
+      }
+      settingsModalEl.classList.add("hidden");
+      state.settingsModalState = null;
+    }
+
+    function submitSettingsModal(evt) {
+      if (evt) {
+        evt.preventDefault();
+      }
+      var sampleValue = settingsModalSampleInput && settingsModalSampleInput.value ? parseInt(settingsModalSampleInput.value, 10) : null;
+      var lookbackValue = settingsModalLookbackInput && settingsModalLookbackInput.value ? parseInt(settingsModalLookbackInput.value, 10) : null;
+      var predictionValue = settingsModalPredictionInput && settingsModalPredictionInput.value ? parseInt(settingsModalPredictionInput.value, 10) : null;
+      var lowerValue = settingsModalLowerInput && settingsModalLowerInput.value !== "" ? parseFloat(settingsModalLowerInput.value) : null;
+      var centerValue = settingsModalCenterInput && settingsModalCenterInput.value !== "" ? parseFloat(settingsModalCenterInput.value) : null;
+      var upperValue = settingsModalUpperInput && settingsModalUpperInput.value !== "" ? parseFloat(settingsModalUpperInput.value) : null;
+      services.updateSettings({
+        sampleIntervalMs: sampleValue || 60000,
+        lookbackMinutes: lookbackValue || 120,
+        predictionMinutes: predictionValue || 30,
+        outputTarget: {
+          lower: lowerValue === null || isNaN(lowerValue) ? null : lowerValue,
+          center: centerValue === null || isNaN(centerValue) ? null : centerValue,
+          upper: upperValue === null || isNaN(upperValue) ? null : upperValue
+        }
+      });
+      closeSettingsModal();
+      if (services.toast) {
+        services.toast("设置已更新");
+      }
+    }
+
+    function openEndpointModal(endpoint) {
+      if (!endpointModalEl || !endpointModalForm) {
+        return;
+      }
+      var mode = endpoint && endpoint.id ? "edit" : "create";
+      state.endpointModalState = {
+        mode: mode,
+        id: endpoint && endpoint.id ? endpoint.id : null
+      };
+      if (endpointModalNameInput) {
+        endpointModalNameInput.value = endpoint && endpoint.name ? endpoint.name : "";
+      }
+      if (endpointModalTypeSelect) {
+        endpointModalTypeSelect.value = endpoint && endpoint.type ? endpoint.type : "rest";
+      }
+      if (endpointModalEnabledSelect) {
+        endpointModalEnabledSelect.value = endpoint && endpoint.enabled === false ? "false" : "true";
+      }
+      if (endpointModalUrlInput) {
+        endpointModalUrlInput.value = endpoint && endpoint.url ? endpoint.url : "";
+      }
+      if (endpointModalDatabaseInput) {
+        endpointModalDatabaseInput.value = endpoint && endpoint.database ? endpoint.database : "";
+      }
+      if (endpointModalTableInput) {
+        endpointModalTableInput.value = endpoint && endpoint.table ? endpoint.table : "";
+      }
+      if (endpointModalNotesInput) {
+        endpointModalNotesInput.value = endpoint && endpoint.notes ? endpoint.notes : "";
+      }
+      var titleEl = document.getElementById("trendEndpointModalTitle");
+      if (titleEl) {
+        titleEl.textContent = mode === "edit" ? "编辑数据源" : "新增数据源";
+      }
+      endpointModalEl.classList.remove("hidden");
+      window.setTimeout(function () {
+        try {
+          if (endpointModalNameInput) {
+            endpointModalNameInput.focus();
+            endpointModalNameInput.select();
+          }
+        } catch (err) {}
+      }, 0);
+    }
+
+    function closeEndpointModal() {
+      if (!endpointModalEl) {
+        return;
+      }
+      endpointModalEl.classList.add("hidden");
+      state.endpointModalState = null;
+    }
+
+    function submitEndpointModal(evt) {
+      if (evt) {
+        evt.preventDefault();
+      }
+      if (!endpointModalForm) {
+        return;
+      }
+      var nameValue = endpointModalNameInput && endpointModalNameInput.value ? endpointModalNameInput.value.trim() : "";
+      if (!nameValue) {
+        if (services.toast) {
+          services.toast("请输入数据源名称");
+        }
+        return;
+      }
+      var payload = {
+        name: nameValue,
+        type: endpointModalTypeSelect ? endpointModalTypeSelect.value : "rest",
+        enabled: !endpointModalEnabledSelect || endpointModalEnabledSelect.value !== "false",
+        url: endpointModalUrlInput ? endpointModalUrlInput.value.trim() : "",
+        database: endpointModalDatabaseInput ? endpointModalDatabaseInput.value.trim() : "",
+        table: endpointModalTableInput ? endpointModalTableInput.value.trim() : "",
+        notes: endpointModalNotesInput ? endpointModalNotesInput.value.trim() : ""
+      };
+      if (state.endpointModalState && state.endpointModalState.mode === "edit" && state.endpointModalState.id) {
+        services.updateEndpoint(state.endpointModalState.id, payload);
+      } else {
+        services.registerEndpoint(payload);
+      }
+      closeEndpointModal();
+      if (services.toast) {
+        services.toast("数据源已保存");
       }
     }
 
@@ -1804,12 +2341,21 @@
     }
 
     function handleExplorerKeydown(evt) {
-      if (!explorerMenuEl || explorerMenuEl.hidden) {
+      var key = evt.key || evt.keyCode;
+      if (!(key === "Escape" || key === "Esc" || key === 27)) {
         return;
       }
-      var key = evt.key || evt.keyCode;
-      if (key === "Escape" || key === "Esc" || key === 27) {
+      var handled = false;
+      if (explorerMenuEl && !explorerMenuEl.hidden) {
         closeExplorerMenu();
+        handled = true;
+      }
+      if (consolePanelEl && !consolePanelEl.classList.contains("hidden")) {
+        closeConsolePanelOverlay();
+        handled = true;
+      }
+      if (handled) {
+        evt.preventDefault();
       }
     }
 
@@ -2364,6 +2910,41 @@
       closeNodeModal();
       renderSubNodes();
       renderGroupSummary(findNode(state.editingNodeId));
+      var groupId = state.nodeModalState && state.nodeModalState.groupId ? state.nodeModalState.groupId : state.editingNodeId;
+      if (groupId) {
+        var base = findNode(groupId);
+        var payload = {
+          id: groupId,
+          originalId: groupId,
+          name: base && base.name ? base.name : "节点组",
+          note: base && base.note ? base.note : "",
+          parentId: base && base.parentId ? base.parentId : null,
+          children: ensureEditingChildren(clone(state.editingSubNodes) || [])
+        };
+        if (base && typeof base.positionMode === "string") {
+          payload.positionMode = base.positionMode;
+        }
+        if (base && typeof base.positionRef === "string") {
+          payload.positionRef = base.positionRef;
+        }
+        if (base && typeof base.simulate === "boolean") {
+          payload.simulate = base.simulate;
+        }
+        if (base && typeof base.lower === "number") {
+          payload.lower = base.lower;
+        }
+        if (base && typeof base.center === "number") {
+          payload.center = base.center;
+        }
+        if (base && typeof base.upper === "number") {
+          payload.upper = base.upper;
+        }
+        services.upsertNode(payload);
+        render();
+        if (services.toast) {
+          services.toast("节点已保存");
+        }
+      }
     }
 
     function addSubNode() {
@@ -2978,79 +3559,88 @@
       });
     }
 
-    function renderEndpoints() {
-      if (!endpointListEl) {
+    function buildEndpointCard(endpoint) {
+      var card = document.createElement("div");
+      card.className = "trend-endpoint-item";
+      var header = document.createElement("header");
+      var title = document.createElement("div");
+      title.textContent = endpoint.name + " · " + (endpoint.type || "rest");
+      header.appendChild(title);
+      var status = document.createElement("span");
+      status.className = "trend-endpoint-status";
+      status.textContent = endpoint.enabled ? "启用" : "停用";
+      header.appendChild(status);
+      card.appendChild(header);
+      var meta = document.createElement("div");
+      meta.className = "trend-endpoint-meta";
+      var detail = [];
+      if (endpoint.url) {
+        detail.push(endpoint.url);
+      }
+      if (endpoint.database) {
+        detail.push("库：" + endpoint.database);
+      }
+      if (endpoint.table) {
+        detail.push("表：" + endpoint.table);
+      }
+      if (endpoint.notes) {
+        detail.push(endpoint.notes);
+      }
+      meta.textContent = detail.join(" · ");
+      card.appendChild(meta);
+      var tools = document.createElement("div");
+      tools.className = "trend-endpoint-actions";
+      var toggleBtn = document.createElement("button");
+      toggleBtn.type = "button";
+      toggleBtn.className = "ghost-button";
+      toggleBtn.textContent = endpoint.enabled ? "停用" : "启用";
+      toggleBtn.addEventListener("click", function () {
+        services.updateEndpoint(endpoint.id, { enabled: !endpoint.enabled });
+      });
+      var editBtn = document.createElement("button");
+      editBtn.type = "button";
+      editBtn.className = "ghost-button";
+      editBtn.textContent = "编辑";
+      editBtn.addEventListener("click", function () {
+        openEndpointModal(endpoint);
+      });
+      var removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "ghost-button danger";
+      removeBtn.textContent = "删除";
+      removeBtn.addEventListener("click", function () {
+        if (window.confirm("确定删除该数据源？")) {
+          services.removeEndpoint(endpoint.id);
+        }
+      });
+      tools.appendChild(toggleBtn);
+      tools.appendChild(editBtn);
+      tools.appendChild(removeBtn);
+      card.appendChild(tools);
+      return card;
+    }
+
+    function renderEndpointList(container, endpoints) {
+      if (!container) {
         return;
       }
-      endpointListEl.innerHTML = "";
-      var endpoints = (state.snapshot && state.snapshot.settings && state.snapshot.settings.mesEndpoints) || [];
+      container.innerHTML = "";
       if (!endpoints.length) {
         var empty = document.createElement("div");
         empty.className = "trend-endpoint-empty";
         empty.textContent = "尚未注册 MES 数据源。";
-        endpointListEl.appendChild(empty);
+        container.appendChild(empty);
         return;
       }
       endpoints.forEach(function (endpoint) {
-        var card = document.createElement("div");
-        card.className = "trend-endpoint-item";
-        var header = document.createElement("header");
-        var title = document.createElement("div");
-        title.textContent = endpoint.name + " · " + (endpoint.type || "rest");
-        header.appendChild(title);
-        var status = document.createElement("span");
-        status.className = "trend-endpoint-status";
-        status.textContent = endpoint.enabled ? "启用" : "禁用";
-        header.appendChild(status);
-        card.appendChild(header);
-        var meta = document.createElement("div");
-        meta.className = "trend-endpoint-meta";
-        var detail = [];
-        if (endpoint.url) {
-          detail.push(endpoint.url);
-        }
-        if (endpoint.database) {
-          detail.push("库：" + endpoint.database);
-        }
-        if (endpoint.table) {
-          detail.push("表：" + endpoint.table);
-        }
-        if (endpoint.notes) {
-          detail.push(endpoint.notes);
-        }
-        meta.textContent = detail.join(" · ");
-        card.appendChild(meta);
-        var tools = document.createElement("div");
-        tools.className = "trend-endpoint-actions";
-        var toggleBtn = document.createElement("button");
-        toggleBtn.type = "button";
-        toggleBtn.className = "ghost-button";
-        toggleBtn.textContent = endpoint.enabled ? "停用" : "启用";
-        toggleBtn.addEventListener("click", function () {
-          services.updateEndpoint(endpoint.id, { enabled: !endpoint.enabled });
-        });
-        var editBtn = document.createElement("button");
-        editBtn.type = "button";
-        editBtn.className = "ghost-button";
-        editBtn.textContent = "编辑";
-        editBtn.addEventListener("click", function () {
-          editEndpoint(endpoint);
-        });
-        var removeBtn = document.createElement("button");
-        removeBtn.type = "button";
-        removeBtn.className = "ghost-button danger";
-        removeBtn.textContent = "删除";
-        removeBtn.addEventListener("click", function () {
-          if (window.confirm("确定删除该数据源？")) {
-            services.removeEndpoint(endpoint.id);
-          }
-        });
-        tools.appendChild(toggleBtn);
-        tools.appendChild(editBtn);
-        tools.appendChild(removeBtn);
-        card.appendChild(tools);
-        endpointListEl.appendChild(card);
+        container.appendChild(buildEndpointCard(endpoint));
       });
+    }
+
+    function renderEndpoints() {
+      var endpoints = (state.snapshot && state.snapshot.settings && state.snapshot.settings.mesEndpoints) || [];
+      renderEndpointList(endpointListEl, endpoints);
+      renderEndpointList(settingsModalEndpointList, endpoints);
     }
 
     function renderFeedbackOptions() {
@@ -3069,39 +3659,11 @@
     }
 
     function editEndpoint(endpoint) {
-      var name = window.prompt("数据源名称", endpoint.name || "MES 接口");
-      if (!name) {
-        return;
-      }
-      var type = window.prompt("类型 (rest/websocket/database)", endpoint.type || "rest");
-      var url = window.prompt("接口地址 (可空)", endpoint.url || "");
-      var database = window.prompt("数据库 (可空)", endpoint.database || "");
-      var table = window.prompt("表/视图 (可空)", endpoint.table || "");
-      var notes = window.prompt("备注", endpoint.notes || "");
-      services.updateEndpoint(endpoint.id, {
-        name: name,
-        type: type,
-        url: url,
-        database: database,
-        table: table,
-        notes: notes
-      });
+      openEndpointModal(endpoint);
     }
 
     function addEndpoint() {
-      var name = window.prompt("数据源名称", "MES REST API");
-      if (!name) {
-        return;
-      }
-      var type = window.prompt("类型 (rest/websocket/database)", "rest");
-      var url = window.prompt("接口地址", "https://mes.local/api/trend");
-      var notes = window.prompt("备注", "待接入实际数据");
-      services.registerEndpoint({
-        name: name,
-        type: type,
-        url: url,
-        notes: notes
-      });
+      openEndpointModal(null);
     }
 
     function exportCsv() {
@@ -3137,13 +3699,49 @@
       if (!state.snapshot || !state.snapshot.settings) {
         return;
       }
-      sampleIntervalInput.value = state.snapshot.settings.sampleIntervalMs || 60000;
-      lookbackInput.value = state.snapshot.settings.lookbackMinutes || 120;
-      predictionInput.value = state.snapshot.settings.predictionMinutes || 30;
+      var sampleValue = state.snapshot.settings.sampleIntervalMs || 60000;
+      var lookbackValue = state.snapshot.settings.lookbackMinutes || 120;
+      var predictionValue = state.snapshot.settings.predictionMinutes || 30;
       var target = state.snapshot.settings.outputTarget || {};
-      targetCenterInput.value = typeof target.center === "number" ? target.center : "";
-      targetLowerInput.value = typeof target.lower === "number" ? target.lower : "";
-      targetUpperInput.value = typeof target.upper === "number" ? target.upper : "";
+      var centerValue = typeof target.center === "number" ? target.center : "";
+      var lowerValue = typeof target.lower === "number" ? target.lower : "";
+      var upperValue = typeof target.upper === "number" ? target.upper : "";
+      if (sampleIntervalInput) {
+        sampleIntervalInput.value = sampleValue;
+      }
+      if (lookbackInput) {
+        lookbackInput.value = lookbackValue;
+      }
+      if (predictionInput) {
+        predictionInput.value = predictionValue;
+      }
+      if (targetCenterInput) {
+        targetCenterInput.value = centerValue;
+      }
+      if (targetLowerInput) {
+        targetLowerInput.value = lowerValue;
+      }
+      if (targetUpperInput) {
+        targetUpperInput.value = upperValue;
+      }
+      if (settingsModalSampleInput) {
+        settingsModalSampleInput.value = sampleValue;
+      }
+      if (settingsModalLookbackInput) {
+        settingsModalLookbackInput.value = lookbackValue;
+      }
+      if (settingsModalPredictionInput) {
+        settingsModalPredictionInput.value = predictionValue;
+      }
+      if (settingsModalCenterInput) {
+        settingsModalCenterInput.value = centerValue;
+      }
+      if (settingsModalLowerInput) {
+        settingsModalLowerInput.value = lowerValue;
+      }
+      if (settingsModalUpperInput) {
+        settingsModalUpperInput.value = upperValue;
+      }
     }
 
     function renderScenarioAdjustments() {
@@ -3751,6 +4349,32 @@
       });
     }
 
+    if (explorerConsoleBtn) {
+      explorerConsoleBtn.addEventListener("click", function () {
+        openConsolePanel();
+      });
+    }
+
+    if (consoleCloseBtn) {
+      consoleCloseBtn.addEventListener("click", function () {
+        closeConsolePanelOverlay();
+      });
+    }
+
+    if (consolePanelEl) {
+      consolePanelEl.addEventListener("click", function (evt) {
+        if (evt.target === consolePanelEl) {
+          closeConsolePanelOverlay();
+        }
+      });
+    }
+
+    if (outputEditBtn) {
+      outputEditBtn.addEventListener("click", function () {
+        openTargetModal();
+      });
+    }
+
     if (explorerBreadcrumbEl) {
       explorerBreadcrumbEl.addEventListener("click", function (evt) {
         var target = evt.target;
@@ -4036,6 +4660,71 @@
       exportCsvBtn.addEventListener("click", exportCsv);
     }
 
+    if (groupModalForm) {
+      groupModalForm.addEventListener("submit", submitGroupModal);
+    }
+    if (groupModalCloseBtn) {
+      groupModalCloseBtn.addEventListener("click", function () {
+        closeGroupModal();
+      });
+    }
+    if (groupModalCancelBtn) {
+      groupModalCancelBtn.addEventListener("click", function (evt) {
+        evt.preventDefault();
+        closeGroupModal();
+      });
+    }
+    if (groupModalDuplicateBtn) {
+      groupModalDuplicateBtn.addEventListener("click", function () {
+        if (state.groupModalState && state.groupModalState.originalId) {
+          var sourceId = state.groupModalState.originalId;
+          closeGroupModal();
+          duplicateGroup(sourceId);
+        }
+      });
+    }
+    if (targetModalForm) {
+      targetModalForm.addEventListener("submit", submitTargetModal);
+    }
+    if (targetModalCloseBtn) {
+      targetModalCloseBtn.addEventListener("click", function () {
+        closeTargetModal();
+      });
+    }
+    if (targetModalCancelBtn) {
+      targetModalCancelBtn.addEventListener("click", function (evt) {
+        evt.preventDefault();
+        closeTargetModal();
+      });
+    }
+    if (settingsModalForm) {
+      settingsModalForm.addEventListener("submit", submitSettingsModal);
+    }
+    if (settingsModalCloseBtn) {
+      settingsModalCloseBtn.addEventListener("click", function () {
+        closeSettingsModal();
+      });
+    }
+    if (settingsModalAddEndpointBtn) {
+      settingsModalAddEndpointBtn.addEventListener("click", function () {
+        openEndpointModal(null);
+      });
+    }
+    if (endpointModalForm) {
+      endpointModalForm.addEventListener("submit", submitEndpointModal);
+    }
+    if (endpointModalCloseBtn) {
+      endpointModalCloseBtn.addEventListener("click", function () {
+        closeEndpointModal();
+      });
+    }
+    if (endpointModalCancelBtn) {
+      endpointModalCancelBtn.addEventListener("click", function (evt) {
+        evt.preventDefault();
+        closeEndpointModal();
+      });
+    }
+
     if (settingsForm) {
       settingsForm.addEventListener("submit", function (evt) {
         evt.preventDefault();
@@ -4082,6 +4771,19 @@
       state.unsubscribe = services.subscribe(syncSnapshot);
     }
     syncSnapshot(state.snapshot);
+    if (typeof window !== "undefined" && window.sessionStorage) {
+      try {
+        var pendingSelection = window.sessionStorage.getItem("trend:selectedNodeId");
+        if (pendingSelection) {
+          window.sessionStorage.removeItem("trend:selectedNodeId");
+          var pendingNode = findNode(pendingSelection);
+          if (pendingNode) {
+            openConsolePanel();
+            handleNodeSelection(pendingSelection);
+          }
+        }
+      } catch (err) {}
+    }
   }
 
   window.AIToolsTrend = { mount: mount };
