@@ -7,7 +7,7 @@
     if (value === null || value === undefined || isNaN(value)) {
       return "--";
     }
-    var fixed = Math.abs(value) >= 100 ? value.toFixed(1) : value.toFixed(2);
+    var fixed = Number(value).toFixed(3);
     return fixed + (unit ? " " + unit : "");
   }
 
@@ -48,86 +48,332 @@
     if (!canvas || !canvas.getContext) {
       return;
     }
+    options = options || {};
     var ctx = canvas.getContext("2d");
     var width = canvas.clientWidth || 600;
     var height = canvas.clientHeight || 260;
     canvas.width = width;
     canvas.height = height;
+    var mini = !!options.mini;
+    var paddingLeft = mini ? 12 : 68;
+    var paddingRight = mini ? 12 : 28;
+    var paddingTop = mini ? 8 : 28;
+    var paddingBottom = mini ? 12 : 56;
+    var plotWidth = Math.max(20, width - paddingLeft - paddingRight);
+    var plotHeight = Math.max(20, height - paddingTop - paddingBottom);
+
     ctx.clearRect(0, 0, width, height);
-    ctx.fillStyle = "#f8fafc";
+    ctx.fillStyle = mini ? "#f8fafc" : "#ffffff";
     ctx.fillRect(0, 0, width, height);
-    ctx.strokeStyle = "rgba(15, 23, 42, 0.08)";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(0, height - 30);
-    ctx.lineTo(width, height - 30);
-    ctx.stroke();
-    if (!series || series.length === 0) {
-      ctx.fillStyle = "rgba(15, 23, 42, 0.45)";
-      ctx.font = "14px/1.6 'PingFang SC', 'Microsoft YaHei', sans-serif";
-      ctx.fillText("暂无数据", 20, height / 2);
-      return;
-    }
-    var min = series[0].value;
-    var max = series[0].value;
-    var minTime = new Date(series[0].capturedAt).getTime();
-    var maxTime = minTime;
-    for (var i = 1; i < series.length; i += 1) {
-      var value = series[i].value;
-      if (value < min) {
-        min = value;
+
+    var sanitized = Array.isArray(series)
+      ? series
+          .filter(function (item) {
+            return item && typeof item.value === "number" && item.capturedAt;
+          })
+          .sort(function (a, b) {
+            return new Date(a.capturedAt) - new Date(b.capturedAt);
+          })
+      : [];
+
+    var lower = typeof options.lower === "number" ? options.lower : null;
+    var upper = typeof options.upper === "number" ? options.upper : null;
+    var center = typeof options.center === "number" ? options.center : null;
+
+    var minValue = null;
+    var maxValue = null;
+    var minTime = null;
+    var maxTime = null;
+    sanitized.forEach(function (point) {
+      if (minValue === null || point.value < minValue) {
+        minValue = point.value;
       }
-      if (value > max) {
-        max = value;
+      if (maxValue === null || point.value > maxValue) {
+        maxValue = point.value;
       }
-      var ts = new Date(series[i].capturedAt).getTime();
-      if (ts < minTime) {
+      var ts = new Date(point.capturedAt).getTime();
+      if (!isFinite(ts)) {
+        return;
+      }
+      if (minTime === null || ts < minTime) {
         minTime = ts;
       }
-      if (ts > maxTime) {
+      if (maxTime === null || ts > maxTime) {
         maxTime = ts;
       }
+    });
+
+    [lower, upper].forEach(function (bound) {
+      if (typeof bound === "number") {
+        if (minValue === null || bound < minValue) {
+          minValue = bound;
+        }
+        if (maxValue === null || bound > maxValue) {
+          maxValue = bound;
+        }
+      }
+    });
+
+    if (minValue === null || maxValue === null || minTime === null || maxTime === null) {
+      if (!mini) {
+        ctx.fillStyle = "rgba(15, 23, 42, 0.45)";
+        ctx.font = "14px/1.6 'PingFang SC', 'Microsoft YaHei', sans-serif";
+        ctx.fillText("暂无数据", paddingLeft, height / 2);
+      }
+      return;
     }
-    if (Math.abs(max - min) < 1e-6) {
-      var center = (max + min) / 2;
-      max = center + 1;
-      min = center - 1;
+
+    if (Math.abs(maxValue - minValue) < 1e-6) {
+      var pad = Math.max(1, Math.abs(maxValue) * 0.05 || 1);
+      maxValue += pad;
+      minValue -= pad;
     }
-    var timeDiff = Math.max(maxTime - minTime, 1);
-    var padding = 24;
-    var top = padding;
-    var bottom = height - padding * 1.5;
-    ctx.strokeStyle = options && options.color ? options.color : "#2563eb";
-    ctx.lineWidth = 2;
+    var valueRange = maxValue - minValue;
+    var timeRange = Math.max(1, maxTime - minTime);
+
+    var originX = paddingLeft;
+    var originY = height - paddingBottom;
+
+    if (!mini) {
+      ctx.strokeStyle = "rgba(15, 23, 42, 0.18)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(originX, paddingTop);
+      ctx.lineTo(originX, originY);
+      ctx.lineTo(width - paddingRight, originY);
+      ctx.stroke();
+
+      var yTicks = 4;
+      ctx.font = "12px/1.4 'PingFang SC', 'Microsoft YaHei', sans-serif";
+      ctx.fillStyle = "rgba(15, 23, 42, 0.75)";
+      ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
+      for (var i = 0; i <= yTicks; i += 1) {
+        var valueTick = minValue + (valueRange * i) / yTicks;
+        var y = originY - ((valueTick - minValue) / valueRange) * plotHeight;
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = "rgba(148, 163, 184, 0.35)";
+        ctx.beginPath();
+        ctx.moveTo(originX, y);
+        ctx.lineTo(width - paddingRight, y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillText(valueTick.toFixed(3), originX - 10, y);
+      }
+
+      var xTicks = Math.max(2, Math.min(6, sanitized.length));
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      for (var j = 0; j <= xTicks; j += 1) {
+        var ratio = j / xTicks;
+        var xTick = originX + ratio * plotWidth;
+        var tsTick = minTime + ratio * timeRange;
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = "rgba(148, 163, 184, 0.25)";
+        ctx.beginPath();
+        ctx.moveTo(xTick, paddingTop);
+        ctx.lineTo(xTick, originY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = "rgba(15, 23, 42, 0.75)";
+        ctx.fillText(formatTime(tsTick), xTick, originY + 8);
+      }
+
+      ctx.save();
+      ctx.translate(16, paddingTop + plotHeight / 2);
+      ctx.rotate(-Math.PI / 2);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      ctx.fillStyle = "rgba(15, 23, 42, 0.6)";
+      ctx.fillText("数值" + (options.unit ? " (" + options.unit + ")" : ""), 0, 0);
+      ctx.restore();
+
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.fillStyle = "rgba(15, 23, 42, 0.6)";
+      ctx.fillText("时间", originX + plotWidth / 2, height - 8);
+    }
+
+    function drawLimitLine(value, color, label) {
+      if (typeof value !== "number") {
+        return;
+      }
+      var yPos = originY - ((value - minValue) / valueRange) * plotHeight;
+      ctx.save();
+      ctx.setLineDash([6, 4]);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(originX, yPos);
+      ctx.lineTo(width - paddingRight, yPos);
+      ctx.stroke();
+      ctx.restore();
+      if (!mini) {
+        ctx.fillStyle = color;
+        ctx.textAlign = "right";
+        ctx.textBaseline = "bottom";
+        ctx.fillText(label + " " + value.toFixed(3), width - paddingRight - 6, yPos - 4);
+      }
+    }
+
+    if (!mini) {
+      drawLimitLine(upper, "#ef4444", "上限");
+      drawLimitLine(lower, "#0ea5e9", "下限");
+      if (typeof center === "number") {
+        drawLimitLine(center, "#6366f1", "中值");
+      }
+    }
+
+    if (!sanitized.length) {
+      return;
+    }
+
+    ctx.lineWidth = mini ? 1.5 : 2.4;
+    ctx.strokeStyle = options.color || "#2563eb";
     ctx.beginPath();
-    for (var j = 0; j < series.length; j += 1) {
-      var point = series[j];
-      var tsPoint = new Date(point.capturedAt).getTime();
-      var x = padding + ((tsPoint - minTime) / timeDiff) * (width - padding * 2);
-      var y = bottom - ((point.value - min) / (max - min)) * (bottom - top);
-      if (j === 0) {
+    sanitized.forEach(function (point, index) {
+      var ts = new Date(point.capturedAt).getTime();
+      var x = originX + ((ts - minTime) / timeRange) * plotWidth;
+      var y = originY - ((point.value - minValue) / valueRange) * plotHeight;
+      if (index === 0) {
         ctx.moveTo(x, y);
       } else {
         ctx.lineTo(x, y);
       }
-    }
+    });
     ctx.stroke();
+  }
+
+  function calcSlope(series) {
+    if (!Array.isArray(series) || series.length < 2) {
+      return 0;
+    }
+    var first = series[0];
+    var last = series[series.length - 1];
+    if (!first || !last) {
+      return 0;
+    }
+    var firstTime = new Date(first.capturedAt).getTime();
+    var lastTime = new Date(last.capturedAt).getTime();
+    if (!isFinite(firstTime) || !isFinite(lastTime) || lastTime === firstTime) {
+      return 0;
+    }
+    var deltaValue = last.value - first.value;
+    var deltaMinutes = (lastTime - firstTime) / 60000;
+    if (!isFinite(deltaMinutes) || deltaMinutes === 0) {
+      return 0;
+    }
+    return deltaValue / deltaMinutes;
+  }
+
+  function classifySlopeLabel(slope, thresholds) {
+    thresholds = thresholds || {};
+    var tolerance = typeof thresholds.tolerance === "number" ? thresholds.tolerance : 0.002;
+    var gentle = typeof thresholds.gentle === "number" ? thresholds.gentle : 0.01;
+    var strong = typeof thresholds.strong === "number" ? thresholds.strong : 0.03;
+    var extreme = typeof thresholds.extreme === "number" ? thresholds.extreme : 0.08;
+    if (Math.abs(slope) <= tolerance) {
+      return "平稳";
+    }
+    if (slope > 0) {
+      if (slope >= extreme) {
+        return "极速上升";
+      }
+      if (slope >= strong) {
+        return "上升";
+      }
+      return "缓慢上升";
+    }
+    if (slope <= -extreme) {
+      return "极速下降";
+    }
+    return "缓慢下降";
+  }
+
+  function analyzeTrendProfile(series, options) {
+    options = options || {};
+    if (!Array.isArray(series) || series.length < 2) {
+      return { label: "平稳", slope: 0, durationMinutes: 0, direction: 0 };
+    }
+    var windowSize = options.windowSize || 30;
+    var tolerance = typeof options.tolerance === "number" ? options.tolerance : 0.002;
+    var ordered = series
+      .filter(function (item) {
+        return item && typeof item.value === "number" && item.capturedAt;
+      })
+      .sort(function (a, b) {
+        return new Date(a.capturedAt) - new Date(b.capturedAt);
+      });
+    if (ordered.length > windowSize) {
+      ordered = ordered.slice(ordered.length - windowSize);
+    }
+    if (ordered.length < 2) {
+      return { label: "平稳", slope: 0, durationMinutes: 0, direction: 0 };
+    }
+    var slope = calcSlope(ordered);
+    var label = classifySlopeLabel(slope, options);
+    var direction = 0;
+    if (slope > tolerance) {
+      direction = 1;
+    } else if (slope < -tolerance) {
+      direction = -1;
+    }
+    var durationMinutes = 0;
+    if (direction !== 0) {
+      var end = ordered[ordered.length - 1];
+      var endTime = new Date(end.capturedAt).getTime();
+      var startTime = endTime;
+      for (var i = ordered.length - 2; i >= 0; i -= 1) {
+        var current = ordered[i];
+        var currentTime = new Date(current.capturedAt).getTime();
+        if (!isFinite(currentTime)) {
+          continue;
+        }
+        var deltaMinutes = (endTime - currentTime) / 60000;
+        if (deltaMinutes <= 0) {
+          continue;
+        }
+        var deltaValue = end.value - current.value;
+        var localSlope = deltaValue / deltaMinutes;
+        if (direction > 0 && localSlope <= tolerance) {
+          startTime = new Date(ordered[i + 1].capturedAt).getTime();
+          break;
+        }
+        if (direction < 0 && localSlope >= -tolerance) {
+          startTime = new Date(ordered[i + 1].capturedAt).getTime();
+          break;
+        }
+        startTime = currentTime;
+      }
+      if (endTime > startTime) {
+        durationMinutes = Math.max(0, Math.round((endTime - startTime) / 60000));
+      }
+    }
+    return {
+      label: label,
+      slope: slope,
+      durationMinutes: durationMinutes,
+      direction: direction
+    };
   }
 
   function drawMultiSeries(canvas, datasets, options) {
     if (!canvas || !canvas.getContext) {
       return;
     }
-    var sets = Array.isArray(datasets) ? datasets.filter(function (set) {
-      return set && Array.isArray(set.data) && set.data.length;
-    }) : [];
+    options = options || {};
+    var sets = Array.isArray(datasets)
+      ? datasets.filter(function (set) {
+          return set && Array.isArray(set.data) && set.data.length;
+        })
+      : [];
     var ctx = canvas.getContext("2d");
     var width = canvas.clientWidth || 600;
     var height = canvas.clientHeight || 260;
     canvas.width = width;
     canvas.height = height;
     ctx.clearRect(0, 0, width, height);
-    ctx.fillStyle = "#f8fafc";
+    ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, width, height);
     if (!sets.length) {
       ctx.fillStyle = "rgba(15, 23, 42, 0.45)";
@@ -135,44 +381,152 @@
       ctx.fillText("暂无数据", 20, height / 2);
       return;
     }
-    var min = sets[0].data[0].value;
-    var max = sets[0].data[0].value;
-    var minTime = new Date(sets[0].data[0].capturedAt).getTime();
-    var maxTime = minTime;
+    var paddingLeft = 68;
+    var paddingRight = 32;
+    var paddingTop = 28;
+    var paddingBottom = 56;
+    var plotWidth = Math.max(20, width - paddingLeft - paddingRight);
+    var plotHeight = Math.max(20, height - paddingTop - paddingBottom);
+
+    var minValue = null;
+    var maxValue = null;
+    var minTime = null;
+    var maxTime = null;
     sets.forEach(function (set) {
       set.data.forEach(function (point) {
-        if (typeof point.value !== "number" || !point.capturedAt) {
+        if (!point || typeof point.value !== "number" || !point.capturedAt) {
           return;
         }
-        if (point.value < min) { min = point.value; }
-        if (point.value > max) { max = point.value; }
+        if (minValue === null || point.value < minValue) {
+          minValue = point.value;
+        }
+        if (maxValue === null || point.value > maxValue) {
+          maxValue = point.value;
+        }
         var ts = new Date(point.capturedAt).getTime();
-        if (isFinite(ts)) {
-          if (ts < minTime) { minTime = ts; }
-          if (ts > maxTime) { maxTime = ts; }
+        if (!isFinite(ts)) {
+          return;
+        }
+        if (minTime === null || ts < minTime) {
+          minTime = ts;
+        }
+        if (maxTime === null || ts > maxTime) {
+          maxTime = ts;
         }
       });
     });
-    if (!isFinite(minTime) || !isFinite(maxTime)) {
-      minTime = Date.now() - 600000;
-      maxTime = Date.now();
+
+    if (minValue === null || maxValue === null || minTime === null || maxTime === null) {
+      ctx.fillStyle = "rgba(15, 23, 42, 0.45)";
+      ctx.font = "14px/1.6 'PingFang SC', 'Microsoft YaHei', sans-serif";
+      ctx.fillText("暂无数据", 20, height / 2);
+      return;
     }
-    if (Math.abs(max - min) < 1e-6) {
-      var center = (max + min) / 2;
-      max = center + 1;
-      min = center - 1;
+
+    [options.lower, options.upper].forEach(function (bound) {
+      if (typeof bound === "number") {
+        if (minValue === null || bound < minValue) {
+          minValue = bound;
+        }
+        if (maxValue === null || bound > maxValue) {
+          maxValue = bound;
+        }
+      }
+    });
+
+    if (Math.abs(maxValue - minValue) < 1e-6) {
+      var pad = Math.max(1, Math.abs(maxValue) * 0.05 || 1);
+      maxValue += pad;
+      minValue -= pad;
     }
-    var padding = 24;
-    var bottom = height - padding * 1.4;
-    var top = padding;
-    var span = Math.max(maxTime - minTime, 1);
-    ctx.strokeStyle = "rgba(15, 23, 42, 0.08)";
+
+    var originX = paddingLeft;
+    var originY = height - paddingBottom;
+    var valueRange = maxValue - minValue;
+    var timeRange = Math.max(1, maxTime - minTime);
+
+    ctx.strokeStyle = "rgba(15, 23, 42, 0.18)";
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(padding, bottom);
-    ctx.lineTo(width - padding, bottom);
+    ctx.moveTo(originX, paddingTop);
+    ctx.lineTo(originX, originY);
+    ctx.lineTo(width - paddingRight, originY);
     ctx.stroke();
-    var palette = (options && options.colors) || ["#94a3b8", "#2563eb", "#f97316", "#10b981"];
+
+    ctx.font = "12px/1.4 'PingFang SC', 'Microsoft YaHei', sans-serif";
+    ctx.fillStyle = "rgba(15, 23, 42, 0.75)";
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    var yTicks = 4;
+    for (var i = 0; i <= yTicks; i += 1) {
+      var valueTick = minValue + (valueRange * i) / yTicks;
+      var y = originY - ((valueTick - minValue) / valueRange) * plotHeight;
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = "rgba(148, 163, 184, 0.35)";
+      ctx.beginPath();
+      ctx.moveTo(originX, y);
+      ctx.lineTo(width - paddingRight, y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillText(valueTick.toFixed(3), originX - 10, y);
+    }
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    var xTicks = 6;
+    for (var j = 0; j <= xTicks; j += 1) {
+      var ratio = j / xTicks;
+      var xTick = originX + ratio * plotWidth;
+      var tsTick = minTime + ratio * timeRange;
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = "rgba(148, 163, 184, 0.25)";
+      ctx.beginPath();
+      ctx.moveTo(xTick, paddingTop);
+      ctx.lineTo(xTick, originY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = "rgba(15, 23, 42, 0.75)";
+      ctx.fillText(formatTime(tsTick), xTick, originY + 8);
+    }
+
+    ctx.fillStyle = "rgba(15, 23, 42, 0.6)";
+    ctx.textBaseline = "bottom";
+    ctx.fillText("时间", originX + plotWidth / 2, height - 8);
+    ctx.save();
+    ctx.translate(18, paddingTop + plotHeight / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.fillText("数值" + (options.unit ? " (" + options.unit + ")" : ""), 0, 0);
+    ctx.restore();
+
+    function drawReference(value, color, label) {
+      if (typeof value !== "number") {
+        return;
+      }
+      var y = originY - ((value - minValue) / valueRange) * plotHeight;
+      ctx.save();
+      ctx.setLineDash([6, 4]);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(originX, y);
+      ctx.lineTo(width - paddingRight, y);
+      ctx.stroke();
+      ctx.restore();
+      ctx.fillStyle = color;
+      ctx.textAlign = "right";
+      ctx.textBaseline = "bottom";
+      ctx.fillText(label + " " + value.toFixed(3), width - paddingRight - 6, y - 4);
+    }
+
+    drawReference(options.upper, "#ef4444", "上限");
+    drawReference(options.lower, "#0ea5e9", "下限");
+    if (typeof options.center === "number") {
+      drawReference(options.center, "#6366f1", "中值");
+    }
+
+    var palette = options.colors || ["#2563eb", "#f97316", "#10b981", "#0ea5e9", "#6366f1"];
     sets.forEach(function (set, index) {
       var color = set.color || palette[index % palette.length];
       ctx.lineWidth = set.lineWidth || 2;
@@ -188,8 +542,8 @@
         if (!isFinite(ts)) {
           return;
         }
-        var x = padding + ((ts - minTime) / span) * (width - padding * 2);
-        var y = bottom - ((point.value - min) / (max - min)) * (bottom - top);
+        var x = originX + ((ts - minTime) / timeRange) * plotWidth;
+        var y = originY - ((point.value - minValue) / valueRange) * plotHeight;
         if (pointIndex === 0) {
           ctx.moveTo(x, y);
         } else {
@@ -1206,7 +1560,16 @@
       series.sort(function (a, b) {
         return new Date(a.capturedAt) - new Date(b.capturedAt);
       });
-      drawSeries(chartCanvas, series, { color: "#2563eb" });
+      var parent = node.parentId ? findNode(node.parentId) : null;
+      var bounds = resolveNodeBounds(parent || node, parent ? node : null);
+      var unit = node && node.unit ? node.unit : parent && parent.unit ? parent.unit : "";
+      drawSeries(chartCanvas, series, {
+        color: "#2563eb",
+        lower: bounds.lower,
+        upper: bounds.upper,
+        center: bounds.center,
+        unit: unit
+      });
     }
 
     function collectNodeSeries(nodeId, subNodeId) {
@@ -1316,8 +1679,9 @@
           var latest = series.length ? series[series.length - 1] : null;
           var bounds = resolveNodeBounds(group, innerNode);
           var level = describeLevel(latest ? latest.value : null, bounds);
-          var slope = calcSlope(series.slice(-Math.min(series.length, 10)));
-          var trendLabel = slope > 0.05 ? "上升" : slope < -0.05 ? "下降" : "平稳";
+          var trendProfile = analyzeTrendProfile(series, { windowSize: 24 });
+          var trendLabel = trendProfile.label;
+          var trendDuration = trendProfile.durationMinutes || 0;
           var card = document.createElement("div");
           card.className = "trend-matrix-card";
           card.setAttribute("role", "listitem");
@@ -1344,14 +1708,19 @@
           card.appendChild(valueRow);
           var meta = document.createElement("div");
           meta.className = "trend-matrix-meta";
-          meta.textContent = (latest ? formatTime(latest.capturedAt) + " 更新" : "无数据") + " · 趋势 " + trendLabel;
+          var metaText = latest ? formatTime(latest.capturedAt) + " 更新" : "无数据";
+          metaText += " · 趋势 " + trendLabel;
+          if (trendDuration > 0 && trendLabel !== "平稳") {
+            metaText += " · " + trendDuration + " 分钟";
+          }
+          meta.textContent = metaText;
           card.appendChild(meta);
           var spark = document.createElement("canvas");
           spark.className = "trend-matrix-spark";
           card.appendChild(spark);
           matrixGridEl.appendChild(card);
           window.requestAnimationFrame(function () {
-            drawSeries(spark, series.slice(-20), { color: "#0ea5e9" });
+            drawSeries(spark, series.slice(-20), { color: "#0ea5e9", mini: true });
           });
         });
       });
@@ -1514,7 +1883,11 @@
         card.appendChild(valueRow);
         var meta = document.createElement("div");
         meta.className = "trend-forecast-meta";
-        meta.textContent = "前瞻 " + (forecast.horizonMinutes || 0) + " 分钟 · 置信度 " + Math.round((forecast.confidence || 0) * 100) + "% · 趋势 " + (forecast.trendLabel || "平稳");
+        var trendText = forecast.trendLabel || "平稳";
+        if (forecast.trendDuration && forecast.trendDuration > 0 && trendText !== "平稳") {
+          trendText += " · " + forecast.trendDuration + " 分钟";
+        }
+        meta.textContent = "前瞻 " + (forecast.horizonMinutes || 0) + " 分钟 · 置信度 " + Math.round((forecast.confidence || 0) * 100) + "% · 趋势 " + trendText;
         card.appendChild(meta);
         if (forecast.context && forecast.context.summary && forecast.context.summary.length) {
           var ctxList = document.createElement("ul");
@@ -1582,7 +1955,11 @@
         if (item.forecast && typeof item.forecast.value === "number") {
           var forecastInfo = document.createElement("div");
           forecastInfo.className = "trend-advice-forecast";
-          forecastInfo.textContent = "预测 " + (item.forecast.horizonMinutes || 0) + " 分钟后 " + formatNumber(item.forecast.value, item.unit || "") + " · 置信度 " + Math.round(((item.forecast.confidence || 0) * 100)) + "%";
+          var trendText = item.forecast.trendLabel || "平稳";
+          if (item.forecast.trendDuration && item.forecast.trendDuration > 0 && trendText !== "平稳") {
+            trendText += " · " + item.forecast.trendDuration + " 分钟";
+          }
+          forecastInfo.textContent = "预测 " + (item.forecast.horizonMinutes || 0) + " 分钟后 " + formatNumber(item.forecast.value, item.unit || "") + " · 置信度 " + Math.round(((item.forecast.confidence || 0) * 100)) + "% · 趋势 " + trendText;
           card.appendChild(forecastInfo);
         }
         if (item.detail && item.detail.length) {
@@ -1947,7 +2324,12 @@
       drawMultiSeries(scenarioChartCanvas, [
         { label: "当前趋势", data: baseline, color: "#94a3b8", dashed: true },
         { label: "模拟预测", data: projection, color: "#2563eb" }
-      ]);
+      ], {
+        lower: typeof entry.lower === "number" ? entry.lower : null,
+        upper: typeof entry.upper === "number" ? entry.upper : null,
+        center: typeof entry.center === "number" ? entry.center : null,
+        unit: entry.unit || ""
+      });
       if (scenarioLegend) {
         scenarioLegend.innerHTML = "";
         [

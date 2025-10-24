@@ -984,12 +984,19 @@ textarea:focus {
 
 .tool-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 20px;
 }
 
 .tool-grid.compact {
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+@media (max-width: 1320px) {
+  .tool-grid,
+  .tool-grid.compact {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  }
 }
 
 .tool-card {
@@ -5727,13 +5734,19 @@ textarea:focus {
   cursor: pointer;
 }
 
+.trend-beacon-defer,
 .trend-beacon-reject,
-.trend-beacon-focus {
+.trend-beacon-focus,
+.trend-beacon-history {
   border: 1px solid rgba(15, 23, 42, 0.12);
   background: #ffffff;
   border-radius: 10px;
   padding: 6px 12px;
   cursor: pointer;
+}
+
+.trend-beacon-history {
+  font-size: 13px;
 }
 
 .trend-beacon-footer {

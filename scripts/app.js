@@ -49,7 +49,14 @@
   var trendDemoLastTick = 0;
   var trendBeaconRoot = null;
   var trendBeaconDocListenerAttached = false;
+  var trendBeaconPosition = null;
+  var trendBeaconDrag = null;
+  var trendRejectModal = null;
+  var trendRejectForm = null;
+  var trendRejectInput = null;
+  var trendRejectSuggestionId = null;
   var FAVORITE_OVERLAY_STATE_KEY = "aiFavoriteOverlayState";
+  var TREND_BEACON_POSITION_KEY = "aiTrendBeaconPosition";
   var SESSION_LIST_MIN = 7;
   var SESSION_LIST_STEP = 5;
   var sessionListDisplayLimit = SESSION_LIST_MIN;
@@ -756,10 +763,17 @@
       '<div class="trend-beacon-body"><div class="trend-beacon-summary"></div><div class="trend-beacon-list" role="list"></div></div>' +
       '<footer class="trend-beacon-footer">' +
       '<a class="trend-beacon-link" href="ai-trend.html">进入趋势分析工作台</a>' +
-      '<button type="button" class="trend-beacon-history">查看历史记录</button>' +
+      '<button type="button" class="trend-beacon-history ghost-button">查看历史记录</button>' +
       '</footer>';
     root.appendChild(panel);
     document.body.appendChild(root);
+    restoreTrendBeaconPosition();
+    applyTrendBeaconPosition();
+    attachTrendBeaconDrag(root, [toggle, panel.querySelector(".trend-beacon-header")]);
+    if (!root.dataset.resizeBound) {
+      window.addEventListener("resize", applyTrendBeaconPosition);
+      root.dataset.resizeBound = "true";
+    }
     var closeBtn = panel.querySelector(".trend-beacon-close");
     if (closeBtn) {
       closeBtn.addEventListener("click", function () {
@@ -776,8 +790,183 @@
       document.addEventListener("click", handleTrendBeaconDocumentClick);
       trendBeaconDocListenerAttached = true;
     }
+    ensureTrendRejectModal();
     trendBeaconRoot = root;
     return root;
+  }
+
+  function restoreTrendBeaconPosition() {
+    if (trendBeaconPosition || !window.localStorage) {
+      return;
+    }
+    try {
+      var raw = window.localStorage.getItem(TREND_BEACON_POSITION_KEY);
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.x === "number" && typeof parsed.y === "number") {
+          trendBeaconPosition = parsed;
+        }
+      }
+    } catch (err) {
+      console.warn("trend beacon position restore failed", err);
+    }
+  }
+
+  function applyTrendBeaconPosition() {
+    if (!trendBeaconRoot || !trendBeaconPosition) {
+      return;
+    }
+    var clamped = clampOverlayPosition(trendBeaconPosition.x, trendBeaconPosition.y, trendBeaconRoot);
+    trendBeaconPosition = clamped;
+    trendBeaconRoot.style.left = clamped.x + "px";
+    trendBeaconRoot.style.top = clamped.y + "px";
+    trendBeaconRoot.style.right = "auto";
+    trendBeaconRoot.style.bottom = "auto";
+  }
+
+  function persistTrendBeaconPosition() {
+    if (!trendBeaconPosition || !window.localStorage) {
+      return;
+    }
+    try {
+      window.localStorage.setItem(TREND_BEACON_POSITION_KEY, JSON.stringify(trendBeaconPosition));
+    } catch (err) {
+      console.warn("trend beacon position persist failed", err);
+    }
+  }
+
+  function attachTrendBeaconDrag(root, handles) {
+    if (!root) {
+      return;
+    }
+    if (!Array.isArray(handles)) {
+      handles = handles ? [handles] : [];
+    }
+    handles.forEach(function (handle) {
+      if (!handle) {
+        return;
+      }
+      handle.style.cursor = "move";
+      handle.addEventListener("pointerdown", function (evt) {
+        if (evt.button !== 0) {
+          return;
+        }
+        evt.preventDefault();
+        var rect = root.getBoundingClientRect();
+        trendBeaconDrag = {
+          pointerId: evt.pointerId,
+          offsetX: evt.clientX - rect.left,
+          offsetY: evt.clientY - rect.top
+        };
+        window.addEventListener("pointermove", handleTrendBeaconDragMove);
+        window.addEventListener("pointerup", handleTrendBeaconDragEnd);
+      });
+    });
+  }
+
+  function handleTrendBeaconDragMove(evt) {
+    if (!trendBeaconDrag || evt.pointerId !== trendBeaconDrag.pointerId || !trendBeaconRoot) {
+      return;
+    }
+    var x = evt.clientX - trendBeaconDrag.offsetX;
+    var y = evt.clientY - trendBeaconDrag.offsetY;
+    trendBeaconPosition = clampOverlayPosition(x, y, trendBeaconRoot);
+    trendBeaconRoot.style.left = trendBeaconPosition.x + "px";
+    trendBeaconRoot.style.top = trendBeaconPosition.y + "px";
+    trendBeaconRoot.style.right = "auto";
+    trendBeaconRoot.style.bottom = "auto";
+  }
+
+  function handleTrendBeaconDragEnd(evt) {
+    if (!trendBeaconDrag || evt.pointerId !== trendBeaconDrag.pointerId) {
+      return;
+    }
+    window.removeEventListener("pointermove", handleTrendBeaconDragMove);
+    window.removeEventListener("pointerup", handleTrendBeaconDragEnd);
+    persistTrendBeaconPosition();
+    trendBeaconDrag = null;
+  }
+
+  function ensureTrendRejectModal() {
+    if (!document.body) {
+      return null;
+    }
+    if (trendRejectModal && document.body.contains(trendRejectModal)) {
+      return trendRejectModal;
+    }
+    var modal = document.createElement("div");
+    modal.id = "trendRejectModal";
+    modal.className = "modal hidden";
+    modal.innerHTML = '' +
+      '<div class="modal-content">' +
+      '<header class="modal-header"><h2>拒绝趋势建议</h2><button type="button" class="ghost-button" data-close>关闭</button></header>' +
+      '<form id="trendRejectForm" class="trend-reject-form">' +
+      '<div class="form-field"><label for="trendRejectReason">拒绝理由</label>' +
+      '<textarea id="trendRejectReason" rows="3" placeholder="请输入拒绝原因及正确做法" required></textarea></div>' +
+      '<div class="form-actions">' +
+      '<button type="button" class="ghost-button" data-close>取消</button>' +
+      '<button type="submit" class="primary-button">提交</button>' +
+      '</div>' +
+      '</form>' +
+      '</div>';
+    document.body.appendChild(modal);
+    trendRejectModal = modal;
+    trendRejectForm = modal.querySelector("#trendRejectForm");
+    trendRejectInput = modal.querySelector("#trendRejectReason");
+    var closeButtons = modal.querySelectorAll('[data-close]');
+    closeButtons.forEach(function (btn) {
+      btn.addEventListener("click", closeTrendRejectModal);
+    });
+    if (trendRejectForm) {
+      trendRejectForm.addEventListener("submit", function (evt) {
+        evt.preventDefault();
+        if (!trendRejectSuggestionId) {
+          closeTrendRejectModal();
+          return;
+        }
+        var reason = trendRejectInput && trendRejectInput.value ? trendRejectInput.value.trim() : "";
+        if (!reason) {
+          showToast && showToast("请填写拒绝理由");
+          return;
+        }
+        rejectTrendSuggestion(trendRejectSuggestionId, reason, {
+          rating: 1,
+          note: reason,
+          expected: "",
+          user: currentUser ? currentUser.username : ""
+        });
+        closeTrendRejectModal();
+      });
+    }
+    modal.addEventListener("click", function (evt) {
+      if (evt.target === modal) {
+        closeTrendRejectModal();
+      }
+    });
+    return modal;
+  }
+
+  function openTrendRejectModal(suggestionId) {
+    ensureTrendRejectModal();
+    trendRejectSuggestionId = suggestionId;
+    if (trendRejectInput) {
+      trendRejectInput.value = "";
+    }
+    if (trendRejectModal) {
+      trendRejectModal.classList.remove("hidden");
+      window.requestAnimationFrame(function () {
+        if (trendRejectInput) {
+          trendRejectInput.focus();
+        }
+      });
+    }
+  }
+
+  function closeTrendRejectModal() {
+    if (trendRejectModal) {
+      trendRejectModal.classList.add("hidden");
+    }
+    trendRejectSuggestionId = null;
   }
 
   function toggleTrendBeacon(force) {
@@ -888,6 +1077,11 @@
         detail.innerHTML = item.detail && item.detail.length ? item.detail.map(function (line) {
           return '<span>' + escapeHtml(line) + '</span>';
         }).join("") : "<span>暂无更多描述</span>";
+        if (item.deferCount) {
+          var deferLine = document.createElement("span");
+          deferLine.textContent = "已暂缓 " + item.deferCount + " 次";
+          detail.appendChild(deferLine);
+        }
         entry.appendChild(detail);
         var actions = document.createElement("div");
         actions.className = "trend-beacon-entry-actions";
@@ -900,13 +1094,22 @@
             acceptTrendSuggestion(suggestionId, "采纳自悬浮建议");
           };
         })(item.id));
+        var deferBtn = document.createElement("button");
+        deferBtn.type = "button";
+        deferBtn.className = "trend-beacon-defer";
+        deferBtn.textContent = "暂不采纳";
+        deferBtn.addEventListener("click", (function (suggestionId) {
+          return function () {
+            deferTrendSuggestion(suggestionId, "悬浮面板暂缓");
+          };
+        })(item.id));
         var rejectBtn = document.createElement("button");
         rejectBtn.type = "button";
         rejectBtn.className = "trend-beacon-reject";
-        rejectBtn.textContent = "暂不采纳";
+        rejectBtn.textContent = "拒绝";
         rejectBtn.addEventListener("click", (function (suggestionId) {
           return function () {
-            rejectTrendSuggestion(suggestionId, "悬浮面板拒绝");
+            openTrendRejectModal(suggestionId);
           };
         })(item.id));
         var focusBtn = document.createElement("button");
@@ -919,6 +1122,7 @@
           };
         })(item.id));
         actions.appendChild(acceptBtn);
+        actions.appendChild(deferBtn);
         actions.appendChild(rejectBtn);
         actions.appendChild(focusBtn);
         entry.appendChild(actions);
@@ -927,6 +1131,7 @@
     }
     trendBeaconRoot.classList.remove("hidden");
     applyTrendBeaconState();
+    applyTrendBeaconPosition();
   }
 
   function renderTrendBeacon() {
@@ -4014,6 +4219,97 @@
     return (last.value - first.value) / (dt / 60000);
   }
 
+  function classifySlopeLabel(slope, thresholds) {
+    thresholds = thresholds || {};
+    var tolerance = typeof thresholds.tolerance === "number" ? thresholds.tolerance : 0.002;
+    var gentle = typeof thresholds.gentle === "number" ? thresholds.gentle : 0.01;
+    var strong = typeof thresholds.strong === "number" ? thresholds.strong : 0.03;
+    var extreme = typeof thresholds.extreme === "number" ? thresholds.extreme : 0.08;
+    if (Math.abs(slope) <= tolerance) {
+      return "平稳";
+    }
+    if (slope > 0) {
+      if (slope >= extreme) {
+        return "极速上升";
+      }
+      if (slope >= strong) {
+        return "上升";
+      }
+      return "缓慢上升";
+    }
+    if (slope <= -extreme) {
+      return "极速下降";
+    }
+    return "缓慢下降";
+  }
+
+  function analyzeTrendProfile(series, options) {
+    options = options || {};
+    if (!Array.isArray(series) || series.length < 2) {
+      return { label: "平稳", slope: 0, durationMinutes: 0, direction: 0 };
+    }
+    var windowSize = options.windowSize || 30;
+    var tolerance = typeof options.tolerance === "number" ? options.tolerance : 0.002;
+    var ordered = series
+      .filter(function (item) {
+        return item && typeof item.value === "number" && item.capturedAt;
+      })
+      .sort(function (a, b) {
+        return new Date(a.capturedAt) - new Date(b.capturedAt);
+      });
+    if (ordered.length > windowSize) {
+      ordered = ordered.slice(ordered.length - windowSize);
+    }
+    if (ordered.length < 2) {
+      return { label: "平稳", slope: 0, durationMinutes: 0, direction: 0 };
+    }
+    var slope = calcSlope(ordered);
+    var label = classifySlopeLabel(slope, options);
+    var direction = 0;
+    if (slope > tolerance) {
+      direction = 1;
+    } else if (slope < -tolerance) {
+      direction = -1;
+    }
+    var durationMinutes = 0;
+    if (direction !== 0) {
+      var end = ordered[ordered.length - 1];
+      var endTime = new Date(end.capturedAt).getTime();
+      var startTime = endTime;
+      for (var i = ordered.length - 2; i >= 0; i -= 1) {
+        var current = ordered[i];
+        var currentTime = new Date(current.capturedAt).getTime();
+        if (!isFinite(currentTime)) {
+          continue;
+        }
+        var deltaMinutes = (endTime - currentTime) / 60000;
+        if (deltaMinutes <= 0) {
+          continue;
+        }
+        var deltaValue = end.value - current.value;
+        var localSlope = deltaValue / deltaMinutes;
+        if (direction > 0 && localSlope <= tolerance) {
+          startTime = new Date(ordered[i + 1].capturedAt).getTime();
+          break;
+        }
+        if (direction < 0 && localSlope >= -tolerance) {
+          startTime = new Date(ordered[i + 1].capturedAt).getTime();
+          break;
+        }
+        startTime = currentTime;
+      }
+      if (endTime > startTime) {
+        durationMinutes = Math.max(0, Math.round((endTime - startTime) / 60000));
+      }
+    }
+    return {
+      label: label,
+      slope: slope,
+      durationMinutes: durationMinutes,
+      direction: direction
+    };
+  }
+
   function resolveTrendBounds(node, child) {
     var lower = null;
     var upper = null;
@@ -4197,8 +4493,7 @@
     if (value === null || value === undefined || isNaN(value)) {
       return "--";
     }
-    var abs = Math.abs(value);
-    var fixed = abs >= 100 ? value.toFixed(1) : value.toFixed(2);
+    var fixed = Number(value).toFixed(3);
     return fixed + (unit ? " " + unit : "");
   }
 
@@ -4282,7 +4577,11 @@
     if (confidence < 0.05) {
       confidence = 0.05;
     }
-    var direction = trend > 0.05 ? "上升" : (trend < -0.05 ? "下降" : "平稳");
+    var profile = analyzeTrendProfile(series, { windowSize: Math.min(series.length, 30) });
+    var direction = classifySlopeLabel(trend, { tolerance: 0.002, gentle: 0.01, strong: 0.03, extreme: 0.08 });
+    if (direction === "平稳" && profile && profile.label) {
+      direction = profile.label;
+    }
     var lastPoint = series[series.length - 1];
     return {
       id: lastPoint.nodeId + "::" + (lastPoint.subNodeId || "root"),
@@ -4293,6 +4592,7 @@
       confidence: confidence,
       trendSlope: trend,
       trendLabel: direction,
+      trendDuration: profile ? profile.durationMinutes : 0,
       method: "holt",
       samples: series.length,
       intervalMinutes: stepMinutes,
@@ -4531,7 +4831,8 @@
     });
     var latest = ordered[ordered.length - 1];
     var status = calcRangeStatus(latest.value, lower, upper, center);
-    var slope = calcSlope(ordered.slice(Math.max(0, ordered.length - 5)));
+    var profile = analyzeTrendProfile(ordered, { windowSize: Math.min(ordered.length, 30) });
+    var slope = profile.slope;
     return {
       label: label || "",
       unit: unit || "",
@@ -4539,7 +4840,8 @@
       capturedAt: latest.capturedAt,
       status: status,
       slope: slope,
-      duration: summarizeDuration(ordered, lower, upper, center),
+      duration: profile.durationMinutes,
+      trendLabel: profile.label,
       mean: calcMean(ordered),
       lower: lower,
       center: center,
@@ -4561,17 +4863,20 @@
       if (typeof metric.status === "string" && metric.status) {
         segment += " " + metric.status;
       }
+      if (metric.trendLabel && metric.trendLabel !== "平稳") {
+        segment += "，趋势 " + metric.trendLabel;
+      }
       if (typeof metric.latestValue === "number") {
         segment += "，最新 " + formatTrendValue(metric.latestValue, metric.unit || "");
       }
-      if (typeof metric.slope === "number" && Math.abs(metric.slope) > 0.01) {
-        segment += "，斜率 " + metric.slope.toFixed(2) + "/分钟";
+      if (typeof metric.slope === "number" && Math.abs(metric.slope) > 0.002) {
+        segment += "，斜率 " + metric.slope.toFixed(3) + "/分钟";
       }
       if (metric.duration) {
         segment += "，持续 " + metric.duration + " 分钟";
       }
       if (typeof metric.weight === "number") {
-        segment += "，影响系数 " + metric.weight.toFixed(2);
+        segment += "，影响系数 " + metric.weight.toFixed(3);
       }
       parts.push(segment);
     }
@@ -4606,7 +4911,7 @@
         text += " · " + item.summary.lastNote;
       }
       if (typeof item.weight === "number") {
-        text += " · 影响系数 " + item.weight.toFixed(2);
+        text += " · 影响系数 " + item.weight.toFixed(3);
       }
       parts.push(text);
     }
@@ -4753,6 +5058,7 @@
       confidence: baseForecast.confidence,
       trendSlope: baseForecast.trendSlope,
       trendLabel: baseForecast.trendLabel,
+      trendDuration: baseForecast.trendDuration,
       method: baseForecast.method,
       samples: baseForecast.samples,
       intervalMinutes: baseForecast.intervalMinutes,
@@ -4842,12 +5148,9 @@
 
     var effectiveSlope = slopeWeight ? (baseSlope * 0.5 + blendedSlope * 0.5) : baseSlope;
     adjusted.trendSlope = effectiveSlope;
-    if (effectiveSlope > 0.05) {
-      adjusted.trendLabel = "上升";
-    } else if (effectiveSlope < -0.05) {
-      adjusted.trendLabel = "下降";
-    } else {
-      adjusted.trendLabel = "平稳";
+    adjusted.trendLabel = classifySlopeLabel(effectiveSlope, { tolerance: 0.002, gentle: 0.01, strong: 0.03, extreme: 0.08 });
+    if (adjusted.trendLabel === "平稳") {
+      adjusted.trendDuration = 0;
     }
 
     var supporters = 0;
@@ -4984,8 +5287,10 @@
       var upper = boundsCurrent.upper;
       var latest = series[series.length - 1];
       var status = calcRangeStatus(latest.value, lower, upper, center);
-      var slope = calcSlope(series.slice(Math.max(0, series.length - 5)));
-      var duration = summarizeDuration(series, lower, upper, center);
+      var trendProfile = analyzeTrendProfile(series, { windowSize: Math.min(series.length, 30) });
+      var slope = trendProfile.slope;
+      var duration = trendProfile.durationMinutes;
+      var trendLabel = trendProfile.label;
       var severity = 1;
       if (status === "超上限" || status === "超下限") {
         severity = 4;
@@ -4994,14 +5299,17 @@
       } else {
         severity = Math.abs(slope) > 0.15 ? 2 : 1;
       }
+      if (trendLabel === "极速上升" || trendLabel === "极速下降") {
+        severity = Math.max(severity, 4);
+      } else if (trendLabel === "上升") {
+        severity = Math.max(severity, 3);
+      } else if (trendLabel === "缓慢上升" || trendLabel === "缓慢下降") {
+        severity = Math.max(severity, 2);
+      }
       var label = (child ? child.name : node.name) + "：" + status;
-      var summary = status;
-      if (status === "平稳") {
-        if (Math.abs(slope) > 0.15) {
-          summary = slope > 0 ? "上升趋势" : "下降趋势";
-        } else {
-          summary = "平稳";
-        }
+      var summary = trendLabel;
+      if (status !== "平稳") {
+        summary = trendLabel !== "平稳" ? trendLabel + " · " + status : status;
       }
       var detail = [];
       detail.push("最新值 " + formatTrendValue(latest.value, child ? child.unit : node.unit));
@@ -5011,10 +5319,14 @@
       if (typeof center === "number") {
         detail.push("中值 " + center);
       }
-      if (duration > 0 && status !== "平稳") {
-        detail.push(status + "持续 " + duration + " 分钟");
+      if (trendLabel !== "平稳") {
+        var trendLine = "趋势 " + trendLabel;
+        if (duration > 0) {
+          trendLine += "，持续 " + duration + " 分钟";
+        }
+        detail.push(trendLine);
       }
-      if (Math.abs(slope) > 0.05) {
+      if (Math.abs(slope) > 0.002) {
         detail.push("变化速率 " + slope.toFixed(3) + " /分钟");
       }
       var context = buildForecastContext(node, child, series, grouped, adjacency, manualInfluenceMap, manualSummary);
@@ -5062,12 +5374,15 @@
         unit: child ? child.unit : node.unit,
         slope: slope,
         duration: duration,
+        trendLabel: trendLabel,
+        trendDuration: duration,
         forecast: forecast
           ? {
               value: forecast.value,
               horizonMinutes: forecast.horizonMinutes,
               confidence: forecast.confidence,
               trendLabel: forecast.trendLabel,
+              trendDuration: forecast.trendDuration,
               status: forecast.status
             }
           : null,
@@ -5110,6 +5425,8 @@
         mergedExisting.unit = incoming.unit;
         mergedExisting.slope = incoming.slope;
         mergedExisting.duration = incoming.duration;
+        mergedExisting.trendLabel = incoming.trendLabel;
+        mergedExisting.trendDuration = incoming.trendDuration;
         mergedExisting.source = incoming.source;
         mergedExisting.forecast = incoming.forecast;
         merged.push(mergedExisting);
@@ -5830,6 +6147,37 @@
           subNodeId: item.subNodeId,
           createdAt: item.resolvedAt,
           meta: { suggestionId: id, note: item.note || "" }
+        });
+        break;
+      }
+    }
+    saveState();
+    emitTrendChange();
+  }
+
+  function deferTrendSuggestion(id, note) {
+    ensureTrendStore();
+    if (!id) {
+      return;
+    }
+    for (var i = 0; i < state.tools.trend.suggestions.length; i += 1) {
+      var item = state.tools.trend.suggestions[i];
+      if (item && item.id === id) {
+        item.lastDeferredAt = new Date().toISOString();
+        if (!item.deferCount) {
+          item.deferCount = 0;
+        }
+        item.deferCount += 1;
+        if (typeof note === "string") {
+          item.deferNote = note.trim();
+        }
+        state.tools.trend.history.push({
+          id: uuid(),
+          kind: "defer",
+          nodeId: item.nodeId,
+          subNodeId: item.subNodeId,
+          createdAt: item.lastDeferredAt,
+          meta: { suggestionId: id, note: item.deferNote || "" }
         });
         break;
       }
@@ -7414,7 +7762,7 @@
           var score = document.createElement("span");
           score.className = "evidence-score";
           if (type === "knowledge") {
-            score.textContent = info.score.toFixed(2);
+            score.textContent = info.score.toFixed(3);
           } else {
             score.textContent = info.score + "%";
           }
@@ -7488,7 +7836,7 @@
               var dupScore = document.createElement("span");
               dupScore.className = "evidence-score";
               if (type === "knowledge") {
-                dupScore.textContent = dup.score.toFixed(2);
+                dupScore.textContent = dup.score.toFixed(3);
               } else {
                 dupScore.textContent = Math.round(dup.score) + "%";
               }
@@ -12828,6 +13176,7 @@
         listEndpoints: listTrendMesEndpoints,
         fetchFromEndpoint: fetchTrendSamplesFromEndpoint,
         acceptSuggestion: acceptTrendSuggestion,
+        deferSuggestion: deferTrendSuggestion,
         rejectSuggestion: rejectTrendSuggestion,
         refreshAnalytics: refreshTrendAnalytics,
         getForecasts: getTrendForecasts,
@@ -12882,10 +13231,36 @@
         registerEndpoint: registerTrendMesEndpoint,
         updateEndpoint: updateTrendMesEndpoint,
         acceptSuggestion: acceptTrendSuggestion,
+        deferSuggestion: deferTrendSuggestion,
         rejectSuggestion: rejectTrendSuggestion,
         feedback: recordTrendFeedback,
         clearHistory: clearTrendHistory,
         removeHistoryEntries: removeTrendHistoryEntries,
+        toast: showToast
+      });
+    }
+  }
+
+  function initTrendRegistryPage() {
+    requireAuth();
+    setNavUserInfo();
+    ensureActiveBank();
+    renderBankList();
+    updateBankBadge();
+    renderFloatingFavorite();
+    renderTrendBeacon();
+    var createBankBtn = document.getElementById("createBank");
+    if (createBankBtn) {
+      createBankBtn.addEventListener("click", createBank);
+    }
+    var logoutBtn = document.getElementById("logoutButton");
+    if (logoutBtn) {
+      logoutBtn.addEventListener("click", logout);
+    }
+    if (window.initTrendRegistryModule && typeof window.initTrendRegistryModule === "function") {
+      window.initTrendRegistryModule({
+        getSnapshot: getTrendSnapshot,
+        subscribe: subscribeTrend,
         toast: showToast
       });
     }
@@ -12938,6 +13313,8 @@
         initTrendPage();
       } else if (page === "trend-history") {
         initTrendHistoryPage();
+      } else if (page === "trend-registry") {
+        initTrendRegistryPage();
       } else {
         initNavigation();
       }
