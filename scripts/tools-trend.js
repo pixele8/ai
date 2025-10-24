@@ -133,6 +133,7 @@
     var nodeNoteInput = document.getElementById("trendNodeNote");
     var nodeUnitInput = document.getElementById("trendNodeUnit");
     var nodeManualSelect = document.getElementById("trendNodeManual");
+    var nodeSimulationSelect = document.getElementById("trendNodeSimulation");
     var nodeLowerInput = document.getElementById("trendNodeLower");
     var nodeCenterInput = document.getElementById("trendNodeCenter");
     var nodeUpperInput = document.getElementById("trendNodeUpper");
@@ -331,6 +332,9 @@
         if (node.manual) {
           bounds.push("手动节点");
         }
+        if (node.simulate === false) {
+          bounds.push("演示停用");
+        }
         if (node.manual && Array.isArray(node.manualTargets) && node.manualTargets.length) {
           var impactLabels = [];
           node.manualTargets.forEach(function (target) {
@@ -367,6 +371,9 @@
         }
         nodeUnitInput.value = "℃";
         nodeManualSelect.value = "false";
+        if (nodeSimulationSelect) {
+          nodeSimulationSelect.value = "true";
+        }
         nodeLowerInput.value = "";
         if (nodeCenterInput) {
           nodeCenterInput.value = "";
@@ -391,6 +398,9 @@
       }
       nodeUnitInput.value = node.unit || "";
       nodeManualSelect.value = node.manual ? "true" : "false";
+      if (nodeSimulationSelect) {
+        nodeSimulationSelect.value = node.simulate === false ? "false" : "true";
+      }
       nodeLowerInput.value = typeof node.lower === "number" ? node.lower : "";
       if (nodeCenterInput) {
         nodeCenterInput.value = typeof node.center === "number" ? node.center : "";
@@ -542,7 +552,8 @@
         upper: nodeUpperInput.value ? parseFloat(nodeUpperInput.value) : null,
         positionMode: nodePositionSelect.value,
         positionRef: nodeRefSelect.value || null,
-        children: clone(state.editingSubNodes) || []
+        children: clone(state.editingSubNodes) || [],
+        simulate: !nodeSimulationSelect || nodeSimulationSelect.value !== "false"
       };
       if (manual && manualImpactSelect) {
         var targets = [];

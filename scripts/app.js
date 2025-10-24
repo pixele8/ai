@@ -2790,6 +2790,9 @@
       if (typeof node.manual !== "boolean") {
         node.manual = false;
       }
+      if (typeof node.simulate !== "boolean") {
+        node.simulate = true;
+      }
       if (typeof node.manualStep !== "number") {
         node.manualStep = 0;
       }
@@ -3123,6 +3126,11 @@
       base.manual = payload.manual;
     } else if (typeof base.manual !== "boolean") {
       base.manual = false;
+    }
+    if (typeof payload.simulate === "boolean") {
+      base.simulate = payload.simulate;
+    } else if (typeof base.simulate !== "boolean") {
+      base.simulate = true;
     }
     if (typeof payload.manualStep === "number") {
       base.manualStep = payload.manualStep;
@@ -4492,6 +4500,10 @@
       trendDemoLastTick += 1;
       for (var i = 0; i < nodes.length; i += 1) {
         var node = nodes[i];
+        var allowDemo = typeof node.simulate === "boolean" ? node.simulate : true;
+        if (!allowDemo) {
+          continue;
+        }
         var base = typeof node.lower === "number" && typeof node.upper === "number"
           ? (node.lower + node.upper) / 2
           : state.tools.trend.settings.outputTarget.center;

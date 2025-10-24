@@ -52,7 +52,7 @@
               <label for="trendNodeNote">备注</label>
               <textarea id="trendNodeNote" name="note" rows="2" placeholder="记录该节点组的说明或所含节点"></textarea>
             </div>
-            <div class="form-row">
+            <div class="form-row triple">
               <div class="form-field">
                 <label for="trendNodeUnit">单位</label>
                 <input id="trendNodeUnit" name="unit" type="text" placeholder="℃ / A / % 等">
@@ -62,6 +62,13 @@
                 <select id="trendNodeManual" name="manual">
                   <option value="false">否</option>
                   <option value="true">是</option>
+                </select>
+              </div>
+              <div class="form-field">
+                <label for="trendNodeSimulation">演示模拟</label>
+                <select id="trendNodeSimulation" name="simulate">
+                  <option value="true">启用</option>
+                  <option value="false">停用</option>
                 </select>
               </div>
             </div>
