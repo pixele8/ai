@@ -4412,6 +4412,135 @@ textarea:focus {
   margin-top: 12px;
 }
 
+.trend-forecast {
+  margin-top: 20px;
+  background: rgba(248, 250, 252, 0.85);
+  border-radius: 16px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  padding: 20px;
+}
+
+.trend-forecast-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.trend-forecast-header h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.trend-forecast-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.trend-forecast-card {
+  background: #ffffff;
+  border-radius: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+}
+
+.trend-forecast-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.trend-forecast-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.trend-forecast-status {
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.08);
+  color: #0f172a;
+}
+
+.trend-forecast-status-平稳 {
+  background: rgba(34, 197, 94, 0.18);
+  color: #15803d;
+}
+
+.trend-forecast-status-偏高 {
+  background: rgba(59, 130, 246, 0.16);
+  color: #1d4ed8;
+}
+
+.trend-forecast-status-偏低 {
+  background: rgba(14, 165, 233, 0.16);
+  color: #0369a1;
+}
+
+.trend-forecast-status-超上限 {
+  background: rgba(220, 38, 38, 0.16);
+  color: #b91c1c;
+}
+
+.trend-forecast-status-超下限 {
+  background: rgba(16, 185, 129, 0.16);
+  color: #047857;
+}
+
+.trend-forecast-value {
+  font-size: 14px;
+  color: rgba(15, 23, 42, 0.8);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.trend-forecast-delta {
+  font-weight: 600;
+}
+
+.trend-forecast-delta.rise {
+  color: #15803d;
+}
+
+.trend-forecast-delta.fall {
+  color: #dc2626;
+}
+
+.trend-forecast-meta {
+  font-size: 12px;
+  color: rgba(15, 23, 42, 0.55);
+}
+
+.trend-forecast-method {
+  font-size: 12px;
+  color: rgba(15, 23, 42, 0.45);
+  font-style: italic;
+}
+
+.trend-forecast-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.trend-forecast-empty {
+  font-size: 14px;
+  color: rgba(15, 23, 42, 0.5);
+  padding: 12px 0;
+}
+
 .trend-advice {
   background: rgba(248, 250, 252, 0.85);
   border-radius: 16px;
@@ -4444,6 +4573,14 @@ textarea:focus {
 .trend-advice-meta {
   font-size: 12px;
   color: rgba(15, 23, 42, 0.55);
+}
+
+.trend-advice-forecast {
+  font-size: 12px;
+  color: rgba(15, 23, 42, 0.65);
+  background: rgba(59, 130, 246, 0.1);
+  border-radius: 10px;
+  padding: 8px 10px;
 }
 
 .trend-advice-actions {
@@ -4509,6 +4646,131 @@ textarea:focus {
 
 .trend-history-panel {
   padding: 24px;
+}
+
+.trend-history-forecast-panel {
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 20px;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
+  margin-bottom: 20px;
+}
+
+.trend-history-forecast-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.trend-history-forecast-header h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.trend-history-forecast-sub {
+  font-size: 12px;
+  color: rgba(15, 23, 42, 0.55);
+}
+
+.trend-history-forecast-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.trend-history-forecast-card {
+  background: rgba(248, 250, 252, 0.85);
+  border-radius: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.trend-history-forecast-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.trend-history-forecast-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.trend-history-forecast-status {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.08);
+  color: #0f172a;
+}
+
+.trend-history-forecast-status-平稳 {
+  background: rgba(34, 197, 94, 0.16);
+  color: #15803d;
+}
+
+.trend-history-forecast-status-偏高 {
+  background: rgba(59, 130, 246, 0.16);
+  color: #1d4ed8;
+}
+
+.trend-history-forecast-status-偏低 {
+  background: rgba(14, 165, 233, 0.16);
+  color: #0369a1;
+}
+
+.trend-history-forecast-status-超上限 {
+  background: rgba(220, 38, 38, 0.16);
+  color: #b91c1c;
+}
+
+.trend-history-forecast-status-超下限 {
+  background: rgba(16, 185, 129, 0.16);
+  color: #047857;
+}
+
+.trend-history-forecast-body {
+  font-size: 13px;
+  color: rgba(15, 23, 42, 0.7);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.trend-history-forecast-delta {
+  font-weight: 600;
+}
+
+.trend-history-forecast-delta.rise {
+  color: #15803d;
+}
+
+.trend-history-forecast-delta.fall {
+  color: #dc2626;
+}
+
+.trend-history-forecast-meta {
+  font-size: 12px;
+  color: rgba(15, 23, 42, 0.55);
+}
+
+.trend-history-forecast-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.trend-history-forecast-empty {
+  font-size: 13px;
+  color: rgba(15, 23, 42, 0.5);
 }
 
 .trend-history-toolbar {

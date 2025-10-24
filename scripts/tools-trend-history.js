@@ -15,6 +15,15 @@
     return year + "-" + month + "-" + day + " " + hour + ":" + minute;
   }
 
+  function formatNumber(value, unit) {
+    if (value === null || value === undefined || isNaN(value)) {
+      return "--";
+    }
+    var abs = Math.abs(value);
+    var fixed = abs >= 100 ? value.toFixed(1) : value.toFixed(2);
+    return fixed + (unit ? " " + unit : "");
+  }
+
   function drawSeries(canvas, series, options) {
     if (!canvas || !canvas.getContext) {
       return;
@@ -116,6 +125,7 @@
     var endpointEl = document.getElementById("trendHistoryEndpoint");
     var chartCanvas = document.getElementById("trendHistoryChart");
     var chartToolbar = document.querySelector(".trend-history-chart-toolbar");
+    var forecastListEl = document.getElementById("trendHistoryForecasts");
     var exportBtn = document.getElementById("trendHistoryExport");
     var clearBtn = document.getElementById("trendHistoryClear");
     var acceptBtn = document.getElementById("trendHistoryAccept");
@@ -123,11 +133,93 @@
 
     function syncSnapshot(snapshot) {
       state.snapshot = snapshot || services.getSnapshot({});
+      renderForecasts();
       buildRecords();
       renderGroups();
       renderList();
       renderDetail();
     }
+
+    function renderForecasts() {
+      if (!forecastListEl) {
+        return;
+      }
+      forecastListEl.innerHTML = "";
+      var forecasts = (state.snapshot && state.snapshot.forecasts) || [];
+      if (!forecasts.length) {
+        var empty = document.createElement("div");
+        empty.className = "trend-history-forecast-empty";
+        empty.textContent = "暂无预测信息";
+        forecastListEl.appendChild(empty);
+        return;
+      }
+      var nodeCache = {};
+      (state.snapshot.nodes || []).forEach(function (node) {
+        if (node && node.id) {
+          nodeCache[node.id] = node;
+        }
+      });
+      forecasts.slice(0, Math.min(forecasts.length, 6)).forEach(function (forecast) {
+        var node = nodeCache[forecast.nodeId];
+        var child = null;
+        if (node && forecast.subNodeId) {
+          for (var idx = 0; idx < (node.children || []).length; idx += 1) {
+            if (node.children[idx] && node.children[idx].id === forecast.subNodeId) {
+              child = node.children[idx];
+              break;
+            }
+          }
+        }
+        var card = document.createElement("div");
+        card.className = "trend-history-forecast-card";
+        var head = document.createElement("div");
+        head.className = "trend-history-forecast-head";
+        var title = document.createElement("div");
+        title.className = "trend-history-forecast-title";
+        if (child && node) {
+          title.textContent = node.name + " · " + child.name;
+        } else if (node) {
+          title.textContent = node.name;
+        } else {
+          title.textContent = forecast.label || "节点";
+        }
+        head.appendChild(title);
+        var status = document.createElement("span");
+        status.className = "trend-history-forecast-status trend-history-forecast-status-" + (forecast.status || "平稳");
+        status.textContent = forecast.status || "平稳";
+        head.appendChild(status);
+        card.appendChild(head);
+        var body = document.createElement("div");
+        body.className = "trend-history-forecast-body";
+        var valueText = document.createElement("div");
+        valueText.textContent = "预测值 " + formatNumber(forecast.value, forecast.unit || (child ? child.unit : node ? node.unit : ""));
+        body.appendChild(valueText);
+        if (typeof forecast.latestValue === "number") {
+          var delta = document.createElement("div");
+          delta.className = "trend-history-forecast-delta" + ((forecast.value - forecast.latestValue) >= 0 ? " rise" : " fall");
+          delta.textContent = "较当前 " + (forecast.value - forecast.latestValue >= 0 ? "+" : "") + formatNumber(forecast.value - forecast.latestValue, forecast.unit || "");
+          body.appendChild(delta);
+        }
+        card.appendChild(body);
+        var meta = document.createElement("div");
+        meta.className = "trend-history-forecast-meta";
+        meta.textContent = "前瞻 " + (forecast.horizonMinutes || 0) + " 分钟 · 置信度 " + Math.round((forecast.confidence || 0) * 100) + "% · 趋势 " + (forecast.trendLabel || "平稳");
+        card.appendChild(meta);
+        var footer = document.createElement("div");
+        footer.className = "trend-history-forecast-footer";
+        var openBtn = document.createElement("button");
+        openBtn.type = "button";
+        openBtn.className = "ghost-button";
+        openBtn.textContent = "查看工作台";
+        openBtn.addEventListener("click", function () {
+          window.location.href = "ai-trend.html#" + forecast.nodeId;
+        });
+        footer.appendChild(openBtn);
+        card.appendChild(footer);
+        forecastListEl.appendChild(card);
+      });
+    }
+
 
     function buildRecords() {
       state.records = [];

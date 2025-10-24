@@ -152,6 +152,8 @@
     var targetRangeEl = document.getElementById("trendTargetRange");
     var chartCanvas = document.getElementById("trendChart");
     var chartToolbar = document.querySelector(".trend-chart-toolbar");
+    var forecastListEl = document.getElementById("trendForecastList");
+    var forecastRefreshBtn = document.getElementById("trendRefreshForecast");
     var adviceListEl = document.getElementById("trendAdviceList");
     var refreshAdviceBtn = document.getElementById("trendRefreshAdvice");
     var openHistoryBtn = document.getElementById("trendOpenHistory");
@@ -498,6 +500,91 @@
       drawSeries(chartCanvas, series, { color: "#2563eb" });
     }
 
+    function renderForecasts() {
+      if (!forecastListEl) {
+        return;
+      }
+      forecastListEl.innerHTML = "";
+      var forecasts = (state.snapshot && state.snapshot.forecasts) || [];
+      if (!forecasts.length) {
+        var empty = document.createElement("div");
+        empty.className = "trend-forecast-empty";
+        empty.textContent = "暂无预测数据";
+        forecastListEl.appendChild(empty);
+        return;
+      }
+      var nodeCache = {};
+      (state.snapshot.nodes || []).forEach(function (node) {
+        if (node && node.id) {
+          nodeCache[node.id] = node;
+        }
+      });
+      forecasts.forEach(function (forecast) {
+        var node = nodeCache[forecast.nodeId];
+        var child = null;
+        if (node && forecast.subNodeId) {
+          for (var idx = 0; idx < (node.children || []).length; idx += 1) {
+            if (node.children[idx] && node.children[idx].id === forecast.subNodeId) {
+              child = node.children[idx];
+              break;
+            }
+          }
+        }
+        var card = document.createElement("div");
+        card.className = "trend-forecast-card";
+        var head = document.createElement("div");
+        head.className = "trend-forecast-head";
+        var title = document.createElement("div");
+        title.className = "trend-forecast-title";
+        if (child && node) {
+          title.textContent = node.name + " · " + child.name;
+        } else if (node) {
+          title.textContent = node.name;
+        } else {
+          title.textContent = forecast.label || "节点";
+        }
+        head.appendChild(title);
+        var status = document.createElement("span");
+        status.className = "trend-forecast-status trend-forecast-status-" + (forecast.status || "平稳");
+        status.textContent = forecast.status || "平稳";
+        head.appendChild(status);
+        card.appendChild(head);
+        var valueRow = document.createElement("div");
+        valueRow.className = "trend-forecast-value";
+        valueRow.textContent = "预测值 " + formatNumber(forecast.value, forecast.unit || (child ? child.unit : node ? node.unit : ""));
+        if (typeof forecast.latestValue === "number") {
+          var delta = forecast.value - forecast.latestValue;
+          var deltaSpan = document.createElement("span");
+          deltaSpan.className = "trend-forecast-delta" + (delta >= 0 ? " rise" : " fall");
+          deltaSpan.textContent = (delta >= 0 ? "+" : "") + formatNumber(delta, forecast.unit || "");
+          valueRow.appendChild(deltaSpan);
+        }
+        card.appendChild(valueRow);
+        var meta = document.createElement("div");
+        meta.className = "trend-forecast-meta";
+        meta.textContent = "前瞻 " + (forecast.horizonMinutes || 0) + " 分钟 · 置信度 " + Math.round((forecast.confidence || 0) * 100) + "% · 趋势 " + (forecast.trendLabel || "平稳");
+        card.appendChild(meta);
+        if (forecast.method) {
+          var method = document.createElement("div");
+          method.className = "trend-forecast-method";
+          method.textContent = "算法 " + (forecast.method === "holt" ? "Holt 指数平滑" : forecast.method);
+          card.appendChild(method);
+        }
+        var footer = document.createElement("div");
+        footer.className = "trend-forecast-footer";
+        var focusBtn = document.createElement("button");
+        focusBtn.type = "button";
+        focusBtn.className = "ghost-button";
+        focusBtn.textContent = "查看节点";
+        focusBtn.addEventListener("click", function () {
+          handleNodeSelection(forecast.nodeId);
+        });
+        footer.appendChild(focusBtn);
+        card.appendChild(footer);
+        forecastListEl.appendChild(card);
+      });
+    }
+
     function renderAdvice() {
       if (!adviceListEl) {
         return;
@@ -525,6 +612,12 @@
         meta.className = "trend-advice-meta";
         meta.textContent = "评分 " + (item.severity || 0) + " · 更新 " + formatDateTime(item.updatedAt || item.createdAt);
         card.appendChild(meta);
+        if (item.forecast && typeof item.forecast.value === "number") {
+          var forecastInfo = document.createElement("div");
+          forecastInfo.className = "trend-advice-forecast";
+          forecastInfo.textContent = "预测 " + (item.forecast.horizonMinutes || 0) + " 分钟后 " + formatNumber(item.forecast.value, item.unit || "") + " · 置信度 " + Math.round(((item.forecast.confidence || 0) * 100)) + "%";
+          card.appendChild(forecastInfo);
+        }
         if (item.detail && item.detail.length) {
           var list = document.createElement("ul");
           item.detail.forEach(function (line) {
@@ -732,6 +825,7 @@
       renderTargetCard();
       renderDemoStatus();
       renderChart();
+      renderForecasts();
       renderAdvice();
       renderEndpoints();
       renderFeedbackOptions();
@@ -834,6 +928,15 @@
         }
         state.selectedRange = parseInt(target.getAttribute("data-range"), 10) || 180;
         renderChart();
+      });
+    }
+
+    if (forecastRefreshBtn) {
+      forecastRefreshBtn.addEventListener("click", function () {
+        if (services.refreshAnalytics) {
+          services.refreshAnalytics();
+        }
+        services.toast && services.toast("预测已刷新");
       });
     }
 

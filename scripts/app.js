@@ -2680,6 +2680,9 @@
     if (!Array.isArray(trend.suggestions)) {
       trend.suggestions = [];
     }
+    if (!Array.isArray(trend.forecasts)) {
+      trend.forecasts = [];
+    }
     if (!Array.isArray(trend.history)) {
       trend.history = [];
     }
@@ -2836,6 +2839,9 @@
     if (trend.feedback.length > 2000) {
       trend.feedback = trend.feedback.slice(trend.feedback.length - 2000);
     }
+    if (trend.forecasts.length > 400) {
+      trend.forecasts = trend.forecasts.slice(trend.forecasts.length - 400);
+    }
   }
 
   function cloneTrendNodes() {
@@ -2868,6 +2874,16 @@
       return JSON.parse(JSON.stringify(state.tools.trend.suggestions));
     } catch (err) {
       console.warn("cloneTrendSuggestions failed", err);
+      return [];
+    }
+  }
+
+  function cloneTrendForecasts() {
+    ensureTrendStore();
+    try {
+      return JSON.parse(JSON.stringify(state.tools.trend.forecasts));
+    } catch (err) {
+      console.warn("cloneTrendForecasts failed", err);
       return [];
     }
   }
@@ -2975,6 +2991,7 @@
       nodes: cloneTrendNodes(),
       streams: cloneTrendStreams(streamLimit),
       suggestions: cloneTrendSuggestions(),
+      forecasts: cloneTrendForecasts(),
       history: cloneTrendHistory(),
       feedback: cloneTrendFeedback(),
       settings: cloneTrendSettings(),
@@ -3313,6 +3330,94 @@
     return Math.round(diff / 60000);
   }
 
+  function formatTrendValue(value, unit) {
+    if (value === null || value === undefined || isNaN(value)) {
+      return "--";
+    }
+    var abs = Math.abs(value);
+    var fixed = abs >= 100 ? value.toFixed(1) : value.toFixed(2);
+    return fixed + (unit ? " " + unit : "");
+  }
+
+  function calcAverageInterval(points, fallback) {
+    if (!points || points.length < 2) {
+      return fallback || 60000;
+    }
+    var total = 0;
+    var count = 0;
+    for (var i = 1; i < points.length; i += 1) {
+      var prev = points[i - 1];
+      var current = points[i];
+      if (!prev || !current) {
+        continue;
+      }
+      var diff = new Date(current.capturedAt).getTime() - new Date(prev.capturedAt).getTime();
+      if (diff > 0) {
+        total += diff;
+        count += 1;
+      }
+    }
+    if (!count) {
+      return fallback || 60000;
+    }
+    return Math.max(1000, Math.round(total / count));
+  }
+
+  function computeTrendForecast(series, options) {
+    options = options || {};
+    if (!series || series.length < 3) {
+      return null;
+    }
+    var horizonMinutes = typeof options.horizonMinutes === "number" ? options.horizonMinutes : 30;
+    var intervalMs = typeof options.intervalMs === "number" && options.intervalMs > 0
+      ? options.intervalMs
+      : calcAverageInterval(series, 60000);
+    var alpha = typeof options.alpha === "number" ? options.alpha : 0.55;
+    var beta = typeof options.beta === "number" ? options.beta : 0.32;
+    var level = series[0].value;
+    var initialStep = Math.max(1, intervalMs / 60000);
+    var trend = (series[1].value - series[0].value) / initialStep;
+    var residuals = [];
+    for (var i = 1; i < series.length; i += 1) {
+      var point = series[i];
+      var prevPoint = series[i - 1];
+      var prevLevel = level;
+      var deltaMinutes = Math.max(1, (new Date(point.capturedAt).getTime() - new Date(prevPoint.capturedAt).getTime()) / 60000);
+      level = alpha * point.value + (1 - alpha) * (prevLevel + trend * deltaMinutes);
+      trend = beta * (level - prevLevel) / deltaMinutes + (1 - beta) * trend;
+      residuals.push(Math.abs(point.value - level));
+    }
+    var stepMinutes = Math.max(1, intervalMs / 60000);
+    var steps = Math.max(1, Math.round(horizonMinutes / stepMinutes));
+    var forecastValue = level + trend * stepMinutes * steps;
+    var residualAvg = 0;
+    for (var r = 0; r < residuals.length; r += 1) {
+      residualAvg += residuals[r];
+    }
+    residualAvg = residuals.length ? residualAvg / residuals.length : 0;
+    var scale = Math.max(1, Math.abs(level));
+    var confidence = 1 - Math.min(0.95, residualAvg / scale);
+    if (confidence < 0.05) {
+      confidence = 0.05;
+    }
+    var direction = trend > 0.05 ? "上升" : (trend < -0.05 ? "下降" : "平稳");
+    var lastPoint = series[series.length - 1];
+    return {
+      id: lastPoint.nodeId + "::" + (lastPoint.subNodeId || "root"),
+      nodeId: lastPoint.nodeId,
+      subNodeId: lastPoint.subNodeId || null,
+      value: forecastValue,
+      horizonMinutes: horizonMinutes,
+      confidence: confidence,
+      trendSlope: trend,
+      trendLabel: direction,
+      method: "holt",
+      samples: series.length,
+      intervalMinutes: stepMinutes,
+      generatedAt: new Date().toISOString()
+    };
+  }
+
   function foldTrendSuggestionsMap() {
     ensureTrendStore();
     var map = {};
@@ -3360,6 +3465,7 @@
     var trend = state.tools.trend;
     var nodes = trend.nodes;
     var newSuggestions = [];
+    var newForecasts = [];
     var nowIso = new Date().toISOString();
     var lookbackMs = (trend.settings.lookbackMinutes || 120) * 60000;
     var startTime = Date.now() - lookbackMs;
@@ -3423,7 +3529,7 @@
         }
       }
       var detail = [];
-      detail.push("最新值 " + latest.value.toFixed(2) + (child ? child.unit : node.unit || ""));
+      detail.push("最新值 " + formatTrendValue(latest.value, child ? child.unit : node.unit));
       if (typeof lower === "number" || typeof upper === "number") {
         detail.push("范围 " + (typeof lower === "number" ? lower : "-") + " ~ " + (typeof upper === "number" ? upper : "-"));
       }
@@ -3432,6 +3538,21 @@
       }
       if (Math.abs(slope) > 0.05) {
         detail.push("变化速率 " + slope.toFixed(3) + " /分钟");
+      }
+      var forecast = computeTrendForecast(series, {
+        horizonMinutes: trend.settings.predictionMinutes || 30,
+        intervalMs: trend.settings.sampleIntervalMs || calcAverageInterval(series, 60000)
+      });
+      if (forecast) {
+        forecast.nodeId = node.id;
+        forecast.subNodeId = child ? child.id : null;
+        forecast.unit = child ? child.unit : node.unit;
+        forecast.label = child ? child.name : node.name;
+        forecast.latestValue = latest.value;
+        forecast.status = calcRangeStatus(forecast.value, lower, upper);
+        forecast.generatedAt = nowIso;
+        detail.push("预测 " + forecast.horizonMinutes + " 分钟后约为 " + formatTrendValue(forecast.value, forecast.unit) + "，状态 " + forecast.status + "，置信度 " + Math.round((forecast.confidence || 0) * 100) + "%");
+        newForecasts.push(forecast);
       }
       var suggestion = {
         id: uuid(),
@@ -3449,6 +3570,15 @@
         unit: child ? child.unit : node.unit,
         slope: slope,
         duration: duration,
+        forecast: forecast
+          ? {
+              value: forecast.value,
+              horizonMinutes: forecast.horizonMinutes,
+              confidence: forecast.confidence,
+              trendLabel: forecast.trendLabel,
+              status: forecast.status
+            }
+          : null,
         source: "analysis"
       };
       newSuggestions.push(suggestion);
@@ -3486,6 +3616,7 @@
         mergedExisting.slope = incoming.slope;
         mergedExisting.duration = incoming.duration;
         mergedExisting.source = incoming.source;
+        mergedExisting.forecast = incoming.forecast;
         merged.push(mergedExisting);
       } else {
         merged.push(incoming);
@@ -3511,6 +3642,27 @@
       });
       merged.push(stale);
     }
+    var forecastMap = {};
+    for (var f = 0; f < newForecasts.length; f += 1) {
+      var forecastItem = newForecasts[f];
+      if (!forecastItem) {
+        continue;
+      }
+      var fKey = forecastItem.nodeId + "::" + (forecastItem.subNodeId || "root");
+      if (!forecastMap[fKey] || (forecastItem.confidence || 0) >= (forecastMap[fKey].confidence || 0)) {
+        forecastMap[fKey] = forecastItem;
+      }
+    }
+    var dedupedForecasts = [];
+    for (var fKey in forecastMap) {
+      if (Object.prototype.hasOwnProperty.call(forecastMap, fKey)) {
+        dedupedForecasts.push(forecastMap[fKey]);
+      }
+    }
+    dedupedForecasts.sort(function (a, b) {
+      return (b.confidence || 0) - (a.confidence || 0);
+    });
+    trend.forecasts = dedupedForecasts;
     trend.suggestions = merged;
     saveState();
     if (!skipEmit) {
@@ -3609,6 +3761,20 @@
   function isTrendDemoActive() {
     ensureTrendStore();
     return !!state.tools.trend.demo.enabled;
+  }
+
+  function refreshTrendAnalytics() {
+    recomputeTrendAnalytics();
+  }
+
+  function getTrendForecasts() {
+    ensureTrendStore();
+    try {
+      return JSON.parse(JSON.stringify(state.tools.trend.forecasts || []));
+    } catch (err) {
+      console.warn("getTrendForecasts failed", err);
+      return [];
+    }
   }
 
   function acceptTrendSuggestion(id, note) {
@@ -10628,6 +10794,8 @@
         fetchFromEndpoint: fetchTrendSamplesFromEndpoint,
         acceptSuggestion: acceptTrendSuggestion,
         rejectSuggestion: rejectTrendSuggestion,
+        refreshAnalytics: refreshTrendAnalytics,
+        getForecasts: getTrendForecasts,
         feedback: recordTrendFeedback,
         toast: showToast,
         getUser: function () {
