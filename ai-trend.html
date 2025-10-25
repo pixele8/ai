@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>趋势分析预测系统 · 虹小聊</title>
+<link rel="stylesheet" href="styles/app.css">
+</head>
+<body data-page="trend">
+<div class="app-shell">
+  <aside class="sidebar" id="bankSidebar">
+    <div class="brand"><img class="brand-logo" src="assets/logo.png" alt="虹小聊 logo"><span class="brand-name">虹小聊</span></div>
+    <div class="nav-group">
+      <a class="nav-link" href="index.html">对话</a>
+      <a class="nav-link" href="kb.html">知识库</a>
+      <a class="nav-link" href="favorites.html">收藏夹</a>
+      <a class="nav-link" href="decision.html">决策链</a>
+      <a class="nav-link active" href="ai-tools.html">AI 工具箱</a>
+      <a class="nav-link" href="admin.html">系统</a>
+    </div>
+    <div class="sidebar-section">
+      <div class="section-title">记忆库</div>
+      <div class="badge-list" id="bankList"></div>
+      <button class="ghost-button" id="createBank">新建记忆库</button>
+    </div>
+    <a class="ghost-button toolbox-link" href="ai-tools.html">返回工具箱</a>
+    <button class="ghost-button" id="logoutButton">退出登录</button>
+  </aside>
+  <main class="main-panel trend-main">
+    <header class="main-header">
+      <div class="header-info">
+        <div class="header-title">趋势分析预测系统</div>
+        <div class="header-sub">定义监测节点、实时生成趋势预测并采集人工订正，预留 MES 数据接入接口。</div>
+      </div>
+      <div class="user-info" id="userInfo"></div>
+    </header>
+    <section class="panel trend-panel">
+      <div class="trend-explorer-panel" id="trendExplorerPanel">
+        <div class="trend-desktop-toolbar">
+          <div class="trend-desktop-path">
+            <button type="button" class="ghost-button" id="trendExplorerUp" aria-label="返回上级">返回</button>
+            <nav class="trend-desktop-breadcrumb" id="trendExplorerBreadcrumb" aria-label="当前位置">顶层节点组</nav>
+          </div>
+          <div class="trend-desktop-actions">
+            <button type="button" class="ghost-button" id="trendExplorerAddGroup">新建节点组</button>
+            <button type="button" class="ghost-button" id="trendExplorerAddNode">新建节点</button>
+            <button type="button" class="ghost-button" id="trendOpenConsole">打开趋势控制台</button>
+            <a class="ghost-button" href="ai-trend-registry.html" target="_blank" rel="noopener">节点库</a>
+            <a class="ghost-button" href="ai-trend-order.html" target="_blank" rel="noopener">排序管理</a>
+          </div>
+        </div>
+        <div class="trend-desktop-info">
+          <div class="trend-console-summary">
+            <div class="trend-console-summary-header">
+              <h2>控制台基础信息</h2>
+              <p>实时汇总节点组、节点、建议与反馈等关键指标。</p>
+            </div>
+            <div class="trend-console-items" id="trendSummary"></div>
+          </div>
+          <div class="trend-console-output" id="trendOutputCard" role="button" tabindex="0" title="点击查看引出量详情">
+            <div class="trend-target-content">
+              <div class="trend-target-header">
+                <div class="trend-target-title">引出量中心</div>
+                <div class="trend-target-values">
+                  <span class="trend-target-center" id="trendTargetCenter">--</span>
+                  <span class="trend-target-range" id="trendTargetRange">上下限 -- / --</span>
+                </div>
+              </div>
+              <div class="trend-target-footer">
+                <span class="trend-target-brief" id="trendTargetBrief">实时趋势准备中…</span>
+              </div>
+            </div>
+            <div class="trend-target-visual" aria-hidden="true">
+              <canvas id="trendTargetSparkline" class="trend-target-sparkline"></canvas>
+            </div>
+          </div>
+        </div>
+        <div class="trend-folder-strip">
+          <div class="trend-explorer-grid" id="trendExplorerGrid" role="list"></div>
+          <div class="trend-explorer-empty" id="trendExplorerEmpty">暂无节点组，请使用右键菜单或上方按钮创建。</div>
+        </div>
+        <div class="trend-explorer-menu" id="trendExplorerMenu" hidden></div>
+      </div>
+      <div class="trend-console-panel hidden" id="trendConsolePanel" aria-hidden="true">
+        <div class="trend-console-header">
+          <div>
+            <h2>趋势控制台</h2>
+            <p>查看曲线、矩阵与模型设置。完成后可关闭返回文件夹视图。</p>
+          </div>
+          <div class="trend-console-controls">
+            <button type="button" class="ghost-button" id="trendConsoleClose">关闭</button>
+          </div>
+        </div>
+        <div class="trend-console-body">
+          <div class="trend-grid">
+            <aside class="trend-config" aria-label="节点组配置">
+              <div class="trend-config-header">
+                <h2>节点组拓扑</h2>
+              </div>
+              <div class="trend-config-body" id="trendNodeList" role="presentation">
+                <p class="trend-config-intro">在文件夹视图中选择节点组或节点，即可在此查看详情并进行编辑。</p>
+              </div>
+              <form id="trendNodeForm" class="trend-form" autocomplete="off">
+                <h3 id="trendFormTitle">节点组详情</h3>
+                <div class="form-field">
+                  <label for="trendNodeKey">唯一标识</label>
+                  <input id="trendNodeKey" name="key" type="text" placeholder="如：cooling-section" required>
+                  <p class="form-hint">用于计算与追踪的唯一 ID，可自定义且在全局内保持唯一。</p>
+                </div>
+                <div class="form-field">
+                  <label for="trendNodeName">名称</label>
+                  <input id="trendNodeName" name="name" type="text" placeholder="如：降温段温度" required>
+                </div>
+                <div class="form-field">
+                  <label for="trendNodeNote">备注</label>
+                  <textarea id="trendNodeNote" name="note" rows="2" placeholder="记录该节点组的说明或所含节点"></textarea>
+                </div>
+                <div class="form-field">
+                  <label for="trendNodeParent">所属节点组</label>
+                  <select id="trendNodeParent" name="parent">
+                    <option value="">顶层节点组</option>
+                  </select>
+                  <p class="form-hint">可选上级节点组，支持多层嵌套结构。</p>
+                </div>
+                <div class="trend-group-summary" id="trendGroupSummary">
+                  <div class="trend-group-summary-header">节点组趋势汇总</div>
+                  <div class="trend-group-summary-body">
+                    <div class="trend-group-bounds" id="trendGroupBoundsInfo">暂无汇总信息</div>
+                    <div class="trend-group-analytics" id="trendGroupAnalytics"></div>
+                  </div>
+                </div>
+                <div class="form-field">
+                  <label for="trendNodePosition">相对位置</label>
+                  <select id="trendNodePosition" name="positionMode">
+                    <option value="after">位于前一节点之后</option>
+                    <option value="before">位于参考节点之前</option>
+                    <option value="parallel">与前一节点并行</option>
+                    <option value="same">与前一节点同位置</option>
+                  </select>
+                </div>
+                <div class="form-field" id="trendNodeRefField" hidden>
+                  <label for="trendNodeRef">参考节点</label>
+                  <select id="trendNodeRef" name="positionRef"></select>
+                </div>
+                <div class="trend-subnodes">
+                  <div class="trend-subnodes-header">
+                    <h4>节点列表</h4>
+                    <button type="button" class="ghost-button" id="trendAddSubNode">新增节点</button>
+                  </div>
+                  <div id="trendSubNodeList" role="list"></div>
+                </div>
+                <div class="form-actions">
+                  <button type="submit" class="primary-button">保存节点组</button>
+                  <button type="button" class="ghost-button danger" id="trendDeleteNode">删除节点组</button>
+                </div>
+              </form>
+              <div class="trend-config-footer">
+                <h3>模拟模式</h3>
+                <div class="trend-simulation-controls">
+                  <button
+                    type="button"
+                    class="ghost-button trend-simulation-toggle"
+                    id="trendSimulationToggle"
+                    aria-pressed="false"
+                  >模拟模式</button>
+                  <button type="button" class="ghost-button" id="trendManualAdjust">记录手动调整</button>
+                </div>
+                <div class="trend-simulation-status" id="trendSimulationStatus" aria-live="polite">模拟模式未开启。</div>
+                <div class="trend-mes-hint">预留 REST / WebSocket / 数据库 接口：可在右键设置中注册 MES 数据源。</div>
+              </div>
+            </aside>
+            <section class="trend-stage" aria-label="趋势监控">
+              <div class="trend-chart-wrapper">
+                <canvas id="trendChart" aria-label="趋势曲线"></canvas>
+                <div class="trend-chart-toolbar">
+                  <button type="button" class="ghost-button" data-range="60">近 1 小时</button>
+                  <button type="button" class="ghost-button" data-range="180">近 3 小时</button>
+                  <button type="button" class="ghost-button" data-range="720">近 12 小时</button>
+                  <button type="button" class="ghost-button" id="trendExportCsv">导出数据</button>
+                </div>
+              </div>
+              <div class="trend-matrix" id="trendMatrix">
+                <div class="trend-matrix-header">
+                  <h2>节点实时矩阵</h2>
+                  <p class="trend-matrix-hint">聚合展示所有节点的最新读数、状态与微型曲线。</p>
+                </div>
+                <div class="trend-matrix-grid" id="trendMatrixGrid" role="list"></div>
+              </div>
+              <div class="trend-forecast" id="trendForecast">
+                <div class="trend-forecast-header">
+                  <h2>预测展望</h2>
+                  <button type="button" class="ghost-button" id="trendRefreshForecast">刷新预测</button>
+                </div>
+                <div class="trend-forecast-list" id="trendForecastList"></div>
+              </div>
+              <div class="trend-advice" id="trendAdvice">
+                <div class="trend-advice-header">
+                  <h2>实时建议</h2>
+                  <div class="trend-advice-tools">
+                    <button type="button" class="ghost-button" id="trendRefreshAdvice">刷新</button>
+                    <button type="button" class="ghost-button" id="trendOpenHistory">历史记录</button>
+                  </div>
+                </div>
+                <div class="trend-advice-list" id="trendAdviceList"></div>
+              </div>
+              <div class="trend-scenario" id="trendScenario">
+                <div class="trend-scenario-header">
+                  <div>
+                    <h2>情景模拟</h2>
+                    <p>组合节点调整、推演趋势并保存为长期方案。</p>
+                  </div>
+                  <div class="trend-scenario-header-actions">
+                    <label class="trend-scenario-save">
+                      <input type="checkbox" id="trendScenarioPersist">
+                      <span>保存并写入历史</span>
+                    </label>
+                    <button type="button" class="primary-button" id="trendScenarioRun">运行模拟</button>
+                  </div>
+                </div>
+                <form id="trendScenarioForm" class="trend-scenario-form" autocomplete="off">
+                  <div class="form-row dual">
+                    <div class="form-field">
+                      <label for="trendScenarioName">方案名称</label>
+                      <input id="trendScenarioName" type="text" placeholder="如：降温段调优演练">
+                    </div>
+                    <div class="form-field">
+                      <label for="trendScenarioHorizon">预测前瞻 (分钟)</label>
+                      <input id="trendScenarioHorizon" type="number" min="1" step="1">
+                    </div>
+                  </div>
+                  <div class="form-field">
+                    <label for="trendScenarioNote">备注</label>
+                    <textarea id="trendScenarioNote" rows="2" placeholder="说明假设条件或目标"></textarea>
+                  </div>
+                  <div class="trend-scenario-adjustments" id="trendScenarioAdjustments" role="list"></div>
+                  <div class="trend-scenario-actions">
+                    <button type="button" class="ghost-button" id="trendScenarioAddAdjustment">新增节点调整</button>
+                  </div>
+                </form>
+                <div class="trend-scenario-output" id="trendScenarioResult"></div>
+                <div class="trend-scenario-saved">
+                  <h3>已保存的模拟</h3>
+                  <div class="trend-scenario-saved-list" id="trendScenarioSavedList"></div>
+                </div>
+              </div>
+            </section>
+            <aside class="trend-side" aria-label="模型设置">
+              <div class="trend-side-block">
+                <h3>预测设置</h3>
+                <form id="trendSettingsForm">
+                  <div class="form-field">
+                    <label for="trendSampleInterval">采样周期 (ms)</label>
+                    <input id="trendSampleInterval" name="sampleIntervalMs" type="number" step="100">
+                  </div>
+                  <div class="form-field">
+                    <label for="trendLookback">分析窗口 (分钟)</label>
+                    <input id="trendLookback" name="lookbackMinutes" type="number">
+                  </div>
+                  <div class="form-field">
+                    <label for="trendPrediction">预测前瞻 (分钟)</label>
+                    <input id="trendPrediction" name="predictionMinutes" type="number">
+                  </div>
+                  <div class="form-field">
+                    <label>引出量目标</label>
+                    <div class="trend-target-grid">
+                      <input id="trendTargetCenterInput" name="outputCenter" type="number" step="any" placeholder="中心值">
+                      <input id="trendTargetLowerInput" name="outputLower" type="number" step="any" placeholder="下限">
+                      <input id="trendTargetUpperInput" name="outputUpper" type="number" step="any" placeholder="上限">
+                    </div>
+                  </div>
+                  <div class="form-actions">
+                    <button type="submit" class="primary-button">保存设置</button>
+                  </div>
+                </form>
+              </div>
+              <div class="trend-side-block">
+                <h3>MES 数据接口</h3>
+                <div id="trendEndpointList" class="trend-endpoint-list"></div>
+                <button type="button" class="ghost-button" id="trendAddEndpoint">注册数据源</button>
+              </div>
+              <div class="trend-side-block">
+                <h3>人工反馈</h3>
+                <form id="trendFeedbackForm">
+                  <div class="form-field">
+                    <label for="trendFeedbackSuggestion">关联建议</label>
+                    <select id="trendFeedbackSuggestion"></select>
+                  </div>
+                  <div class="form-field">
+                    <label for="trendFeedbackRating">评分 (1-5)</label>
+                    <input id="trendFeedbackRating" type="number" min="1" max="5">
+                  </div>
+                  <div class="form-field">
+                    <label for="trendFeedbackNote">人工订正</label>
+                    <textarea id="trendFeedbackNote" rows="3" placeholder="说明正确流程或标准操作"></textarea>
+                  </div>
+                  <div class="form-actions">
+                    <button type="submit" class="primary-button">提交反馈</button>
+                  </div>
+                </form>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+<div class="modal hidden" id="trendNodeModal" aria-hidden="true">
+  <div class="modal-content trend-node-modal" role="dialog" aria-modal="true" aria-labelledby="trendNodeModalTitle">
+    <header class="modal-header">
+      <h2 id="trendNodeModalTitle">节点详情</h2>
+      <button type="button" class="ghost-button" id="trendNodeModalClose">关闭</button>
+    </header>
+    <div class="trend-node-modal-body">
+      <div class="trend-node-inspect">
+        <canvas id="trendNodeModalChart" aria-label="节点趋势"></canvas>
+        <div class="trend-chart-tooltip hidden" id="trendNodeModalTooltip" role="status" aria-live="polite"></div>
+        <div class="trend-node-inspect-meta" id="trendNodeModalMeta"></div>
+      </div>
+      <div class="trend-node-analytics" id="trendNodeModalAnalytics"></div>
+      <form id="trendNodeModalForm" class="trend-node-form" autocomplete="off">
+        <div class="form-row double">
+          <div class="form-field">
+            <label for="trendNodeModalKey">唯一标识</label>
+            <input id="trendNodeModalKey" name="key" type="text" required>
+          </div>
+          <div class="form-field">
+            <label for="trendNodeModalName">名称</label>
+            <input id="trendNodeModalName" name="name" type="text" required>
+          </div>
+        </div>
+        <div class="form-field">
+          <label for="trendNodeModalUnit">单位</label>
+          <select id="trendNodeModalUnit" name="unit">
+            <option value="">请选择单位</option>
+          </select>
+        </div>
+        <div class="form-row triple">
+          <div class="form-field">
+            <label for="trendNodeModalLower">下限</label>
+            <input id="trendNodeModalLower" name="lower" type="number" step="any" placeholder="可选">
+          </div>
+          <div class="form-field">
+            <label for="trendNodeModalCenter">中值</label>
+            <input id="trendNodeModalCenter" name="center" type="number" step="any" placeholder="可选">
+          </div>
+          <div class="form-field">
+            <label for="trendNodeModalUpper">上限</label>
+            <input id="trendNodeModalUpper" name="upper" type="number" step="any" placeholder="可选">
+          </div>
+        </div>
+        <div class="form-field">
+          <label for="trendNodeModalMes">MES 数据源</label>
+          <select id="trendNodeModalMes" name="mesSource"></select>
+          <p class="form-hint">为该节点指定独立的 MES 来源，未对接时可留空。</p>
+        </div>
+        <div class="form-field">
+          <label for="trendNodeModalManual">手动调整节点</label>
+          <select id="trendNodeModalManual" name="manual">
+            <option value="false">否</option>
+            <option value="true">是</option>
+          </select>
+        </div>
+        <div class="form-row double" id="trendNodeModalManualFields">
+          <div class="form-field">
+            <label for="trendNodeModalStep">单次标准调整量</label>
+            <input id="trendNodeModalStep" name="manualStep" type="number" step="any" placeholder="如：0.5">
+          </div>
+          <div class="form-field">
+            <label for="trendNodeModalImpact">受影响节点</label>
+            <select id="trendNodeModalImpact" name="manualImpact" multiple size="4"></select>
+            <p class="form-hint">选择该手动节点会直接影响的监测节点，用于预测关联分析。</p>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="ghost-button" id="trendNodeModalDetail">打开详情页</button>
+          <div class="modal-action-spacer"></div>
+          <button type="button" class="ghost-button" id="trendNodeModalEdit">编辑</button>
+          <button type="button" class="ghost-button" id="trendNodeModalCancel">关闭</button>
+          <button type="submit" class="primary-button" id="trendNodeModalSave">保存节点</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+<div class="modal hidden" id="trendGroupModal" aria-hidden="true">
+  <div class="modal-content trend-group-modal" role="dialog" aria-modal="true" aria-labelledby="trendGroupModalTitle">
+    <header class="modal-header">
+      <h2 id="trendGroupModalTitle">节点组</h2>
+      <button type="button" class="ghost-button" id="trendGroupModalClose">关闭</button>
+    </header>
+    <form id="trendGroupModalForm" class="trend-group-form" autocomplete="off">
+      <div class="form-row double">
+        <div class="form-field">
+          <label for="trendGroupModalKey">唯一标识</label>
+          <input id="trendGroupModalKey" name="key" type="text" required>
+        </div>
+        <div class="form-field">
+          <label for="trendGroupModalName">名称</label>
+          <input id="trendGroupModalName" name="name" type="text" required>
+        </div>
+      </div>
+      <div class="form-field">
+        <label for="trendGroupModalNote">备注</label>
+        <textarea id="trendGroupModalNote" name="note" rows="2" placeholder="补充说明或记录节点组使用场景"></textarea>
+      </div>
+      <div class="form-field">
+        <label for="trendGroupModalParent">所属节点组</label>
+        <select id="trendGroupModalParent" name="parent">
+          <option value="">顶层节点组</option>
+        </select>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="ghost-button" id="trendGroupModalDuplicate">复制节点组</button>
+        <div class="modal-action-spacer"></div>
+        <button type="button" class="ghost-button" id="trendGroupModalCancel">取消</button>
+        <button type="submit" class="primary-button">保存</button>
+      </div>
+    </form>
+  </div>
+</div>
+<div class="modal hidden" id="trendTargetModal" aria-hidden="true">
+  <div class="modal-content trend-target-modal" role="dialog" aria-modal="true" aria-labelledby="trendTargetModalTitle">
+    <header class="modal-header">
+      <h2 id="trendTargetModalTitle">引出量目标</h2>
+      <button type="button" class="ghost-button" id="trendTargetModalClose">关闭</button>
+    </header>
+    <div class="trend-target-summary" id="trendTargetSummary">
+      <div class="trend-target-summary-grid">
+        <div class="trend-target-summary-card">
+          <div class="summary-label">中心目标</div>
+          <div class="summary-value" id="trendTargetSummaryCenter">--</div>
+        </div>
+        <div class="trend-target-summary-card">
+          <div class="summary-label">安全区间</div>
+          <div class="summary-value" id="trendTargetSummaryRange">--</div>
+        </div>
+        <div class="trend-target-summary-card">
+          <div class="summary-label">采样 / 预测</div>
+          <div class="summary-value" id="trendTargetSummaryWindow">--</div>
+        </div>
+        <div class="trend-target-summary-card">
+          <div class="summary-label">节点 / 数据源</div>
+          <div class="summary-value" id="trendTargetSummaryContext">--</div>
+        </div>
+      </div>
+      <p class="trend-target-summary-status" id="trendTargetSummaryStatus">引出量目标用于衡量整体引出量稳定性。</p>
+    </div>
+    <form id="trendTargetModalForm" class="trend-target-form" autocomplete="off">
+      <div class="form-row triple">
+        <div class="form-field">
+          <label for="trendTargetModalLower">下限</label>
+          <input id="trendTargetModalLower" name="lower" type="number" step="any">
+        </div>
+        <div class="form-field">
+          <label for="trendTargetModalCenter">中心</label>
+          <input id="trendTargetModalCenter" name="center" type="number" step="any" required>
+        </div>
+        <div class="form-field">
+          <label for="trendTargetModalUpper">上限</label>
+          <input id="trendTargetModalUpper" name="upper" type="number" step="any">
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="ghost-button" id="trendTargetModalCancel">取消</button>
+        <button type="submit" class="primary-button">保存</button>
+      </div>
+    </form>
+  </div>
+</div>
+<div class="modal hidden" id="trendSettingsModal" aria-hidden="true">
+  <div class="modal-content trend-settings-modal" role="dialog" aria-modal="true" aria-labelledby="trendSettingsModalTitle">
+    <header class="modal-header">
+      <h2 id="trendSettingsModalTitle">趋势系统设置</h2>
+      <button type="button" class="ghost-button" id="trendSettingsModalClose">关闭</button>
+    </header>
+    <div class="trend-settings-modal-body">
+      <section class="trend-settings-modal-section">
+        <h3>预测参数</h3>
+        <form id="trendSettingsModalForm" autocomplete="off">
+          <div class="form-row triple">
+            <div class="form-field">
+              <label for="trendSettingsModalSample">采样周期 (ms)</label>
+              <input id="trendSettingsModalSample" name="sample" type="number" min="100" step="100">
+            </div>
+            <div class="form-field">
+              <label for="trendSettingsModalLookback">分析窗口 (分钟)</label>
+              <input id="trendSettingsModalLookback" name="lookback" type="number" min="1" step="1">
+            </div>
+            <div class="form-field">
+              <label for="trendSettingsModalPrediction">预测前瞻 (分钟)</label>
+              <input id="trendSettingsModalPrediction" name="prediction" type="number" min="1" step="1">
+            </div>
+          </div>
+          <div class="form-row triple">
+            <div class="form-field">
+              <label for="trendSettingsModalLower">引出量下限</label>
+              <input id="trendSettingsModalLower" name="lower" type="number" step="any">
+            </div>
+            <div class="form-field">
+              <label for="trendSettingsModalCenter">引出量中心</label>
+              <input id="trendSettingsModalCenter" name="center" type="number" step="any">
+            </div>
+            <div class="form-field">
+              <label for="trendSettingsModalUpper">引出量上限</label>
+              <input id="trendSettingsModalUpper" name="upper" type="number" step="any">
+            </div>
+          </div>
+          <div class="modal-actions compact">
+            <div class="modal-action-spacer"></div>
+            <button type="submit" class="primary-button">保存参数</button>
+          </div>
+        </form>
+      </section>
+      <section class="trend-settings-modal-section">
+        <div class="trend-settings-modal-header">
+          <h3>MES 数据源</h3>
+          <button type="button" class="ghost-button" id="trendSettingsModalAddEndpoint">新增数据源</button>
+        </div>
+        <div class="trend-settings-modal-endpoints" id="trendSettingsModalEndpointList"></div>
+      </section>
+    </div>
+  </div>
+</div>
+<div class="modal hidden" id="trendEndpointModal" aria-hidden="true">
+  <div class="modal-content trend-endpoint-modal" role="dialog" aria-modal="true" aria-labelledby="trendEndpointModalTitle">
+    <header class="modal-header">
+      <h2 id="trendEndpointModalTitle">数据源</h2>
+      <button type="button" class="ghost-button" id="trendEndpointModalClose">关闭</button>
+    </header>
+    <form id="trendEndpointModalForm" class="trend-endpoint-form" autocomplete="off">
+      <div class="form-field">
+        <label for="trendEndpointModalName">名称</label>
+        <input id="trendEndpointModalName" name="name" type="text" required>
+      </div>
+      <div class="form-row double">
+        <div class="form-field">
+          <label for="trendEndpointModalType">类型</label>
+          <select id="trendEndpointModalType" name="type">
+            <option value="rest">REST</option>
+            <option value="websocket">WebSocket</option>
+            <option value="database">数据库</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label for="trendEndpointModalEnabled">启用状态</label>
+          <select id="trendEndpointModalEnabled" name="enabled">
+            <option value="true">启用</option>
+            <option value="false">停用</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-field">
+        <label for="trendEndpointModalUrl">接口地址 / 连接串</label>
+        <input id="trendEndpointModalUrl" name="url" type="text" placeholder="https://mes.local/api/... 或数据库连接">
+      </div>
+      <div class="form-row double">
+        <div class="form-field">
+          <label for="trendEndpointModalDatabase">数据库</label>
+          <input id="trendEndpointModalDatabase" name="database" type="text">
+        </div>
+        <div class="form-field">
+          <label for="trendEndpointModalTable">表 / 视图</label>
+          <input id="trendEndpointModalTable" name="table" type="text">
+        </div>
+      </div>
+      <div class="form-field">
+        <label for="trendEndpointModalNotes">备注</label>
+        <textarea id="trendEndpointModalNotes" name="notes" rows="2"></textarea>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="ghost-button" id="trendEndpointModalCancel">取消</button>
+        <button type="submit" class="primary-button">保存</button>
+      </div>
+    </form>
+  </div>
+</div>
+<script src="scripts/unit-knowledge.js"></script>
+<script src="scripts/app.js"></script>
+<script src="scripts/tools-trend.js"></script>
+<script src="scripts/tools-trend-simulation.js"></script>
+</body>
+</html>

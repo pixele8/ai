@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>节点库总览 · 虹小聊</title>
+<link rel="stylesheet" href="styles/app.css">
+</head>
+<body data-page="trend-registry">
+<div class="app-shell">
+  <aside class="sidebar" id="bankSidebar">
+    <div class="brand"><img class="brand-logo" src="assets/logo.png" alt="虹小聊 logo"><span class="brand-name">虹小聊</span></div>
+    <div class="nav-group">
+      <a class="nav-link" href="index.html">对话</a>
+      <a class="nav-link" href="kb.html">知识库</a>
+      <a class="nav-link" href="favorites.html">收藏夹</a>
+      <a class="nav-link" href="decision.html">决策链</a>
+      <a class="nav-link active" href="ai-tools.html">AI 工具箱</a>
+      <a class="nav-link" href="admin.html">系统</a>
+    </div>
+    <div class="sidebar-section">
+      <div class="section-title">记忆库</div>
+      <div class="badge-list" id="bankList"></div>
+      <button class="ghost-button" id="createBank">新建记忆库</button>
+    </div>
+    <a class="ghost-button toolbox-link" href="ai-tools.html">返回工具箱</a>
+    <button class="ghost-button" id="logoutButton">退出登录</button>
+  </aside>
+  <main class="main-panel trend-registry-main">
+    <header class="main-header">
+      <div class="header-info">
+        <div class="header-title">节点库总览</div>
+        <div class="header-sub">以注册表视角审阅所有节点，支持分组、检索、性能指标与手动节点追踪。</div>
+      </div>
+      <div class="user-info" id="userInfo"></div>
+    </header>
+    <section class="panel trend-registry-panel">
+      <div class="trend-registry-metrics" id="trendRegistryStats"></div>
+      <div class="trend-registry-toolbar">
+        <div class="trend-registry-filters">
+          <label for="trendRegistryGroup">节点组</label>
+          <select id="trendRegistryGroup"></select>
+          <label for="trendRegistrySearch">搜索</label>
+          <input id="trendRegistrySearch" type="search" placeholder="按节点、单位或备注检索">
+          <label class="trend-registry-toggle"><input type="checkbox" id="trendRegistryManualOnly"> 仅显示手动节点</label>
+        </div>
+        <div class="trend-registry-actions">
+          <button type="button" class="ghost-button" id="trendRegistryExport">导出列表</button>
+        </div>
+      </div>
+      <div class="trend-registry-layout">
+        <section class="trend-registry-table" aria-label="节点列表">
+          <header class="trend-registry-table-head">
+            <div>节点 ID</div>
+            <div>名称</div>
+            <div>所属节点组</div>
+            <div>单位</div>
+            <div>范围</div>
+            <div>手动标记</div>
+            <div>最近状态</div>
+          </header>
+          <div class="trend-registry-table-body" id="trendRegistryTable" role="list"></div>
+        </section>
+        <aside class="trend-registry-detail" id="trendRegistryDetail" aria-live="polite">
+          <div class="trend-registry-detail-empty" id="trendRegistryEmpty">请选择左侧节点查看详情。</div>
+          <div class="trend-registry-detail-body hidden" id="trendRegistryInspector">
+            <header class="trend-registry-detail-header">
+              <div>
+                <h2 id="trendRegistryDetailName"></h2>
+                <p id="trendRegistryDetailPath" class="trend-registry-detail-path"></p>
+              </div>
+              <button type="button" class="ghost-button" id="trendRegistryJump">打开趋势控制台</button>
+            </header>
+            <section class="trend-registry-section">
+              <h3>节点配置</h3>
+              <dl class="trend-registry-detail-grid" id="trendRegistryDetailConfig"></dl>
+            </section>
+            <section class="trend-registry-section">
+              <h3>近期读数</h3>
+              <canvas id="trendRegistryDetailChart" aria-label="节点趋势"></canvas>
+            </section>
+            <section class="trend-registry-section">
+              <h3>关联建议</h3>
+              <div id="trendRegistryDetailSuggestions" class="trend-registry-suggestions"></div>
+            </section>
+          </div>
+        </aside>
+      </div>
+    </section>
+  </main>
+</div>
+<script src="scripts/unit-knowledge.js" defer></script>
+<script src="scripts/app.js" defer></script>
+<script src="scripts/tools-trend-registry.js" defer></script>
+</body>
+</html>
