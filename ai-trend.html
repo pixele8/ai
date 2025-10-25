@@ -155,13 +155,17 @@
                 </div>
               </form>
               <div class="trend-config-footer">
-                <h3>演示模式</h3>
-                <div class="trend-demo-controls">
-                  <button type="button" class="primary-button" id="trendStartDemo">启动演示</button>
-                  <button type="button" class="ghost-button" id="trendStopDemo">停止</button>
+                <h3>模拟模式</h3>
+                <div class="trend-simulation-controls">
+                  <button
+                    type="button"
+                    class="ghost-button trend-simulation-toggle"
+                    id="trendSimulationToggle"
+                    aria-pressed="false"
+                  >模拟模式</button>
                   <button type="button" class="ghost-button" id="trendManualAdjust">记录手动调整</button>
                 </div>
-                <div class="trend-demo-info" id="trendDemoStatus">演示模式未开启。</div>
+                <div class="trend-simulation-status" id="trendSimulationStatus" aria-live="polite">模拟模式未开启。</div>
                 <div class="trend-mes-hint">预留 REST / WebSocket / 数据库 接口：可在右键设置中注册 MES 数据源。</div>
               </div>
             </aside>
@@ -310,6 +314,7 @@
     <div class="trend-node-modal-body">
       <div class="trend-node-inspect">
         <canvas id="trendNodeModalChart" aria-label="节点趋势"></canvas>
+        <div class="trend-chart-tooltip hidden" id="trendNodeModalTooltip" role="status" aria-live="polite"></div>
         <div class="trend-node-inspect-meta" id="trendNodeModalMeta"></div>
       </div>
       <div class="trend-node-analytics" id="trendNodeModalAnalytics"></div>
@@ -324,20 +329,11 @@
             <input id="trendNodeModalName" name="name" type="text" required>
           </div>
         </div>
-        <div class="form-row double">
-          <div class="form-field">
-            <label for="trendNodeModalUnit">单位</label>
-            <select id="trendNodeModalUnit" name="unit">
-              <option value="">请选择单位</option>
-            </select>
-          </div>
-          <div class="form-field">
-            <label for="trendNodeModalSimulate">演示模拟</label>
-            <select id="trendNodeModalSimulate" name="simulate">
-              <option value="true">启用</option>
-              <option value="false">停用</option>
-            </select>
-          </div>
+        <div class="form-field">
+          <label for="trendNodeModalUnit">单位</label>
+          <select id="trendNodeModalUnit" name="unit">
+            <option value="">请选择单位</option>
+          </select>
         </div>
         <div class="form-row triple">
           <div class="form-field">
@@ -582,5 +578,6 @@
 <script src="scripts/unit-knowledge.js"></script>
 <script src="scripts/app.js"></script>
 <script src="scripts/tools-trend.js"></script>
+<script src="scripts/tools-trend-simulation.js"></script>
 </body>
 </html>

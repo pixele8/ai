@@ -100,7 +100,6 @@
       upper: typeof record.upper === "number" ? record.upper : null,
       manual: !!record.manual,
       manualStep: typeof record.manualStep === "number" ? record.manualStep : 0,
-      simulate: record.simulate === false ? false : true,
       note: record.note || "",
       groupId: record.groupId || null,
       parentGroupId: record.parentGroupId || null,
@@ -187,7 +186,6 @@
           upper: typeof child.upper === "number" ? child.upper : null,
           manual: !!child.manual,
           manualStep: typeof child.manualStep === "number" ? child.manualStep : 0,
-          simulate: child.simulate === false ? false : true,
           note: child.note || "",
           groupId: group.id,
           parentGroupId: group.parentId || null,
@@ -212,7 +210,6 @@
       group: "",
       search: "",
       manualOnly: false,
-      simulatedOnly: false,
       selectedId: null,
       unsubscribe: null,
       fallbackRequested: false
@@ -222,7 +219,6 @@
     var groupSelect = document.getElementById("trendRegistryGroup");
     var searchInput = document.getElementById("trendRegistrySearch");
     var manualToggle = document.getElementById("trendRegistryManualOnly");
-    var simulatedToggle = document.getElementById("trendRegistrySimulatedOnly");
     var exportBtn = document.getElementById("trendRegistryExport");
     var tableBody = document.getElementById("trendRegistryTable");
     var emptyDetail = document.getElementById("trendRegistryEmpty");
@@ -322,7 +318,6 @@
       statsEl.innerHTML = "";
       var total = state.library.length;
       var manualCount = state.library.filter(function (node) { return node && node.manual; }).length;
-      var simulatedCount = state.library.filter(function (node) { return node && node.simulate !== false; }).length;
       var groups = {};
       state.library.forEach(function (node) {
         if (!node) { return; }
@@ -332,7 +327,6 @@
       var cards = [
         { label: "节点总数", value: total },
         { label: "手动节点", value: manualCount },
-        { label: "演示节点", value: simulatedCount },
         { label: "节点组", value: Object.keys(groups).length }
       ];
       cards.forEach(function (metric) {
@@ -394,9 +388,6 @@
       }
       if (state.manualOnly) {
         list = list.filter(function (node) { return node.manual; });
-      }
-      if (state.simulatedOnly) {
-        list = list.filter(function (node) { return node.simulate !== false; });
       }
       if (state.search) {
         var term = state.search.toLowerCase();
@@ -466,17 +457,6 @@
           manualFlag.textContent = "手动" + (node.manualStep ? " · " + formatNumber(node.manualStep) : "");
           flags.appendChild(manualFlag);
         }
-        if (node.simulate === false) {
-          var demoFlag = document.createElement("span");
-          demoFlag.className = "registry-flag muted";
-          demoFlag.textContent = "演示停用";
-          flags.appendChild(demoFlag);
-        } else {
-          var activeFlag = document.createElement("span");
-          activeFlag.className = "registry-flag";
-          activeFlag.textContent = "演示";
-          flags.appendChild(activeFlag);
-        }
         var latest = getLatestReading(node.id);
         var latestText = "--";
         if (latest) {
@@ -545,7 +525,6 @@
       appendConfig("中值", typeof node.center === "number" ? formatNumber(node.center) : "--");
       appendConfig("上限", typeof node.upper === "number" ? formatNumber(node.upper) : "--");
       appendConfig("手动节点", node.manual ? "是" : "否");
-      appendConfig("演示参与", node.simulate === false ? "停用" : "启用");
       appendConfig("备注", node.note || "--");
       var series = [];
       var streams = (state.snapshot && state.snapshot.streams) || [];
@@ -605,7 +584,7 @@
         services.toast && services.toast("暂无可导出的节点");
         return;
       }
-      var header = ["id", "name", "group", "unit", "lower", "center", "upper", "manual", "simulate", "note"];
+      var header = ["id", "name", "group", "unit", "lower", "center", "upper", "manual", "note"];
       var rows = [header.join(",")];
       nodes.forEach(function (node) {
         var line = [
@@ -617,7 +596,6 @@
           typeof node.center === "number" ? formatNumber(node.center) : "",
           typeof node.upper === "number" ? formatNumber(node.upper) : "",
           node.manual ? "true" : "false",
-          node.simulate === false ? "false" : "true",
           '"' + (node.note || "").replace(/"/g, '""') + '"'
         ];
         rows.push(line.join(","));
@@ -652,14 +630,6 @@
     if (manualToggle) {
       manualToggle.addEventListener("change", function () {
         state.manualOnly = manualToggle.checked;
-        renderTable();
-        renderDetail();
-      });
-    }
-
-    if (simulatedToggle) {
-      simulatedToggle.addEventListener("change", function () {
-        state.simulatedOnly = simulatedToggle.checked;
         renderTable();
         renderDetail();
       });

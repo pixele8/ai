@@ -45,8 +45,6 @@
   var trendSubscribers = [];
   var trendBeaconUnsubscribe = null;
   var trendBeaconState = { open: false, expanded: false };
-  var trendDemoTimer = null;
-  var trendDemoLastTick = 0;
   var trendBeaconRoot = null;
   var trendBeaconDocListenerAttached = false;
   var trendBeaconPosition = null;
@@ -3121,13 +3119,11 @@
           outputNote: "",
           outputNodeId: "__output__",
           outputMesSourceId: null,
-          outputSimulate: true,
           outputCreatedAt: new Date().toISOString(),
           outputUpdatedAt: new Date().toISOString(),
           mesEndpoints: []
         },
         model: { version: 1, calibrations: {} },
-        demo: { enabled: false, intervalMs: 60000, amplitude: 0.2, volatility: 0.35 },
         nodeLibrary: [],
         groupPaths: {}
       };
@@ -3177,7 +3173,6 @@
         outputNote: "",
         outputNodeId: "__output__",
         outputMesSourceId: null,
-        outputSimulate: true,
         outputCreatedAt: new Date().toISOString(),
         outputUpdatedAt: new Date().toISOString(),
         mesEndpoints: []
@@ -3228,26 +3223,14 @@
     if (typeof trend.settings.outputUpdatedAt !== "string") {
       trend.settings.outputUpdatedAt = trend.settings.outputCreatedAt;
     }
-    if (typeof trend.settings.outputSimulate !== "boolean") {
-      trend.settings.outputSimulate = true;
-    }
     if (!trend.model || typeof trend.model !== "object") {
       trend.model = { version: 1, calibrations: {} };
     }
     if (!trend.model.calibrations || typeof trend.model.calibrations !== "object") {
       trend.model.calibrations = {};
     }
-    if (!trend.demo || typeof trend.demo !== "object") {
-      trend.demo = { enabled: false, intervalMs: trend.settings.sampleIntervalMs, amplitude: 0.2, volatility: 0.35 };
-    }
-    if (typeof trend.demo.intervalMs !== "number" || trend.demo.intervalMs <= 0) {
-      trend.demo.intervalMs = trend.settings.sampleIntervalMs;
-    }
-    if (typeof trend.demo.amplitude !== "number") {
-      trend.demo.amplitude = 0.2;
-    }
-    if (typeof trend.demo.volatility !== "number") {
-      trend.demo.volatility = 0.35;
+    if (!trend.simulation || typeof trend.simulation !== "object") {
+      trend.simulation = { active: false, updatedAt: new Date().toISOString() };
     }
     for (var tn = 0; tn < trend.nodes.length; tn += 1) {
       var node = trend.nodes[tn];
@@ -3647,7 +3630,6 @@
       upper: typeof target.upper === "number" ? target.upper : null,
       manual: false,
       manualStep: null,
-      simulate: settings.outputSimulate === false ? false : true,
       note: typeof settings.outputNote === "string" ? settings.outputNote : "",
       groupId: null,
       parentGroupId: null,
@@ -4386,7 +4368,7 @@
       nodeId: node.id,
       subNodeId: child ? child.id : null,
       value: parsedValue,
-      source: sample.source || "demo",
+      source: sample.source || "unknown",
       confidence: typeof sample.confidence === "number" ? sample.confidence : 0,
       capturedAt: sample.capturedAt || nowIso,
       receivedAt: nowIso,
@@ -4412,7 +4394,7 @@
       feedback: cloneTrendFeedback(),
       settings: cloneTrendSettings(),
       model: JSON.parse(JSON.stringify(state.tools.trend.model || { version: 1, calibrations: {} })),
-      demo: JSON.parse(JSON.stringify(state.tools.trend.demo || { enabled: false, intervalMs: 60000 }))
+      simulation: JSON.parse(JSON.stringify(state.tools.trend.simulation || { active: false }))
     };
   }
 
@@ -4956,12 +4938,6 @@
         touchedOutput = true;
       }
     }
-    if (Object.prototype.hasOwnProperty.call(patch, "outputSimulate")) {
-      if (patch.outputSimulate === true || patch.outputSimulate === false) {
-        settings.outputSimulate = patch.outputSimulate;
-        touchedOutput = true;
-      }
-    }
     if (touchedOutput) {
       if (typeof settings.outputCreatedAt !== "string" || !settings.outputCreatedAt) {
         settings.outputCreatedAt = new Date().toISOString();
@@ -5038,6 +5014,61 @@
     saveState();
     recomputeTrendAnalytics(options && options.skipEmit);
     if (!options || !options.skipEmit) {
+      emitTrendChange();
+    }
+  }
+
+  function setTrendSimulationActive(active, options) {
+    ensureTrendStore();
+    options = options || {};
+    if (!state.tools.trend.simulation || typeof state.tools.trend.simulation !== "object") {
+      state.tools.trend.simulation = { active: false, updatedAt: new Date().toISOString() };
+    }
+    var simulation = state.tools.trend.simulation;
+    var next = !!active;
+    var changed = simulation.active !== next;
+    simulation.active = next;
+    simulation.updatedAt = new Date().toISOString();
+    saveState();
+    if (changed && !options.skipEmit) {
+      emitTrendChange();
+    }
+  }
+
+  function getTrendSimulationState() {
+    ensureTrendStore();
+    var snapshot = state.tools.trend.simulation || { active: false };
+    try {
+      return JSON.parse(JSON.stringify(snapshot));
+    } catch (err) {
+      return { active: !!snapshot.active, updatedAt: snapshot.updatedAt || new Date().toISOString() };
+    }
+  }
+
+  function clearTrendSimulationSamples(options) {
+    ensureTrendStore();
+    options = options || {};
+    var streams = state.tools.trend.streams || [];
+    var filtered = [];
+    var removed = 0;
+    for (var i = 0; i < streams.length; i += 1) {
+      var sample = streams[i];
+      if (sample && sample.source === "simulation") {
+        removed += 1;
+        continue;
+      }
+      filtered.push(sample);
+    }
+    if (!removed) {
+      if (!options.skipEmit) {
+        emitTrendChange();
+      }
+      return;
+    }
+    state.tools.trend.streams = filtered;
+    saveState();
+    recomputeTrendAnalytics(true);
+    if (!options.skipEmit) {
       emitTrendChange();
     }
   }
@@ -6832,102 +6863,6 @@
     }
   }
 
-  function startTrendDemo(options) {
-    ensureTrendStore();
-    options = options || {};
-    state.tools.trend.demo.enabled = true;
-    if (typeof options.intervalMs === "number" && options.intervalMs > 0) {
-      state.tools.trend.demo.intervalMs = options.intervalMs;
-    }
-    if (typeof options.amplitude === "number") {
-      state.tools.trend.demo.amplitude = options.amplitude;
-    }
-    if (typeof options.volatility === "number") {
-      state.tools.trend.demo.volatility = options.volatility;
-    }
-    if (trendDemoTimer) {
-      window.clearInterval(trendDemoTimer);
-    }
-    var interval = state.tools.trend.demo.intervalMs || state.tools.trend.settings.sampleIntervalMs || 60000;
-    function tickDemo() {
-      ensureTrendStore();
-      var nodes = state.tools.trend.nodes;
-      if (!nodes.length) {
-        return;
-      }
-      var samples = [];
-      trendDemoLastTick += 1;
-      for (var i = 0; i < nodes.length; i += 1) {
-        var node = nodes[i];
-        var allowDemo = typeof node.simulate === "boolean" ? node.simulate : true;
-        if (!allowDemo) {
-          continue;
-        }
-        var base = typeof node.lower === "number" && typeof node.upper === "number"
-          ? (node.lower + node.upper) / 2
-          : state.tools.trend.settings.outputTarget.center;
-        var amplitude = state.tools.trend.demo.amplitude || 0.2;
-        var volatility = state.tools.trend.demo.volatility || 0.35;
-        var jitter = Math.sin(trendDemoLastTick / (5 + i)) * amplitude * (i + 1);
-        var random = (Math.random() - 0.5) * volatility;
-        var manualShift = 0;
-        if (node.manual) {
-          manualShift = (Math.random() - 0.5) * (node.manualStep || 1);
-        }
-        var value = base + jitter + random + manualShift;
-        if (typeof node.lower === "number") {
-          value = Math.max(node.lower - 0.25 * Math.abs(node.lower || 1), value);
-        }
-        if (typeof node.upper === "number") {
-          value = Math.min(node.upper + 0.25 * Math.abs(node.upper || 1), value);
-        }
-        samples.push({
-          nodeId: node.id,
-          value: value,
-          source: "demo",
-          capturedAt: new Date().toISOString(),
-          confidence: 0.6 + Math.random() * 0.35
-        });
-        if (Array.isArray(node.children)) {
-          for (var c = 0; c < node.children.length; c += 1) {
-            var child = node.children[c];
-            var childValue = value + (Math.random() - 0.5) * (child.manualStep || 0.5);
-            samples.push({
-              nodeId: node.id,
-              subNodeId: child.id,
-              value: childValue,
-              source: "demo",
-              capturedAt: new Date().toISOString(),
-              confidence: 0.55 + Math.random() * 0.3
-            });
-          }
-        }
-      }
-      recordTrendSamples(samples, { skipEmit: true });
-      recomputeTrendAnalytics(true);
-      emitTrendChange();
-    }
-    tickDemo();
-    trendDemoTimer = window.setInterval(tickDemo, interval);
-    saveState();
-    emitTrendChange();
-  }
-
-  function stopTrendDemo() {
-    ensureTrendStore();
-    state.tools.trend.demo.enabled = false;
-    if (trendDemoTimer) {
-      window.clearInterval(trendDemoTimer);
-      trendDemoTimer = null;
-    }
-    saveState();
-    emitTrendChange();
-  }
-
-  function isTrendDemoActive() {
-    ensureTrendStore();
-    return !!state.tools.trend.demo.enabled;
-  }
 
   function refreshTrendAnalytics() {
     recomputeTrendAnalytics();
@@ -14519,9 +14454,9 @@
         updateSettings: updateTrendSettings,
         recordSamples: recordTrendSamples,
         recordManual: recordTrendManualAdjustment,
-        startDemo: startTrendDemo,
-        stopDemo: stopTrendDemo,
-        isDemoActive: isTrendDemoActive,
+        setSimulationActive: setTrendSimulationActive,
+        getSimulationState: getTrendSimulationState,
+        clearSimulation: clearTrendSimulationSamples,
         registerEndpoint: registerTrendMesEndpoint,
         updateEndpoint: updateTrendMesEndpoint,
         removeEndpoint: removeTrendMesEndpoint,
@@ -14555,6 +14490,20 @@
           return { id: bank.id, name: bank.name };
         }
       });
+    }
+    var simulationMountArgs = {
+      getSnapshot: getTrendSnapshot,
+      subscribe: subscribeTrend,
+      recordSamples: recordTrendSamples,
+      setSimulationActive: setTrendSimulationActive,
+      getSimulationState: getTrendSimulationState,
+      clearSimulation: clearTrendSimulationSamples,
+      toast: showToast
+    };
+    if (window.initTrendSimulationModule && typeof window.initTrendSimulationModule === "function") {
+      window.initTrendSimulationModule(simulationMountArgs);
+    } else {
+      window.__pendingTrendSimulationInit = simulationMountArgs;
     }
   }
 

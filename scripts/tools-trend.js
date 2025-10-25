@@ -169,6 +169,7 @@
     var height = canvas.clientHeight || 260;
     canvas.width = width;
     canvas.height = height;
+    canvas._trendPlot = null;
     var mini = !!options.mini;
     var paddingLeft = mini ? 12 : 68;
     var paddingRight = mini ? 12 : 28;
@@ -300,12 +301,14 @@
       }
 
       ctx.save();
-      ctx.translate(16, paddingTop + plotHeight / 2);
+      var axisLabel = "数值" + (options.unit ? " (" + options.unit + ")" : "");
+      var axisLabelOffset = Math.max(32, paddingLeft - 64);
+      ctx.translate(axisLabelOffset, paddingTop + plotHeight / 2);
       ctx.rotate(-Math.PI / 2);
       ctx.textAlign = "center";
-      ctx.textBaseline = "top";
+      ctx.textBaseline = "middle";
       ctx.fillStyle = "rgba(15, 23, 42, 0.6)";
-      ctx.fillText("数值" + (options.unit ? " (" + options.unit + ")" : ""), 0, 0);
+      ctx.fillText(axisLabel, 0, 0);
       ctx.restore();
 
       ctx.textAlign = "center";
@@ -351,10 +354,17 @@
     ctx.lineWidth = mini ? 1.5 : 2.4;
     ctx.strokeStyle = options.color || "#2563eb";
     ctx.beginPath();
+    var points = [];
     sanitized.forEach(function (point, index) {
       var ts = new Date(point.capturedAt).getTime();
       var x = originX + ((ts - minTime) / timeRange) * plotWidth;
       var y = originY - ((point.value - minValue) / valueRange) * plotHeight;
+      points.push({
+        x: x,
+        y: y,
+        value: point.value,
+        capturedAt: point.capturedAt
+      });
       if (index === 0) {
         ctx.moveTo(x, y);
       } else {
@@ -362,6 +372,109 @@
       }
     });
     ctx.stroke();
+
+    canvas._trendPlot = {
+      mini: mini,
+      unit: options.unit || "",
+      lower: lower,
+      upper: upper,
+      center: center,
+      minValue: minValue,
+      maxValue: maxValue,
+      minTime: minTime,
+      maxTime: maxTime,
+      originX: originX,
+      originY: originY,
+      plotWidth: plotWidth,
+      plotHeight: plotHeight,
+      points: points,
+      series: sanitized,
+      valueRange: valueRange,
+      timeRange: timeRange
+    };
+  }
+
+  function attachTrendTooltip(canvas, tooltip) {
+    if (!canvas || !tooltip) {
+      return;
+    }
+    function hideTooltip() {
+      tooltip.classList.add("hidden");
+      tooltip.classList.remove("visible");
+    }
+    function resolveLocalPosition(evt) {
+      if (typeof evt.offsetX === "number" && typeof evt.offsetY === "number") {
+        return { x: evt.offsetX, y: evt.offsetY };
+      }
+      var rect = canvas.getBoundingClientRect();
+      var clientX = evt.clientX;
+      var clientY = evt.clientY;
+      if (evt.touches && evt.touches.length) {
+        clientX = evt.touches[0].clientX;
+        clientY = evt.touches[0].clientY;
+      }
+      return {
+        x: clientX - rect.left,
+        y: clientY - rect.top
+      };
+    }
+    function handlePointer(evt) {
+      var plot = canvas._trendPlot;
+      if (!plot || plot.mini || !plot.points || !plot.points.length) {
+        hideTooltip();
+        return;
+      }
+      var local = resolveLocalPosition(evt);
+      var nearest = null;
+      var distance = Infinity;
+      for (var i = 0; i < plot.points.length; i += 1) {
+        var pt = plot.points[i];
+        if (!pt) {
+          continue;
+        }
+        var delta = Math.abs(pt.x - local.x);
+        if (delta < distance) {
+          distance = delta;
+          nearest = pt;
+        }
+      }
+      if (!nearest) {
+        hideTooltip();
+        return;
+      }
+      var parent = canvas.parentNode;
+      var canvasRect = canvas.getBoundingClientRect();
+      var parentRect = parent && parent.getBoundingClientRect ? parent.getBoundingClientRect() : canvasRect;
+      var left = canvasRect.left - parentRect.left + nearest.x;
+      var top = canvasRect.top - parentRect.top + nearest.y;
+      var valueText = typeof nearest.value === "number" && isFinite(nearest.value)
+        ? nearest.value.toFixed(3)
+        : "--";
+      if (plot.unit) {
+        valueText += " " + plot.unit;
+      }
+      var timeText = formatDateTime(nearest.capturedAt);
+      tooltip.innerHTML = "<div>" + (timeText || "--") + "</div><div><strong>" + valueText + "</strong></div>";
+      tooltip.style.left = Math.round(left) + "px";
+      tooltip.style.top = Math.round(top) + "px";
+      tooltip.classList.remove("hidden");
+      tooltip.classList.add("visible");
+    }
+    if (!canvas.__trendTooltipBound) {
+      canvas.addEventListener("mousemove", handlePointer);
+      canvas.addEventListener("click", handlePointer);
+      canvas.addEventListener("touchstart", function (evt) {
+        handlePointer(evt);
+      });
+      canvas.addEventListener("touchmove", function (evt) {
+        handlePointer(evt);
+      });
+      canvas.addEventListener("mouseleave", hideTooltip);
+      canvas.addEventListener("touchend", hideTooltip);
+      canvas.addEventListener("touchcancel", hideTooltip);
+      canvas.__trendTooltipBound = true;
+    }
+    hideTooltip();
   }
 
   function calcSlope(series) {
@@ -1087,7 +1200,6 @@
     var nodeModalKeyInput = document.getElementById("trendNodeModalKey");
     var nodeModalNameInput = document.getElementById("trendNodeModalName");
     var nodeModalUnitInput = document.getElementById("trendNodeModalUnit");
-    var nodeModalSimulateSelect = document.getElementById("trendNodeModalSimulate");
     var nodeModalLowerInput = document.getElementById("trendNodeModalLower");
     var nodeModalCenterInput = document.getElementById("trendNodeModalCenter");
     var nodeModalUpperInput = document.getElementById("trendNodeModalUpper");
@@ -1097,6 +1209,7 @@
     var nodeModalStepInput = document.getElementById("trendNodeModalStep");
     var nodeModalImpactSelect = document.getElementById("trendNodeModalImpact");
     var nodeModalChart = document.getElementById("trendNodeModalChart");
+    var nodeModalTooltip = document.getElementById("trendNodeModalTooltip");
     var nodeModalMeta = document.getElementById("trendNodeModalMeta");
     var nodeModalAnalytics = document.getElementById("trendNodeModalAnalytics");
     var groupModalEl = document.getElementById("trendGroupModal");
@@ -1137,10 +1250,7 @@
     var endpointModalDatabaseInput = document.getElementById("trendEndpointModalDatabase");
     var endpointModalTableInput = document.getElementById("trendEndpointModalTable");
     var endpointModalNotesInput = document.getElementById("trendEndpointModalNotes");
-    var startDemoBtn = document.getElementById("trendStartDemo");
-    var stopDemoBtn = document.getElementById("trendStopDemo");
     var manualAdjustBtn = document.getElementById("trendManualAdjust");
-    var demoStatusEl = document.getElementById("trendDemoStatus");
     var summaryEl = document.getElementById("trendSummary");
     var targetCenterEl = document.getElementById("trendTargetCenter");
     var targetRangeEl = document.getElementById("trendTargetRange");
@@ -1260,7 +1370,6 @@
         upper: typeof record.upper === "number" ? record.upper : null,
         manual: !!record.manual,
         manualStep: typeof record.manualStep === "number" ? record.manualStep : 0,
-        simulate: record.simulate === false ? false : true,
         mesSourceId: record.mesSourceId ? String(record.mesSourceId) : null,
         note: record.note || "",
         groupId: record.groupId || null,
@@ -1715,9 +1824,6 @@
           parts.push("节点区间 " + aggregate.lower.toFixed(3) + " ~ " + aggregate.upper.toFixed(3));
         } else if (aggregate.center !== null) {
           parts.push("节点中值约 " + aggregate.center.toFixed(3));
-        }
-        if (record.simulate === false) {
-          parts.push("演示停用");
         }
       } else if (type === "output") {
         var bounds = [];
@@ -2773,8 +2879,7 @@
         manual: false,
         manualStep: null,
         manualTargets: [],
-        mesSourceId: record.mesSourceId || null,
-        simulate: record.simulate === false ? false : true
+        mesSourceId: record.mesSourceId || null
       };
       var mode = options && options.mode === "edit" ? "edit" : "view";
       state.nodeModalState = {
@@ -2928,8 +3033,7 @@
         upper: typeof target.upper === "number" ? target.upper : null,
         unit: canonicalUnit,
         note: settings.outputNote || "",
-        mesSourceId: settings.outputMesSourceId ? String(settings.outputMesSourceId) : null,
-        simulate: settings.outputSimulate === false ? false : true
+        mesSourceId: settings.outputMesSourceId ? String(settings.outputMesSourceId) : null
       };
     }
 
@@ -3099,9 +3203,6 @@
         if (item.manual) {
           parts.push("手动节点");
         }
-        if (item.simulate === false) {
-          parts.push("演示停用");
-        }
         if (item.mesSourceId) {
           var mesEndpoint = findMesEndpointById(item.mesSourceId);
           if (mesEndpoint) {
@@ -3142,7 +3243,6 @@
         nodeModalKeyInput,
         nodeModalNameInput,
         nodeModalUnitInput,
-        nodeModalSimulateSelect,
         nodeModalLowerInput,
         nodeModalCenterInput,
         nodeModalUpperInput,
@@ -3234,8 +3334,7 @@
           manual: false,
           manualStep: null,
           manualTargets: [],
-          mesSourceId: null,
-          simulate: true
+          mesSourceId: null
         };
       } else {
         var base = state.editingSubNodes[index];
@@ -3281,9 +3380,6 @@
       if (nodeModalUnitInput) {
         populateUnitSelect(nodeModalUnitInput, draft.unit || "");
       }
-      if (nodeModalSimulateSelect) {
-        nodeModalSimulateSelect.value = draft.simulate === false ? "false" : "true";
-      }
       if (nodeModalLowerInput) {
         nodeModalLowerInput.value = typeof draft.lower === "number" ? draft.lower : "";
       }
@@ -3324,6 +3420,7 @@
         center: typeof draft.center === "number" ? draft.center : null,
         unit: draft.unit || ""
       });
+      attachTrendTooltip(nodeModalChart, nodeModalTooltip);
       if (nodeModalMeta) {
         var metaLines = [];
         if (series.length) {
@@ -3335,7 +3432,6 @@
         } else {
           metaLines.push("暂无实时数据");
         }
-        metaLines.push("演示模拟：" + (draft.simulate === false ? "停用" : "启用"));
         if (draft.manual) {
           metaLines.push("手动节点 · 标准调整 " + (draft.manualStep !== null ? draft.manualStep : 0));
         }
@@ -3453,8 +3549,7 @@
         manual: manual,
         manualStep: manual ? (manualStep !== null ? manualStep : 0) : null,
         manualTargets: manual ? manualTargets : [],
-        mesSourceId: mesSourceId,
-        simulate: nodeModalSimulateSelect && nodeModalSimulateSelect.value === "false" ? false : true
+        mesSourceId: mesSourceId
       };
     }
 
@@ -3469,7 +3564,6 @@
           outputName: data.name,
           outputUnit: data.unit,
           outputMesSourceId: data.mesSourceId || null,
-          outputSimulate: data.simulate === false ? false : true,
           outputTarget: {
             lower: data.lower,
             center: data.center,
@@ -3538,9 +3632,6 @@
         if (base && typeof base.positionRef === "string") {
           payload.positionRef = base.positionRef;
         }
-        if (base && typeof base.simulate === "boolean") {
-          payload.simulate = base.simulate;
-        }
         if (base && typeof base.lower === "number") {
           payload.lower = base.lower;
         }
@@ -3587,8 +3678,7 @@
         positionMode: nodePositionSelect ? nodePositionSelect.value : "after",
         positionRef: nodeRefSelect && nodeRefSelect.value ? nodeRefSelect.value : null,
         parentId: nodeParentSelect && nodeParentSelect.value ? nodeParentSelect.value : null,
-        children: ensureEditingChildren(clone(state.editingSubNodes) || []),
-        simulate: true
+        children: ensureEditingChildren(clone(state.editingSubNodes) || [])
       };
       if (state.editingNodeId && state.editingNodeId !== keyValue) {
         payload.originalId = state.editingNodeId;
@@ -3870,23 +3960,6 @@
           background: "transparent"
         });
       }
-      if (state.snapshot && state.snapshot.demo && state.snapshot.demo.enabled) {
-        outputCard.classList.add("demo-active");
-      } else {
-        outputCard.classList.remove("demo-active");
-      }
-    }
-
-    function renderDemoStatus() {
-      if (!demoStatusEl) {
-        return;
-      }
-      if (!state.snapshot || !state.snapshot.demo || !state.snapshot.demo.enabled) {
-        demoStatusEl.textContent = "演示模式未开启。";
-        return;
-      }
-      var interval = state.snapshot.demo.intervalMs || state.snapshot.settings.sampleIntervalMs;
-      demoStatusEl.textContent = "演示模式运行中，采样周期 " + interval + " ms";
     }
 
     function renderChart() {
@@ -4210,12 +4283,6 @@
             manual.className = "trend-library-flag";
             manual.textContent = "手动节点" + (typeof node.manualStep === "number" && node.manualStep ? " · 步长 " + node.manualStep : "");
             meta.appendChild(manual);
-          }
-          if (node.simulate === false) {
-            var demo = document.createElement("span");
-            demo.className = "trend-library-flag muted";
-            demo.textContent = "演示停用";
-            meta.appendChild(demo);
           }
           row.appendChild(meta);
           list.appendChild(row);
@@ -5154,7 +5221,6 @@
       renderForm();
       renderMetrics();
       renderTargetCard();
-      renderDemoStatus();
       renderChart();
       renderNodeMatrix();
       renderNodeLibrary();
@@ -5384,15 +5450,6 @@
       });
     }
 
-    if (nodeModalSimulateSelect) {
-      nodeModalSimulateSelect.addEventListener("change", function () {
-        if (!state.nodeModalState || !state.nodeModalState.draft) {
-          return;
-        }
-        state.nodeModalState.draft.simulate = nodeModalSimulateSelect.value === "false" ? false : true;
-      });
-    }
-
     if (nodeModalForm) {
       nodeModalForm.addEventListener("submit", function (evt) {
         evt.preventDefault();
@@ -5528,18 +5585,6 @@
 
     if (addSubNodeBtn) {
       addSubNodeBtn.addEventListener("click", addSubNode);
-    }
-
-    if (startDemoBtn) {
-      startDemoBtn.addEventListener("click", function () {
-        services.startDemo({});
-      });
-    }
-
-    if (stopDemoBtn) {
-      stopDemoBtn.addEventListener("click", function () {
-        services.stopDemo();
-      });
     }
 
     if (manualAdjustBtn) {
