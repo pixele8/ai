@@ -3121,6 +3121,7 @@
           outputNote: "",
           outputNodeId: "__output__",
           outputMesSourceId: null,
+          outputSimulate: true,
           outputCreatedAt: new Date().toISOString(),
           outputUpdatedAt: new Date().toISOString(),
           mesEndpoints: []
@@ -3176,6 +3177,7 @@
         outputNote: "",
         outputNodeId: "__output__",
         outputMesSourceId: null,
+        outputSimulate: true,
         outputCreatedAt: new Date().toISOString(),
         outputUpdatedAt: new Date().toISOString(),
         mesEndpoints: []
@@ -3225,6 +3227,9 @@
     }
     if (typeof trend.settings.outputUpdatedAt !== "string") {
       trend.settings.outputUpdatedAt = trend.settings.outputCreatedAt;
+    }
+    if (typeof trend.settings.outputSimulate !== "boolean") {
+      trend.settings.outputSimulate = true;
     }
     if (!trend.model || typeof trend.model !== "object") {
       trend.model = { version: 1, calibrations: {} };
@@ -3616,7 +3621,7 @@
       upper: typeof target.upper === "number" ? target.upper : null,
       manual: false,
       manualStep: null,
-      simulate: true,
+      simulate: settings.outputSimulate === false ? false : true,
       note: typeof settings.outputNote === "string" ? settings.outputNote : "",
       groupId: null,
       parentGroupId: null,
@@ -4740,6 +4745,12 @@
     if (Object.prototype.hasOwnProperty.call(patch, "outputMesSourceId")) {
       if (patch.outputMesSourceId === null || typeof patch.outputMesSourceId === "string") {
         settings.outputMesSourceId = patch.outputMesSourceId ? patch.outputMesSourceId.trim() : null;
+        touchedOutput = true;
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "outputSimulate")) {
+      if (patch.outputSimulate === true || patch.outputSimulate === false) {
+        settings.outputSimulate = patch.outputSimulate;
         touchedOutput = true;
       }
     }

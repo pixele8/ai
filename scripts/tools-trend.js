@@ -2636,7 +2636,7 @@
         manualStep: null,
         manualTargets: [],
         mesSourceId: record.mesSourceId || null,
-        simulate: true
+        simulate: record.simulate === false ? false : true
       };
       var mode = options && options.mode === "edit" ? "edit" : "view";
       state.nodeModalState = {
@@ -2788,7 +2788,8 @@
         upper: typeof target.upper === "number" ? target.upper : null,
         unit: settings.outputUnit || "",
         note: settings.outputNote || "",
-        mesSourceId: settings.outputMesSourceId ? String(settings.outputMesSourceId) : null
+        mesSourceId: settings.outputMesSourceId ? String(settings.outputMesSourceId) : null,
+        simulate: settings.outputSimulate === false ? false : true
       };
     }
 
@@ -3052,10 +3053,6 @@
           nodeModalImpactSelect.innerHTML = "";
           nodeModalImpactSelect.disabled = true;
         }
-        if (nodeModalSimulateSelect) {
-          nodeModalSimulateSelect.value = "true";
-          nodeModalSimulateSelect.disabled = true;
-        }
       } else {
         if (nodeModalManualSelect) {
           nodeModalManualSelect.disabled = !editable;
@@ -3170,9 +3167,17 @@
       if (nodeModalManualFields) {
         nodeModalManualFields.style.display = draft.manual ? "grid" : "none";
       }
-      var series = state.editingNodeId ? collectFullSeries(state.editingNodeId, draft.id) : [];
+      var series;
+      if (state.nodeModalState && state.nodeModalState.isOutput) {
+        var lookback = state.snapshot && state.snapshot.settings && typeof state.snapshot.settings.lookbackMinutes === "number"
+          ? state.snapshot.settings.lookbackMinutes
+          : 120;
+        series = collectOutputCompositeSeries(lookback);
+      } else {
+        series = state.editingNodeId ? collectFullSeries(state.editingNodeId, draft.id) : [];
+      }
       drawSeries(nodeModalChart, series, {
-        color: "#2563eb",
+        color: state.nodeModalState && state.nodeModalState.isOutput ? "#7c3aed" : "#2563eb",
         lower: typeof draft.lower === "number" ? draft.lower : null,
         upper: typeof draft.upper === "number" ? draft.upper : null,
         center: typeof draft.center === "number" ? draft.center : null,
@@ -3317,6 +3322,7 @@
           outputName: data.name,
           outputUnit: data.unit,
           outputMesSourceId: data.mesSourceId || null,
+          outputSimulate: data.simulate === false ? false : true,
           outputTarget: {
             lower: data.lower,
             center: data.center,

@@ -6454,6 +6454,8 @@ textarea:focus {
   flex: 1;
   display: flex;
   flex-direction: column;
+  justify-content: space-between;
+  min-height: 140px;
   gap: 12px;
 }
 
@@ -6461,6 +6463,13 @@ textarea:focus {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.trend-target-footer {
+  margin-top: auto;
+  display: flex;
+  align-items: flex-end;
+  min-height: 32px;
 }
 
 .trend-target-summary {
@@ -6523,27 +6532,28 @@ textarea:focus {
 }
 
 .trend-target-brief {
+  display: inline-block;
+  max-width: 100%;
   margin: 0;
-  padding: 12px 14px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.42);
-  border: 1px solid rgba(129, 140, 248, 0.28);
-  color: rgba(49, 46, 129, 0.88);
+  padding: 0;
+  color: rgba(30, 41, 59, 0.82);
   font-size: 14px;
-  line-height: 1.7;
-  word-break: break-word;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .trend-target-visual {
-  flex: 0 0 180px;
+  flex: 0 0 220px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 8px;
+  justify-content: flex-end;
+  padding: 8px 0 8px 8px;
 }
 
 .trend-target-sparkline {
-  width: 180px;
+  width: 200px;
   height: 96px;
   max-width: 100%;
 }
@@ -6557,6 +6567,7 @@ textarea:focus {
   .trend-target-visual {
     flex: none;
     width: 100%;
+    justify-content: center;
   }
 
   .trend-target-sparkline {
