@@ -301,15 +301,23 @@
       }
 
       ctx.save();
-      var axisLabel = "数值" + (options.unit ? " (" + options.unit + ")" : "");
-      var axisLabelOffset = Math.max(32, paddingLeft - 64);
+      var axisLabelOffset = Math.max(36, paddingLeft - 60);
       ctx.translate(axisLabelOffset, paddingTop + plotHeight / 2);
       ctx.rotate(-Math.PI / 2);
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillStyle = "rgba(15, 23, 42, 0.6)";
-      ctx.fillText(axisLabel, 0, 0);
+      ctx.fillText("数值", 0, 0);
       ctx.restore();
+
+      if (options.unit) {
+        ctx.save();
+        ctx.textAlign = "left";
+        ctx.textBaseline = "bottom";
+        ctx.fillStyle = "rgba(15, 23, 42, 0.6)";
+        ctx.fillText("单位: " + options.unit, paddingLeft, paddingTop - 8);
+        ctx.restore();
+      }
 
       ctx.textAlign = "center";
       ctx.textBaseline = "bottom";
@@ -726,12 +734,21 @@
     ctx.textBaseline = "bottom";
     ctx.fillText("时间", originX + plotWidth / 2, height - 8);
     ctx.save();
-    ctx.translate(18, paddingTop + plotHeight / 2);
+    var axisOffset = Math.max(30, paddingLeft - 62);
+    ctx.translate(axisOffset, paddingTop + plotHeight / 2);
     ctx.rotate(-Math.PI / 2);
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    ctx.fillText("数值" + (options.unit ? " (" + options.unit + ")" : ""), 0, 0);
+    ctx.fillText("数值", 0, 0);
     ctx.restore();
+    if (options.unit) {
+      ctx.save();
+      ctx.textAlign = "left";
+      ctx.textBaseline = "bottom";
+      ctx.fillStyle = "rgba(15, 23, 42, 0.6)";
+      ctx.fillText("单位: " + options.unit, paddingLeft, paddingTop - 8);
+      ctx.restore();
+    }
 
     function drawReference(value, color, label) {
       if (typeof value !== "number") {
@@ -3954,11 +3971,19 @@
       var lowerValue = target && typeof target.lower === "number" ? target.lower : null;
       var centerValue = target && typeof target.center === "number" ? target.center : null;
       var upperValue = target && typeof target.upper === "number" ? target.upper : null;
-      if (!target) {
+      var series = collectOutputCompositeSeries(60);
+      var latestPoint = series.length ? series[series.length - 1] : null;
+      var latestValue = latestPoint && typeof latestPoint.value === "number" ? latestPoint.value : null;
+      if (latestValue !== null) {
+        targetCenterEl.textContent = formatTargetNumber(latestValue);
+      } else if (!target) {
         targetCenterEl.textContent = "--";
-        targetRangeEl.textContent = "上下限 -- / --";
       } else {
         targetCenterEl.textContent = formatTargetNumber(centerValue);
+      }
+      if (!target) {
+        targetRangeEl.textContent = "上下限 -- / --";
+      } else {
         var lower = formatTargetNumber(lowerValue);
         var upper = formatTargetNumber(upperValue);
         targetRangeEl.textContent = "上下限 " + lower + " / " + upper;
@@ -3968,7 +3993,6 @@
         upper: typeof upperValue === "number" ? upperValue : null,
         center: typeof centerValue === "number" ? centerValue : null
       };
-      var series = collectOutputCompositeSeries(60);
       if (targetBriefEl) {
         targetBriefEl.textContent = buildOutputBrief(series, bounds);
       }
