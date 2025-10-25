@@ -11,6 +11,21 @@
     return fixed + (unit ? " " + unit : "");
   }
 
+  function formatBytes(value) {
+    if (!value || value <= 0) {
+      return "0 B";
+    }
+    var units = ["B", "KB", "MB", "GB", "TB"];
+    var size = value;
+    var index = 0;
+    while (size >= 1024 && index < units.length - 1) {
+      size = size / 1024;
+      index += 1;
+    }
+    var digits = size >= 10 ? 1 : 2;
+    return size.toFixed(digits) + " " + units[index];
+  }
+
   function getUnitKnowledge() {
     if (typeof window !== "undefined" && window.UnitKnowledge) {
       return window.UnitKnowledge;
@@ -299,16 +314,6 @@
         ctx.fillStyle = "rgba(15, 23, 42, 0.75)";
         ctx.fillText(formatTime(tsTick), xTick, originY + 8);
       }
-
-      ctx.save();
-      var axisLabelOffset = Math.max(36, paddingLeft - 60);
-      ctx.translate(axisLabelOffset, paddingTop + plotHeight / 2);
-      ctx.rotate(-Math.PI / 2);
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillStyle = "rgba(15, 23, 42, 0.6)";
-      ctx.fillText("数值", 0, 0);
-      ctx.restore();
 
       if (options.unit) {
         ctx.save();
@@ -733,14 +738,6 @@
     ctx.fillStyle = "rgba(15, 23, 42, 0.6)";
     ctx.textBaseline = "bottom";
     ctx.fillText("时间", originX + plotWidth / 2, height - 8);
-    ctx.save();
-    var axisOffset = Math.max(30, paddingLeft - 62);
-    ctx.translate(axisOffset, paddingTop + plotHeight / 2);
-    ctx.rotate(-Math.PI / 2);
-    ctx.textAlign = "center";
-    ctx.textBaseline = "top";
-    ctx.fillText("数值", 0, 0);
-    ctx.restore();
     if (options.unit) {
       ctx.save();
       ctx.textAlign = "left";
@@ -1268,6 +1265,8 @@
     var endpointModalTableInput = document.getElementById("trendEndpointModalTable");
     var endpointModalNotesInput = document.getElementById("trendEndpointModalNotes");
     var manualAdjustBtn = document.getElementById("trendManualAdjust");
+    var downloadModelBtn = document.getElementById("trendDownloadModel");
+    var modelInfoEl = document.getElementById("trendModelInfo");
     var summaryEl = document.getElementById("trendSummary");
     var targetCenterEl = document.getElementById("trendTargetCenter");
     var targetRangeEl = document.getElementById("trendTargetRange");
@@ -5262,6 +5261,37 @@
       }
     }
 
+    function renderModelInfo() {
+      if (!modelInfoEl) {
+        return;
+      }
+      var artifact = state.snapshot && state.snapshot.modelArtifact;
+      if (!artifact) {
+        modelInfoEl.textContent = "核心模型尚未生成。";
+        if (downloadModelBtn) {
+          downloadModelBtn.disabled = true;
+        }
+        return;
+      }
+      var parts = [];
+      if (artifact.updatedAt) {
+        parts.push("更新于 " + formatDateTime(artifact.updatedAt));
+      }
+      if (typeof artifact.size === "number") {
+        parts.push("大小 " + formatBytes(artifact.size));
+      }
+      if (typeof artifact.correctionCount === "number") {
+        parts.push("订正 " + artifact.correctionCount + " 条");
+      }
+      if (artifact.generatedBy) {
+        parts.push("维护人 " + artifact.generatedBy);
+      }
+      modelInfoEl.textContent = parts.length ? parts.join(" · ") : "核心模型已生成，等待订正。";
+      if (downloadModelBtn) {
+        downloadModelBtn.disabled = !artifact.size;
+      }
+    }
+
     function render() {
       renderNodeList();
       renderForm();
@@ -5278,6 +5308,7 @@
       renderScenarioForm();
       renderScenarioResult();
       renderScenarioSaved();
+      renderModelInfo();
       if (state.nodeModalState && state.nodeModalState.draft) {
         var mesId = state.nodeModalState.draft.mesSourceId ? String(state.nodeModalState.draft.mesSourceId) : "";
         populateNodeMesOptions(mesId);
@@ -5654,6 +5685,14 @@
           amount: amount,
           note: note || ""
         });
+      });
+    }
+
+    if (downloadModelBtn) {
+      downloadModelBtn.addEventListener("click", function () {
+        if (services && typeof services.downloadModel === "function") {
+          services.downloadModel();
+        }
       });
     }
 

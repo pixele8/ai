@@ -52,6 +52,7 @@
   var trendRejectModal = null;
   var trendRejectForm = null;
   var trendRejectInput = null;
+  var trendRejectPlanInput = null;
   var trendRejectSuggestionId = null;
   var trendIndexedDbPromise = null;
   var trendIndexedHydrated = false;
@@ -81,6 +82,29 @@
     0x1f83d9ab,
     0x5be0cd19
   ];
+
+  function estimateByteLength(str) {
+    if (typeof str !== "string" || !str) {
+      return 0;
+    }
+    try {
+      return textEncoder.encode(str).length;
+    } catch (err) {
+      return str.length;
+    }
+  }
+
+  function computeStringChecksum(str) {
+    if (typeof str !== "string") {
+      return "";
+    }
+    var hash = 2166136261;
+    for (var i = 0; i < str.length; i += 1) {
+      hash ^= str.charCodeAt(i);
+      hash = (hash * 16777619) >>> 0;
+    }
+    return ("00000000" + hash.toString(16)).slice(-8);
+  }
 
   function padNumber(value) {
     var num = parseInt(value, 10);
@@ -916,7 +940,9 @@
       '<header class="modal-header"><h2>拒绝趋势建议</h2><button type="button" class="ghost-button" data-close>关闭</button></header>' +
       '<form id="trendRejectForm" class="trend-reject-form">' +
       '<div class="form-field"><label for="trendRejectReason">拒绝理由</label>' +
-      '<textarea id="trendRejectReason" rows="3" placeholder="请输入拒绝原因及正确做法" required></textarea></div>' +
+      '<textarea id="trendRejectReason" rows="3" placeholder="请输入拒绝原因" required></textarea></div>' +
+      '<div class="form-field"><label for="trendRejectPlan">正确流程</label>' +
+      '<textarea id="trendRejectPlan" rows="3" placeholder="请描述正确处理流程，作为模型订正依据" required></textarea></div>' +
       '<div class="form-actions">' +
       '<button type="button" class="ghost-button" data-close>取消</button>' +
       '<button type="submit" class="primary-button">提交</button>' +
@@ -927,6 +953,7 @@
     trendRejectModal = modal;
     trendRejectForm = modal.querySelector("#trendRejectForm");
     trendRejectInput = modal.querySelector("#trendRejectReason");
+    trendRejectPlanInput = modal.querySelector("#trendRejectPlan");
     var closeButtons = modal.querySelectorAll('[data-close]');
     closeButtons.forEach(function (btn) {
       btn.addEventListener("click", closeTrendRejectModal);
@@ -939,14 +966,19 @@
           return;
         }
         var reason = trendRejectInput && trendRejectInput.value ? trendRejectInput.value.trim() : "";
+        var plan = trendRejectPlanInput && trendRejectPlanInput.value ? trendRejectPlanInput.value.trim() : "";
         if (!reason) {
           showToast && showToast("请填写拒绝理由");
+          return;
+        }
+        if (!plan) {
+          showToast && showToast("请填写正确流程");
           return;
         }
         rejectTrendSuggestion(trendRejectSuggestionId, reason, {
           rating: 1,
           note: reason,
-          expected: "",
+          expected: plan,
           user: currentUser ? currentUser.username : ""
         });
         closeTrendRejectModal();
@@ -965,6 +997,9 @@
     trendRejectSuggestionId = suggestionId;
     if (trendRejectInput) {
       trendRejectInput.value = "";
+    }
+    if (trendRejectPlanInput) {
+      trendRejectPlanInput.value = "";
     }
     if (trendRejectModal) {
       trendRejectModal.classList.remove("hidden");
@@ -2992,6 +3027,8 @@
       hierarchy: state.tools.trend.hierarchy || { groups: {}, nodes: {} },
       groupPaths: state.tools.trend.groupPaths || {},
       settings: state.tools.trend.settings || {},
+      model: state.tools.trend.model || { version: 1, calibrations: {} },
+      modelArtifact: state.tools.trend.modelArtifact || null,
       updatedAt: new Date().toISOString()
     };
     getTrendIndexedDb().then(function (db) {
@@ -3086,6 +3123,14 @@
       }
       if (snapshot.settings && (!trend.settings || Object.keys(trend.settings).length === 0)) {
         trend.settings = snapshot.settings;
+        changed = true;
+      }
+      if (snapshot.model && (!trend.model || Object.keys(trend.model || {}).length === 0)) {
+        trend.model = snapshot.model;
+        changed = true;
+      }
+      if (snapshot.modelArtifact && (!trend.modelArtifact || !trend.modelArtifact.data)) {
+        trend.modelArtifact = snapshot.modelArtifact;
         changed = true;
       }
       if (changed) {
@@ -3228,6 +3273,58 @@
     }
     if (!trend.model.calibrations || typeof trend.model.calibrations !== "object") {
       trend.model.calibrations = {};
+    }
+    if (!Array.isArray(trend.model.corrections)) {
+      trend.model.corrections = [];
+    }
+    if (!trend.modelArtifact || typeof trend.modelArtifact !== "object") {
+      trend.modelArtifact = {
+        id: uuid(),
+        fileName: "trend-model-core.json",
+        updatedAt: new Date().toISOString(),
+        size: 0,
+        checksum: "",
+        generatedBy: "",
+        bankId: null,
+        bankName: "",
+        version: trend.model.version || 1,
+        correctionCount: 0,
+        data: ""
+      };
+    } else {
+      if (typeof trend.modelArtifact.id !== "string" || !trend.modelArtifact.id) {
+        trend.modelArtifact.id = uuid();
+      }
+      if (typeof trend.modelArtifact.fileName !== "string" || !trend.modelArtifact.fileName) {
+        trend.modelArtifact.fileName = "trend-model-core.json";
+      }
+      if (typeof trend.modelArtifact.updatedAt !== "string") {
+        trend.modelArtifact.updatedAt = new Date().toISOString();
+      }
+      if (typeof trend.modelArtifact.size !== "number") {
+        trend.modelArtifact.size = 0;
+      }
+      if (typeof trend.modelArtifact.checksum !== "string") {
+        trend.modelArtifact.checksum = "";
+      }
+      if (typeof trend.modelArtifact.generatedBy !== "string") {
+        trend.modelArtifact.generatedBy = "";
+      }
+      if (typeof trend.modelArtifact.bankId !== "string" && trend.modelArtifact.bankId !== null) {
+        trend.modelArtifact.bankId = trend.modelArtifact.bankId ? String(trend.modelArtifact.bankId) : null;
+      }
+      if (typeof trend.modelArtifact.bankName !== "string") {
+        trend.modelArtifact.bankName = "";
+      }
+      if (typeof trend.modelArtifact.version !== "number") {
+        trend.modelArtifact.version = trend.model.version || 1;
+      }
+      if (typeof trend.modelArtifact.correctionCount !== "number") {
+        trend.modelArtifact.correctionCount = Array.isArray(trend.model.corrections) ? trend.model.corrections.length : 0;
+      }
+      if (typeof trend.modelArtifact.data !== "string") {
+        trend.modelArtifact.data = "";
+      }
     }
     if (!trend.simulation || typeof trend.simulation !== "object") {
       trend.simulation = { active: false, updatedAt: new Date().toISOString() };
@@ -3438,6 +3535,165 @@
       trend.forecasts = trend.forecasts.slice(trend.forecasts.length - 400);
     }
     hydrateTrendStoreFromDb();
+  }
+
+  function appendTrendModelCorrection(entry) {
+    ensureTrendStore();
+    if (!entry || typeof entry !== "object") {
+      return;
+    }
+    if (!Array.isArray(state.tools.trend.model.corrections)) {
+      state.tools.trend.model.corrections = [];
+    }
+    var normalized = {
+      id: typeof entry.id === "string" && entry.id ? entry.id : uuid(),
+      suggestionId: typeof entry.suggestionId === "string" && entry.suggestionId ? entry.suggestionId : null,
+      nodeId: typeof entry.nodeId === "string" ? entry.nodeId : null,
+      subNodeId: typeof entry.subNodeId === "string" ? entry.subNodeId : null,
+      recordedAt: typeof entry.recordedAt === "string" ? entry.recordedAt : new Date().toISOString(),
+      reason: typeof entry.reason === "string" ? entry.reason.trim() : "",
+      expected: typeof entry.expected === "string" ? entry.expected.trim() : "",
+      rating: typeof entry.rating === "number" ? entry.rating : 0,
+      createdAt: typeof entry.createdAt === "string" ? entry.createdAt : new Date().toISOString(),
+      createdBy: typeof entry.createdBy === "string" ? entry.createdBy : "",
+      source: typeof entry.source === "string" && entry.source ? entry.source : "manual-reject"
+    };
+    state.tools.trend.model.corrections.push(normalized);
+    if (state.tools.trend.model.corrections.length > 500) {
+      state.tools.trend.model.corrections = state.tools.trend.model.corrections.slice(state.tools.trend.model.corrections.length - 500);
+    }
+    if (state.tools.trend.modelArtifact) {
+      state.tools.trend.modelArtifact.correctionCount = state.tools.trend.model.corrections.length;
+    }
+  }
+
+  function rebuildTrendModelArtifact(options) {
+    ensureTrendStore();
+    options = options || {};
+    rebuildTrendNodeLibrary();
+    var now = new Date().toISOString();
+    var trend = state.tools.trend;
+    var bank = getActiveBank();
+    var ordering = describeTrendOrdering();
+    var library = cloneTrendNodeLibrary();
+    if (!library.length) {
+      library = cloneTrendHierarchyNodes();
+    }
+    var corrections = Array.isArray(trend.model.corrections) ? trend.model.corrections.slice() : [];
+    var calibrations = JSON.parse(JSON.stringify(trend.model.calibrations || {}));
+    var feedbackSource = Array.isArray(trend.feedback) ? trend.feedback : [];
+    var feedbackStart = feedbackSource.length > 100 ? feedbackSource.length - 100 : 0;
+    var feedback = feedbackSource.slice(feedbackStart).map(function (item) {
+      return {
+        id: item.id || uuid(),
+        suggestionId: item.suggestionId || null,
+        nodeId: item.nodeId || null,
+        subNodeId: item.subNodeId || null,
+        rating: typeof item.rating === "number" ? item.rating : 0,
+        note: item.note || "",
+        expected: item.expected || "",
+        createdAt: item.createdAt || now,
+        createdBy: item.createdBy || ""
+      };
+    });
+    var payload = {
+      meta: {
+        version: trend.model && typeof trend.model.version === "number" ? trend.model.version : 1,
+        generatedAt: now,
+        generatedBy: currentUser ? currentUser.username : "",
+        bankId: bank ? bank.id : null,
+        bankName: bank ? bank.name : "",
+        correctionCount: corrections.length,
+        feedbackCount: feedbackSource.length
+      },
+      settings: {
+        sampleIntervalMs: trend.settings.sampleIntervalMs,
+        lookbackMinutes: trend.settings.lookbackMinutes,
+        predictionMinutes: trend.settings.predictionMinutes,
+        outputTarget: trend.settings.outputTarget,
+        outputNodeId: trend.settings.outputNodeId,
+        outputName: trend.settings.outputName,
+        outputUnit: trend.settings.outputUnit
+      },
+      ordering: ordering,
+      nodeLibrary: library,
+      calibrations: calibrations,
+      corrections: corrections,
+      feedback: feedback
+    };
+    var data = JSON.stringify(payload, null, 2);
+    var artifact = trend.modelArtifact || { id: uuid() };
+    var timestamp = now.replace(/[:.]/g, "-");
+    artifact.id = artifact.id || uuid();
+    artifact.fileName = "trend-model-core-" + timestamp + ".json";
+    artifact.updatedAt = now;
+    artifact.size = estimateByteLength(data);
+    artifact.checksum = computeStringChecksum(data);
+    artifact.generatedBy = payload.meta.generatedBy;
+    artifact.bankId = payload.meta.bankId;
+    artifact.bankName = payload.meta.bankName;
+    artifact.version = payload.meta.version;
+    artifact.correctionCount = payload.meta.correctionCount;
+    artifact.data = data;
+    trend.modelArtifact = artifact;
+    if (!options.deferSave) {
+      saveState();
+    }
+    if (!options.deferEmit) {
+      emitTrendChange();
+    }
+    return artifact;
+  }
+
+  function getTrendModelArtifact() {
+    ensureTrendStore();
+    if (!state.tools.trend.modelArtifact || typeof state.tools.trend.modelArtifact !== "object") {
+      return null;
+    }
+    try {
+      return JSON.parse(JSON.stringify(state.tools.trend.modelArtifact));
+    } catch (err) {
+      return {
+        id: state.tools.trend.modelArtifact.id,
+        fileName: state.tools.trend.modelArtifact.fileName,
+        updatedAt: state.tools.trend.modelArtifact.updatedAt,
+        size: state.tools.trend.modelArtifact.size,
+        checksum: state.tools.trend.modelArtifact.checksum,
+        generatedBy: state.tools.trend.modelArtifact.generatedBy,
+        bankId: state.tools.trend.modelArtifact.bankId,
+        bankName: state.tools.trend.modelArtifact.bankName,
+        version: state.tools.trend.modelArtifact.version,
+        correctionCount: state.tools.trend.modelArtifact.correctionCount,
+        data: state.tools.trend.modelArtifact.data
+      };
+    }
+  }
+
+  function downloadTrendModelArtifact() {
+    ensureTrendStore();
+    if (!state.tools.trend.modelArtifact || !state.tools.trend.modelArtifact.data) {
+      rebuildTrendModelArtifact({ deferEmit: false, deferSave: false });
+    }
+    var artifact = state.tools.trend.modelArtifact;
+    if (!artifact || !artifact.data) {
+      if (typeof showToast === "function") {
+        showToast("暂无可导出的模型文件");
+      }
+      return;
+    }
+    var blob = new Blob([artifact.data], { type: "application/json" });
+    var link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = artifact.fileName || "trend-model-core.json";
+    document.body.appendChild(link);
+    link.click();
+    setTimeout(function () {
+      URL.revokeObjectURL(link.href);
+      document.body.removeChild(link);
+    }, 0);
+    if (typeof showToast === "function") {
+      showToast("核心模型文件已导出");
+    }
   }
 
   function cloneTrendNodes() {
@@ -3739,6 +3995,25 @@
         mesEndpoints: []
       };
     }
+  }
+
+  function cloneTrendModelArtifactMeta() {
+    ensureTrendStore();
+    if (!state.tools.trend.modelArtifact || typeof state.tools.trend.modelArtifact !== "object") {
+      return null;
+    }
+    return {
+      id: state.tools.trend.modelArtifact.id,
+      fileName: state.tools.trend.modelArtifact.fileName,
+      updatedAt: state.tools.trend.modelArtifact.updatedAt,
+      size: state.tools.trend.modelArtifact.size,
+      checksum: state.tools.trend.modelArtifact.checksum,
+      generatedBy: state.tools.trend.modelArtifact.generatedBy,
+      bankId: state.tools.trend.modelArtifact.bankId,
+      bankName: state.tools.trend.modelArtifact.bankName,
+      version: state.tools.trend.modelArtifact.version,
+      correctionCount: state.tools.trend.modelArtifact.correctionCount
+    };
   }
 
   function findTrendNodeById(nodeId) {
@@ -4414,6 +4689,7 @@
       feedback: cloneTrendFeedback(),
       settings: cloneTrendSettings(),
       model: JSON.parse(JSON.stringify(state.tools.trend.model || { version: 1, calibrations: {} })),
+      modelArtifact: cloneTrendModelArtifactMeta(),
       simulation: JSON.parse(JSON.stringify(state.tools.trend.simulation || { active: false }))
     };
   }
@@ -7496,20 +7772,44 @@
     if (!id) {
       return;
     }
+    var appendedCorrection = false;
     for (var i = 0; i < state.tools.trend.suggestions.length; i += 1) {
       var item = state.tools.trend.suggestions[i];
       if (item && item.id === id) {
         item.status = "rejected";
         item.resolvedAt = new Date().toISOString();
-        item.note = typeof reason === "string" ? reason.trim() : item.note;
+        var normalizedReason = typeof reason === "string" ? reason.trim() : "";
+        if (normalizedReason) {
+          item.note = normalizedReason;
+        }
         if (correction && typeof correction === "object") {
-          recordTrendFeedback({
+          var plan = typeof correction.expected === "string" ? correction.expected.trim() : "";
+          var feedbackNote = typeof correction.note === "string" && correction.note.trim()
+            ? correction.note.trim()
+            : (normalizedReason || "人工拒绝");
+          var feedbackEntry = recordTrendFeedback({
             suggestionId: id,
+            nodeId: item.nodeId,
+            subNodeId: item.subNodeId,
             rating: typeof correction.rating === "number" ? correction.rating : 0,
-            note: correction.note || "",
-            expected: correction.expected || "",
+            note: feedbackNote,
+            expected: plan,
             user: correction.user || (currentUser ? currentUser.username : "")
+          }, { deferSave: true, deferEmit: true, deferArtifact: true });
+          appendTrendModelCorrection({
+            id: feedbackEntry && feedbackEntry.id ? feedbackEntry.id : uuid(),
+            suggestionId: id,
+            nodeId: item.nodeId,
+            subNodeId: item.subNodeId || null,
+            recordedAt: item.resolvedAt,
+            reason: feedbackNote,
+            expected: plan,
+            rating: feedbackEntry && typeof feedbackEntry.rating === "number" ? feedbackEntry.rating : (typeof correction.rating === "number" ? correction.rating : 0),
+            createdAt: feedbackEntry && feedbackEntry.createdAt ? feedbackEntry.createdAt : item.resolvedAt,
+            createdBy: feedbackEntry && feedbackEntry.createdBy ? feedbackEntry.createdBy : (currentUser ? currentUser.username : ""),
+            source: "reject"
           });
+          appendedCorrection = true;
         }
         state.tools.trend.history.push({
           id: uuid(),
@@ -7522,15 +7822,19 @@
         break;
       }
     }
+    if (appendedCorrection) {
+      rebuildTrendModelArtifact({ deferSave: true, deferEmit: true });
+    }
     saveState();
     emitTrendChange();
   }
 
-  function recordTrendFeedback(feedback) {
+  function recordTrendFeedback(feedback, options) {
     ensureTrendStore();
     if (!feedback || typeof feedback !== "object") {
-      return;
+      return null;
     }
+    options = options || {};
     var now = new Date().toISOString();
     var entry = {
       id: uuid(),
@@ -7552,16 +7856,26 @@
       calibration.ratingSum += entry.rating;
       calibration.ratingCount += 1;
     }
-    state.tools.trend.history.push({
-      id: uuid(),
-      kind: "feedback",
-      nodeId: entry.nodeId,
-      subNodeId: entry.subNodeId,
-      createdAt: now,
-      meta: entry
-    });
-    saveState();
-    emitTrendChange();
+    if (!options.skipHistory) {
+      state.tools.trend.history.push({
+        id: uuid(),
+        kind: "feedback",
+        nodeId: entry.nodeId,
+        subNodeId: entry.subNodeId,
+        createdAt: now,
+        meta: entry
+      });
+    }
+    if (!options.deferArtifact) {
+      rebuildTrendModelArtifact({ deferSave: true, deferEmit: true });
+    }
+    if (!options.deferSave) {
+      saveState();
+    }
+    if (!options.deferEmit) {
+      emitTrendChange();
+    }
+    return entry;
   }
 
   function removeTrendHistoryEntries(ids) {
@@ -14491,6 +14805,8 @@
         listScenarios: listTrendScenarios,
         removeScenario: removeTrendScenario,
         feedback: recordTrendFeedback,
+        downloadModel: downloadTrendModelArtifact,
+        getModelArtifact: getTrendModelArtifact,
         toast: showToast,
         getUser: function () {
           if (!currentUser) {

@@ -4632,6 +4632,13 @@ textarea:focus {
   gap: 10px;
 }
 
+.trend-model-info {
+  font-size: 13px;
+  color: rgba(15, 23, 42, 0.64);
+  line-height: 1.6;
+  padding: 4px 0 2px;
+}
+
 .trend-stage {
   background: #ffffff;
   border-radius: 16px;
