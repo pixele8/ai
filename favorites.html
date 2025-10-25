@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>收藏夹 · 虹小聊</title>
+<link rel="stylesheet" href="styles/app.css">
+</head>
+<body data-page="favorites">
+<div class="app-shell">
+  <aside class="sidebar" id="bankSidebar">
+    <div class="brand"><img class="brand-logo" src="assets/logo.png" alt="虹小聊 logo"><span class="brand-name">虹小聊</span></div>
+    <div class="nav-group">
+      <a class="nav-link" href="index.html">对话</a>
+      <a class="nav-link" href="kb.html">知识库</a>
+      <a class="nav-link active" href="favorites.html">收藏夹</a>
+      <a class="nav-link" href="decision.html">决策链</a>
+      <a class="nav-link" href="ai-tools.html">AI 工具箱</a>
+      <a class="nav-link" href="admin.html">系统</a>
+    </div>
+    <div class="sidebar-section">
+      <div class="section-title">记忆库</div>
+      <div class="badge-list" id="bankList"></div>
+      <button class="ghost-button" id="createBank">新建记忆库</button>
+    </div>
+    <button class="ghost-button" id="logoutButton">退出登录</button>
+  </aside>
+  <main class="main-panel favorites-panel">
+    <header class="main-header">
+      <div class="header-info">
+        <div class="bank-badge" id="activeBankBadge">未选择记忆库</div>
+        <div class="header-sub">收藏会话随时调阅、引用与浮窗预览</div>
+      </div>
+      <div class="user-info" id="userInfo"></div>
+    </header>
+    <section class="favorites-hero">
+      <div class="hero-primary">
+        <h1>收藏指挥台</h1>
+        <p id="favoriteHeroSummary">将高价值会话沉淀为知识卡片，便于随时引用与分享。</p>
+        <div class="hero-metrics">
+          <div class="metric-tile">
+            <span class="metric-label">收藏总数</span>
+            <span class="metric-value" id="favoriteCount">0</span>
+          </div>
+          <div class="metric-tile">
+            <span class="metric-label">最近更新</span>
+            <span class="metric-value" id="favoriteUpdated">--</span>
+          </div>
+        </div>
+      </div>
+      <div class="hero-actions">
+        <label class="search-label" for="favoriteSearch">快速检索</label>
+        <input type="text" id="favoriteSearch" class="favorite-search" placeholder="输入标题、摘要或关键词">
+        <div class="hero-hint">支持右键会话收藏，或在对话中收藏精彩问答。</div>
+      </div>
+    </section>
+    <section class="favorites-board">
+      <div class="panel favorites-column">
+        <div class="panel-header">
+          <h2>收藏列表</h2>
+        </div>
+        <div id="favoriteList" class="favorite-list"></div>
+      </div>
+      <div class="panel favorites-column">
+        <div class="panel-header">
+          <h2>收藏详情</h2>
+        </div>
+        <div id="favoriteDetail" class="favorite-detail"></div>
+      </div>
+    </section>
+  </main>
+</div>
+<div id="favoriteOverlay" class="favorite-overlay hidden"></div>
+<script src="scripts/app.js"></script>
+</body>
+</html>
