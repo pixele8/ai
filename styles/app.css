@@ -5885,8 +5885,8 @@ textarea:focus {
 
 .trend-beacon-panel {
   position: relative;
-  width: 320px;
-  max-height: 420px;
+  width: 332px;
+  max-height: clamp(280px, 70vh, 560px);
   border-radius: 18px;
   background: #ffffff;
   border: 1px solid rgba(15, 23, 42, 0.08);
@@ -5895,6 +5895,7 @@ textarea:focus {
   display: none;
   flex-direction: column;
   gap: 14px;
+  overflow: hidden;
 }
 
 .trend-beacon.open .trend-beacon-panel {
@@ -5923,7 +5924,18 @@ textarea:focus {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  overflow: auto;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(15, 23, 42, 0.18) transparent;
+}
+.trend-beacon-list::-webkit-scrollbar {
+  width: 6px;
+}
+.trend-beacon-list::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.18);
+  border-radius: 999px;
 }
 
 .trend-beacon-entry {
@@ -5962,6 +5974,15 @@ textarea:focus {
   margin-top: 10px;
 }
 
+.trend-beacon-entry-note {
+  font-size: 12px;
+  color: rgba(15, 23, 42, 0.55);
+  text-align: center;
+  padding: 6px 8px;
+  background: rgba(37, 99, 235, 0.08);
+  border-radius: 8px;
+}
+
 .trend-beacon-accept {
   background: #2563eb;
   color: #ffffff;
@@ -5991,6 +6012,23 @@ textarea:focus {
   justify-content: space-between;
   align-items: center;
   font-size: 13px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.trend-beacon-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.trend-beacon-more {
+  font-size: 13px;
+  padding: 6px 12px;
+}
+
+.trend-beacon-more.is-hidden {
+  display: none;
 }
 
 .trend-beacon-link {

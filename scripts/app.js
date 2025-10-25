@@ -44,7 +44,7 @@
   var floatingFavoritePosition = null;
   var trendSubscribers = [];
   var trendBeaconUnsubscribe = null;
-  var trendBeaconState = { open: false };
+  var trendBeaconState = { open: false, expanded: false };
   var trendDemoTimer = null;
   var trendDemoLastTick = 0;
   var trendBeaconRoot = null;
@@ -762,10 +762,14 @@
     panel.innerHTML = '' +
       '<header class="trend-beacon-header"><div class="trend-beacon-title">趋势分析建议</div>' +
       '<button type="button" class="trend-beacon-close">关闭</button></header>' +
-      '<div class="trend-beacon-body"><div class="trend-beacon-summary"></div><div class="trend-beacon-list" role="list"></div></div>' +
+      '<div class="trend-beacon-summary"></div>' +
+      '<div class="trend-beacon-list" role="list"></div>' +
       '<footer class="trend-beacon-footer">' +
+      '<button type="button" class="trend-beacon-more ghost-button is-hidden">展开更多建议</button>' +
+      '<div class="trend-beacon-footer-actions">' +
       '<a class="trend-beacon-link" href="ai-trend.html">进入趋势分析工作台</a>' +
       '<button type="button" class="trend-beacon-history ghost-button">查看历史记录</button>' +
+      '</div>' +
       '</footer>';
     root.appendChild(panel);
     document.body.appendChild(root);
@@ -773,7 +777,10 @@
     applyTrendBeaconPosition();
     attachTrendBeaconDrag(root, [toggle, panel.querySelector(".trend-beacon-header")]);
     if (!root.dataset.resizeBound) {
-      window.addEventListener("resize", applyTrendBeaconPosition);
+      window.addEventListener("resize", function () {
+        applyTrendBeaconPosition();
+        applyTrendBeaconPanelConstraints();
+      });
       root.dataset.resizeBound = "true";
     }
     var closeBtn = panel.querySelector(".trend-beacon-close");
@@ -786,6 +793,13 @@
     if (historyBtn) {
       historyBtn.addEventListener("click", function () {
         window.location.href = "ai-trend-history.html";
+      });
+    }
+    var moreBtn = panel.querySelector(".trend-beacon-more");
+    if (moreBtn) {
+      moreBtn.addEventListener("click", function () {
+        trendBeaconState.expanded = !trendBeaconState.expanded;
+        renderTrendBeaconContent();
       });
     }
     if (!trendBeaconDocListenerAttached) {
@@ -981,7 +995,11 @@
     } else {
       trendBeaconState.open = !trendBeaconState.open;
     }
+    if (!trendBeaconState.open) {
+      trendBeaconState.expanded = false;
+    }
     applyTrendBeaconState();
+    applyTrendBeaconPanelConstraints();
   }
 
   function handleTrendBeaconDocumentClick(evt) {
@@ -992,7 +1010,9 @@
       return;
     }
     trendBeaconState.open = false;
+    trendBeaconState.expanded = false;
     applyTrendBeaconState();
+    applyTrendBeaconPanelConstraints();
   }
 
   function closeTrendBeacon() {
@@ -1019,6 +1039,55 @@
     }
   }
 
+  function applyTrendBeaconPanelConstraints() {
+    if (!trendBeaconRoot) {
+      return;
+    }
+    var panel = trendBeaconRoot.querySelector(".trend-beacon-panel");
+    var list = trendBeaconRoot.querySelector(".trend-beacon-list");
+    if (!panel) {
+      return;
+    }
+    if (!trendBeaconState.open) {
+      panel.style.maxHeight = "";
+      if (list) {
+        list.style.maxHeight = "";
+      }
+      return;
+    }
+    var viewportLimit = Math.max(280, Math.min(window.innerHeight - 96, 560));
+    panel.style.maxHeight = viewportLimit + "px";
+    if (!list) {
+      return;
+    }
+    var computed = window.getComputedStyle(panel);
+    var paddingTop = parseFloat(computed.paddingTop) || 0;
+    var paddingBottom = parseFloat(computed.paddingBottom) || 0;
+    var gap = parseFloat(computed.rowGap || computed.gap || 0) || 0;
+    var childCount = panel.children ? panel.children.length : 0;
+    var header = panel.querySelector(".trend-beacon-header");
+    var summary = panel.querySelector(".trend-beacon-summary");
+    var footer = panel.querySelector(".trend-beacon-footer");
+    var occupied = paddingTop + paddingBottom;
+    if (childCount > 1) {
+      occupied += gap * (childCount - 1);
+    }
+    if (header) {
+      occupied += header.offsetHeight;
+    }
+    if (summary) {
+      occupied += summary.offsetHeight;
+    }
+    if (footer) {
+      occupied += footer.offsetHeight;
+    }
+    var available = viewportLimit - occupied;
+    if (!isFinite(available) || available < 120) {
+      available = 120;
+    }
+    list.style.maxHeight = available + "px";
+  }
+
   function renderTrendBeaconContent(snapshot) {
     ensureTrendBeaconElements();
     if (!trendBeaconRoot) {
@@ -1029,6 +1098,7 @@
     var dot = trendBeaconRoot.querySelector(".trend-beacon-dot");
     var summary = trendBeaconRoot.querySelector(".trend-beacon-summary");
     var list = trendBeaconRoot.querySelector(".trend-beacon-list");
+    var moreBtn = trendBeaconRoot.querySelector(".trend-beacon-more");
     if (!toggleText || !dot || !summary || !list) {
       return;
     }
@@ -1051,6 +1121,9 @@
       toggleText.textContent = "趋势平稳";
       summary.textContent = "当前各节点运行在安全区间内。";
       list.innerHTML = "";
+      if (moreBtn) {
+        moreBtn.classList.add("is-hidden");
+      }
       dot.setAttribute("data-state", "idle");
     } else {
       trendBeaconRoot.classList.remove("idle");
@@ -1058,7 +1131,12 @@
       dot.setAttribute("data-state", suggestions[0].severity >= 3 ? "alert" : "warn");
       summary.textContent = "共 " + suggestions.length + " 条活跃建议，点击查看详情。";
       list.innerHTML = "";
-      for (var i = 0; i < suggestions.length; i += 1) {
+      var baseLimit = 3;
+      if (suggestions.length <= baseLimit && trendBeaconState.expanded) {
+        trendBeaconState.expanded = false;
+      }
+      var visibleCount = trendBeaconState.expanded ? suggestions.length : Math.min(suggestions.length, baseLimit);
+      for (var i = 0; i < visibleCount; i += 1) {
         var item = suggestions[i];
         var entry = document.createElement("article");
         entry.className = "trend-beacon-entry";
@@ -1130,9 +1208,25 @@
         entry.appendChild(actions);
         list.appendChild(entry);
       }
+      if (moreBtn) {
+        if (suggestions.length > baseLimit) {
+          var remaining = suggestions.length - baseLimit;
+          moreBtn.classList.remove("is-hidden");
+          moreBtn.textContent = trendBeaconState.expanded ? "收起建议" : "展开剩余 " + remaining + " 条";
+        } else {
+          moreBtn.classList.add("is-hidden");
+        }
+      }
+      if (trendBeaconState.expanded && suggestions.length > baseLimit) {
+        var expandedNote = document.createElement("div");
+        expandedNote.className = "trend-beacon-entry-note";
+        expandedNote.textContent = "已显示全部建议";
+        list.appendChild(expandedNote);
+      }
     }
     trendBeaconRoot.classList.remove("hidden");
     applyTrendBeaconState();
+    applyTrendBeaconPanelConstraints();
     applyTrendBeaconPosition();
   }
 
