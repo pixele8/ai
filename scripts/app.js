@@ -3597,7 +3597,9 @@
   }
 
   function createOutputLibraryRecord() {
-    ensureTrendStore();
+    if (!state.tools || !state.tools.trend) {
+      return null;
+    }
     var settings = state.tools.trend.settings || {};
     var target = settings.outputTarget || {};
     var id = typeof settings.outputNodeId === "string" && settings.outputNodeId.trim()
