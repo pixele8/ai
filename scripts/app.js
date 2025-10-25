@@ -5446,6 +5446,8 @@
     var siblingsByParent = {};
     var childListByGroup = {};
     var childOwner = {};
+    var groupChildrenMap = {};
+    var descendantCache = {};
     var trendNodes = Array.isArray(nodes) ? nodes : [];
     var settings = state.tools.trend.settings || {};
     var outputId = settings.outputNodeId || "__output__";
@@ -5516,6 +5518,12 @@
         siblingsByParent[parentKey] = [];
       }
       siblingsByParent[parentKey].push(group.id);
+      if (group.parentId) {
+        if (!groupChildrenMap[group.parentId]) {
+          groupChildrenMap[group.parentId] = [];
+        }
+        groupChildrenMap[group.parentId].push(group.id);
+      }
       childListByGroup[group.id] = [];
       if (Array.isArray(group.children)) {
         for (var c = 0; c < group.children.length; c += 1) {
@@ -5682,12 +5690,129 @@
       }
     }
 
+    function collectDescendants(groupId) {
+      if (!groupId) {
+        return { groups: [], nodes: [] };
+      }
+      if (descendantCache[groupId]) {
+        return descendantCache[groupId];
+      }
+      var nodeSet = {};
+      var groupSet = {};
+      var nodeList = [];
+      var groupList = [];
+      var directNodes = childListByGroup[groupId] || [];
+      for (var dn = 0; dn < directNodes.length; dn += 1) {
+        var dnId = directNodes[dn];
+        if (dnId && !nodeSet[dnId]) {
+          nodeSet[dnId] = true;
+          nodeList.push(dnId);
+        }
+      }
+      var queue = groupChildrenMap[groupId] ? groupChildrenMap[groupId].slice() : [];
+      while (queue.length) {
+        var nextGroup = queue.shift();
+        if (!nextGroup || groupSet[nextGroup]) {
+          continue;
+        }
+        groupSet[nextGroup] = true;
+        groupList.push(nextGroup);
+        var nestedNodes = childListByGroup[nextGroup] || [];
+        for (var nn = 0; nn < nestedNodes.length; nn += 1) {
+          var nnId = nestedNodes[nn];
+          if (nnId && !nodeSet[nnId]) {
+            nodeSet[nnId] = true;
+            nodeList.push(nnId);
+          }
+        }
+        var nestedGroups = groupChildrenMap[nextGroup];
+        if (nestedGroups) {
+          for (var ng = 0; ng < nestedGroups.length; ng += 1) {
+            var childGroupId = nestedGroups[ng];
+            if (childGroupId && !groupSet[childGroupId]) {
+              queue.push(childGroupId);
+            }
+          }
+        }
+      }
+      var result = { groups: groupList, nodes: nodeList };
+      descendantCache[groupId] = result;
+      return result;
+    }
+
+    function propagateGroupHierarchyOrdering() {
+      for (var id in infoMap) {
+        if (!Object.prototype.hasOwnProperty.call(infoMap, id)) {
+          continue;
+        }
+        var info = infoMap[id];
+        if (!info || info.kind !== "group") {
+          continue;
+        }
+        var entry = adjacency[id];
+        if (!entry) {
+          continue;
+        }
+        var descendants = collectDescendants(id);
+        var descendantIds = [];
+        if (descendants.groups && descendants.groups.length) {
+          descendantIds = descendantIds.concat(descendants.groups);
+        }
+        if (descendants.nodes && descendants.nodes.length) {
+          descendantIds = descendantIds.concat(descendants.nodes);
+        }
+        if (!descendantIds.length) {
+          continue;
+        }
+        var upstreamList = entry.upstream ? entry.upstream.slice() : [];
+        var downstreamList = entry.downstream ? entry.downstream.slice() : [];
+        for (var di = 0; di < descendantIds.length; di += 1) {
+          var descendantId = descendantIds[di];
+          if (!descendantId || !infoMap[descendantId]) {
+            continue;
+          }
+          ensureAdjacency(descendantId);
+          ensureEntry(
+            adjacency[descendantId].upstream,
+            id,
+            computeRelationshipWeight(infoMap[descendantId], info, "upstream")
+          );
+          ensureEntry(
+            adjacency[id].downstream,
+            descendantId,
+            computeRelationshipWeight(info, infoMap[descendantId], "downstream")
+          );
+          for (var ui = 0; ui < upstreamList.length; ui += 1) {
+            var upstreamEntry = upstreamList[ui];
+            if (!upstreamEntry || !upstreamEntry.nodeId) {
+              continue;
+            }
+            ensureAdjacency(upstreamEntry.nodeId);
+            ensureEntry(adjacency[descendantId].upstream, upstreamEntry.nodeId, upstreamEntry.weight);
+            ensureEntry(adjacency[upstreamEntry.nodeId].downstream, descendantId, upstreamEntry.weight);
+          }
+          for (var wi = 0; wi < downstreamList.length; wi += 1) {
+            var downstreamEntry = downstreamList[wi];
+            if (!downstreamEntry || !downstreamEntry.nodeId) {
+              continue;
+            }
+            ensureAdjacency(downstreamEntry.nodeId);
+            ensureEntry(adjacency[downstreamEntry.nodeId].upstream, descendantId, downstreamEntry.weight);
+            ensureEntry(adjacency[descendantId].downstream, downstreamEntry.nodeId, downstreamEntry.weight);
+          }
+        }
+      }
+    }
+
+    propagateGroupHierarchyOrdering();
+
     state.tools.trend.orderContext = {
       adjacency: adjacency,
       info: infoMap,
       siblings: siblingsByParent,
       childOwner: childOwner,
-      children: childListByGroup
+      children: childListByGroup,
+      descendants: descendantCache
     };
 
     return adjacency;
@@ -5777,7 +5902,8 @@
       distances: distances,
       childOwner: JSON.parse(JSON.stringify(context.childOwner || {})),
       siblings: JSON.parse(JSON.stringify(context.siblings || {})),
-      children: JSON.parse(JSON.stringify(context.children || {}))
+      children: JSON.parse(JSON.stringify(context.children || {})),
+      descendants: JSON.parse(JSON.stringify(context.descendants || {}))
     };
   }
 

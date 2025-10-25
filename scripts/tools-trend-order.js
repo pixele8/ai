@@ -14,6 +14,7 @@
     var gridEl = document.getElementById("trendOrderGrid");
     var emptyEl = document.getElementById("trendOrderEmpty");
     var breadcrumbEl = document.getElementById("trendOrderBreadcrumb");
+    var backBtn = document.getElementById("trendOrderBackMain");
     var upBtn = document.getElementById("trendOrderUp");
     var newGroupBtn = document.getElementById("trendOrderNewGroup");
     var newNodeBtn = document.getElementById("trendOrderNewNode");
@@ -430,6 +431,11 @@
         .replace(/'/g, "&#39;");
     }
 
+    if (backBtn) {
+      backBtn.addEventListener("click", function () {
+        window.location.href = "ai-trend.html";
+      });
+    }
     if (upBtn) {
       upBtn.addEventListener("click", navigateUp);
     }
