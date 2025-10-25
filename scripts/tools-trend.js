@@ -11,6 +11,121 @@
     return fixed + (unit ? " " + unit : "");
   }
 
+  function getUnitKnowledge() {
+    if (typeof window !== "undefined" && window.UnitKnowledge) {
+      return window.UnitKnowledge;
+    }
+    return null;
+  }
+
+  function canonicalUnitSymbol(value) {
+    if (!value) {
+      return "";
+    }
+    var knowledge = getUnitKnowledge();
+    if (knowledge && typeof knowledge.normalize === "function") {
+      return knowledge.normalize(value);
+    }
+    return typeof value === "string" ? value.trim() : value;
+  }
+
+  function listKnownUnits() {
+    var knowledge = getUnitKnowledge();
+    if (!knowledge) {
+      return [];
+    }
+    if (typeof knowledge.listUnits === "function") {
+      return knowledge.listUnits();
+    }
+    if (Array.isArray(knowledge.units)) {
+      return knowledge.units.slice();
+    }
+    return [];
+  }
+
+  function describeUnitInsight(symbol) {
+    if (!symbol) {
+      return "";
+    }
+    var knowledge = getUnitKnowledge();
+    if (!knowledge) {
+      return "";
+    }
+    if (typeof knowledge.describe === "function") {
+      return knowledge.describe(symbol) || "";
+    }
+    var entry = null;
+    if (typeof knowledge.getUnit === "function") {
+      entry = knowledge.getUnit(symbol);
+    }
+    if (!entry && Array.isArray(knowledge.units)) {
+      for (var i = 0; i < knowledge.units.length; i += 1) {
+        if (knowledge.units[i] && canonicalUnitSymbol(knowledge.units[i].symbol) === canonicalUnitSymbol(symbol)) {
+          entry = knowledge.units[i];
+          break;
+        }
+      }
+    }
+    if (!entry) {
+      return "";
+    }
+    var parts = [];
+    if (entry.symbol) {
+      parts.push(entry.symbol + (entry.name ? "（" + entry.name + "）" : ""));
+    } else if (entry.name) {
+      parts.push(entry.name);
+    }
+    if (entry.description) {
+      parts.push(entry.description);
+    }
+    if (entry.formulaSummary) {
+      parts.push("换算 " + entry.formulaSummary);
+    }
+    if (entry.related && entry.related.length) {
+      parts.push("关联 " + entry.related.join(" / "));
+    }
+    return parts.join(" · ");
+  }
+
+  function populateUnitSelect(selectEl, selectedValue) {
+    if (!selectEl) {
+      return;
+    }
+    var selected = canonicalUnitSymbol(selectedValue || "");
+    var options = listKnownUnits();
+    selectEl.innerHTML = "";
+    var placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "请选择单位";
+    selectEl.appendChild(placeholder);
+    var seen = {};
+    options.forEach(function (item) {
+      if (!item || !item.symbol) {
+        return;
+      }
+      var canonical = canonicalUnitSymbol(item.symbol);
+      if (!canonical || seen[canonical]) {
+        return;
+      }
+      seen[canonical] = true;
+      var option = document.createElement("option");
+      option.value = canonical;
+      var label = item.symbol;
+      if (item.name) {
+        label += " · " + item.name;
+      }
+      option.textContent = label;
+      selectEl.appendChild(option);
+    });
+    if (selected && !seen[selected]) {
+      var custom = document.createElement("option");
+      custom.value = selected;
+      custom.textContent = selected + "（自定义）";
+      selectEl.appendChild(custom);
+    }
+    selectEl.value = selected;
+  }
+
   function formatTime(iso) {
     if (!iso) {
       return "";
@@ -822,6 +937,29 @@
         }
         if (!item.originalId) {
           item.originalId = item.id;
+        }
+        if (item.positionMode !== "after" && item.positionMode !== "before" && item.positionMode !== "parallel" && item.positionMode !== "same") {
+          item.positionMode = "after";
+        }
+        if (typeof item.positionRef === "string") {
+          item.positionRef = item.positionRef.trim();
+          if (!item.positionRef) {
+            item.positionRef = null;
+          }
+        } else if (item.positionRef === undefined) {
+          item.positionRef = null;
+        }
+        if (typeof item.positionRefKind === "string" && item.positionRefKind) {
+          if (item.positionRefKind !== "group" && item.positionRefKind !== "node" && item.positionRefKind !== "output") {
+            item.positionRefKind = item.positionRef ? "node" : null;
+          }
+        } else {
+          item.positionRefKind = item.positionRef ? "node" : null;
+        }
+        if (typeof item.orderNote === "string") {
+          item.orderNote = item.orderNote.trim();
+        } else {
+          item.orderNote = "";
         }
         if (typeof item.mesSourceId === "string") {
           item.mesSourceId = item.mesSourceId.trim();
@@ -2728,10 +2866,11 @@
         if (!child || typeof child !== "object") {
           return;
         }
-        if (child.unit && units.indexOf(child.unit) === -1) {
-          units.push(child.unit);
+        var childUnit = child && child.unit ? canonicalUnitSymbol(child.unit) : "";
+        if (childUnit && units.indexOf(childUnit) === -1) {
+          units.push(childUnit);
           if (!firstUnit) {
-            firstUnit = child.unit;
+            firstUnit = childUnit;
           }
         }
         if (typeof child.lower === "number") {
@@ -2780,13 +2919,14 @@
       var settings = state.snapshot.settings;
       var target = settings.outputTarget || {};
       var id = settings.outputNodeId && settings.outputNodeId.trim() ? settings.outputNodeId.trim() : "__output__";
+      var canonicalUnit = canonicalUnitSymbol(settings.outputUnit || "");
       return {
         id: id,
         name: settings.outputName || "引出量中心",
         lower: typeof target.lower === "number" ? target.lower : null,
         center: typeof target.center === "number" ? target.center : null,
         upper: typeof target.upper === "number" ? target.upper : null,
-        unit: settings.outputUnit || "",
+        unit: canonicalUnit,
         note: settings.outputNote || "",
         mesSourceId: settings.outputMesSourceId ? String(settings.outputMesSourceId) : null,
         simulate: settings.outputSimulate === false ? false : true
@@ -3131,6 +3271,7 @@
       if (!draft) {
         return;
       }
+      draft.unit = canonicalUnitSymbol(draft.unit || "");
       if (nodeModalKeyInput) {
         nodeModalKeyInput.value = draft.id || generateUniqueNodeId();
       }
@@ -3138,7 +3279,7 @@
         nodeModalNameInput.value = draft.name || "";
       }
       if (nodeModalUnitInput) {
-        nodeModalUnitInput.value = draft.unit || "";
+        populateUnitSelect(nodeModalUnitInput, draft.unit || "");
       }
       if (nodeModalSimulateSelect) {
         nodeModalSimulateSelect.value = draft.simulate === false ? "false" : "true";
@@ -3203,6 +3344,10 @@
           metaLines.push("MES 数据源：" + (mesDescriptor ? describeMesEndpoint(mesDescriptor) : selectedMesId));
         } else {
           metaLines.push("MES 数据源：未绑定");
+        }
+        var unitLine = describeUnitInsight(draft.unit);
+        if (unitLine) {
+          metaLines.push("单位洞察：" + unitLine);
         }
         nodeModalMeta.innerHTML = metaLines.join("<br>");
       }
@@ -3280,6 +3425,8 @@
       if (manualStep !== null && isNaN(manualStep)) {
         manualStep = null;
       }
+      var unitRaw = nodeModalUnitInput && nodeModalUnitInput.value ? nodeModalUnitInput.value.trim() : "";
+      var unit = canonicalUnitSymbol(unitRaw);
       var manualTargets = [];
       if (manual && nodeModalImpactSelect) {
         for (var i = 0; i < nodeModalImpactSelect.options.length; i += 1) {
@@ -3299,7 +3446,7 @@
         id: key,
         originalId: originalId,
         name: nodeModalNameInput && nodeModalNameInput.value ? nodeModalNameInput.value.trim() || "节点" : "节点",
-        unit: nodeModalUnitInput && nodeModalUnitInput.value ? nodeModalUnitInput.value.trim() : "",
+        unit: unit,
         lower: lower,
         center: center,
         upper: upper,
@@ -3336,9 +3483,39 @@
         return;
       }
       if (state.nodeModalState && state.nodeModalState.isNew) {
+        if (state.nodeModalState && state.nodeModalState.draft) {
+          data.positionMode = state.nodeModalState.draft.positionMode || "after";
+          data.positionRef = state.nodeModalState.draft.positionRef || null;
+          data.positionRefKind = state.nodeModalState.draft.positionRefKind || (data.positionRef ? "node" : null);
+          data.orderNote = state.nodeModalState.draft.orderNote || "";
+        } else {
+          data.positionMode = "after";
+          data.positionRef = null;
+          data.positionRefKind = null;
+          data.orderNote = "";
+        }
         data.originalId = data.originalId || data.id;
         state.editingSubNodes.push(data);
       } else if (state.nodeModalState) {
+        if (state.nodeModalState.draft) {
+          data.positionMode = state.nodeModalState.draft.positionMode || "after";
+          data.positionRef = state.nodeModalState.draft.positionRef || null;
+          data.positionRefKind = state.nodeModalState.draft.positionRefKind || (data.positionRef ? "node" : null);
+          data.orderNote = state.nodeModalState.draft.orderNote || "";
+        } else {
+          data.positionMode = state.editingSubNodes[state.nodeModalState.index] && state.editingSubNodes[state.nodeModalState.index].positionMode
+            ? state.editingSubNodes[state.nodeModalState.index].positionMode
+            : "after";
+          data.positionRef = state.editingSubNodes[state.nodeModalState.index] && state.editingSubNodes[state.nodeModalState.index].positionRef
+            ? state.editingSubNodes[state.nodeModalState.index].positionRef
+            : null;
+          data.positionRefKind = state.editingSubNodes[state.nodeModalState.index] && state.editingSubNodes[state.nodeModalState.index].positionRefKind
+            ? state.editingSubNodes[state.nodeModalState.index].positionRefKind
+            : (data.positionRef ? "node" : null);
+          data.orderNote = state.editingSubNodes[state.nodeModalState.index] && state.editingSubNodes[state.nodeModalState.index].orderNote
+            ? state.editingSubNodes[state.nodeModalState.index].orderNote
+            : "";
+        }
         state.editingSubNodes[state.nodeModalState.index] = data;
       }
       closeNodeModal();
@@ -3550,7 +3727,7 @@
       if (!snapshot || !Array.isArray(snapshot.streams)) {
         return [];
       }
-      var windowMinutes = typeof minutes === "number" && minutes > 0 ? minutes : 30;
+      var windowMinutes = typeof minutes === "number" && minutes > 0 ? minutes : 60;
       var cutoff = Date.now() - windowMinutes * 60000;
       var buckets = {};
       var keys = [];
@@ -3611,7 +3788,7 @@
 
     function buildOutputBrief(series, bounds) {
       var settings = state.snapshot && state.snapshot.settings ? state.snapshot.settings : {};
-      var unit = typeof settings.outputUnit === "string" ? settings.outputUnit : "";
+      var unit = typeof settings.outputUnit === "string" ? canonicalUnitSymbol(settings.outputUnit) : "";
       var horizon = typeof settings.predictionMinutes === "number" && settings.predictionMinutes > 0
         ? settings.predictionMinutes
         : 30;
@@ -3679,7 +3856,7 @@
         upper: typeof upperValue === "number" ? upperValue : null,
         center: typeof centerValue === "number" ? centerValue : null
       };
-      var series = collectOutputCompositeSeries(30);
+      var series = collectOutputCompositeSeries(60);
       if (targetBriefEl) {
         targetBriefEl.textContent = buildOutputBrief(series, bounds);
       }
@@ -5089,6 +5266,18 @@
           id: record && record.id ? record.id : "__output__",
           parentId: null
         });
+      });
+    }
+
+    if (nodeModalUnitInput) {
+      nodeModalUnitInput.addEventListener("change", function () {
+        if (!state.nodeModalState || !state.nodeModalState.draft) {
+          return;
+        }
+        var normalized = canonicalUnitSymbol(nodeModalUnitInput.value);
+        state.nodeModalState.draft.unit = normalized;
+        populateNodeModal(state.nodeModalState.draft);
+        applyNodeModalMode(state.nodeModalState.mode || "edit");
       });
     }
 

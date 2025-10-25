@@ -3283,11 +3283,21 @@
       } else {
         node.unit = node.unit.trim();
       }
-      if (node.positionMode !== "after" && node.positionMode !== "parallel" && node.positionMode !== "same") {
+      if (node.positionMode !== "after" && node.positionMode !== "before" && node.positionMode !== "parallel" && node.positionMode !== "same") {
         node.positionMode = "after";
       }
       if (typeof node.positionRef !== "string") {
         node.positionRef = null;
+      }
+      if (typeof node.positionRefKind !== "string" || !node.positionRefKind) {
+        node.positionRefKind = null;
+      } else if (node.positionRefKind !== "group" && node.positionRefKind !== "node" && node.positionRefKind !== "output") {
+        node.positionRefKind = null;
+      }
+      if (typeof node.orderNote !== "string") {
+        node.orderNote = "";
+      } else {
+        node.orderNote = node.orderNote.trim();
       }
       if (typeof node.lower !== "number" && node.lower !== null) {
         node.lower = null;
@@ -3347,6 +3357,22 @@
         }
         if (typeof child.upper !== "number") {
           child.upper = null;
+        }
+        if (child.positionMode !== "after" && child.positionMode !== "before" && child.positionMode !== "parallel" && child.positionMode !== "same") {
+          child.positionMode = "after";
+        }
+        if (typeof child.positionRef !== "string") {
+          child.positionRef = null;
+        }
+        if (typeof child.positionRefKind !== "string" || !child.positionRefKind) {
+          child.positionRefKind = child.positionRef ? "node" : null;
+        } else if (child.positionRefKind !== "group" && child.positionRefKind !== "node" && child.positionRefKind !== "output") {
+          child.positionRefKind = child.positionRef ? "node" : null;
+        }
+        if (typeof child.orderNote !== "string") {
+          child.orderNote = "";
+        } else {
+          child.orderNote = child.orderNote.trim();
         }
         if (typeof child.center !== "number") {
           if (typeof child.lower === "number" && typeof child.upper === "number") {
@@ -3754,6 +3780,50 @@
       if (node.children[i] && node.children[i].id === childId) {
         return node.children[i];
       }
+    }
+    return null;
+  }
+
+  function findTrendGroupByChildId(childId) {
+    ensureTrendStore();
+    if (!childId) {
+      return null;
+    }
+    for (var i = 0; i < state.tools.trend.nodes.length; i += 1) {
+      var group = state.tools.trend.nodes[i];
+      if (!group || !Array.isArray(group.children)) {
+        continue;
+      }
+      for (var c = 0; c < group.children.length; c += 1) {
+        if (group.children[c] && group.children[c].id === childId) {
+          return group;
+        }
+      }
+    }
+    return null;
+  }
+
+  function sanitizeTrendPositionMode(mode) {
+    if (mode === "after" || mode === "before" || mode === "parallel" || mode === "same") {
+      return mode;
+    }
+    return null;
+  }
+
+  function detectTrendRefKind(refId) {
+    if (!refId) {
+      return null;
+    }
+    ensureTrendStore();
+    if (refId === (state.tools.trend.settings && state.tools.trend.settings.outputNodeId)) {
+      return "output";
+    }
+    if (findTrendNodeById(refId)) {
+      return "group";
+    }
+    var owner = findTrendGroupByChildId(refId);
+    if (owner) {
+      return "node";
     }
     return null;
   }
@@ -4193,7 +4263,11 @@
         depth: groupPath.length ? groupPath.length - 1 : 0,
         ancestors: groupPath.slice(0, -1),
         children: [],
-        siblings: []
+        siblings: [],
+        positionMode: currentGroup.positionMode || "after",
+        positionRef: currentGroup.positionRef || null,
+        positionRefKind: currentGroup.positionRefKind || null,
+        orderNote: currentGroup.orderNote || ""
       };
       for (var ci = 0; ci < currentGroup.children.length; ci += 1) {
         var child = currentGroup.children[ci];
@@ -4231,7 +4305,11 @@
           groupPath: groupPath.slice(),
           groupNamePath: namePath.slice(),
           createdAt: child.createdAt,
-          updatedAt: child.updatedAt
+          updatedAt: child.updatedAt,
+          positionMode: child.positionMode || "after",
+          positionRef: child.positionRef || null,
+          positionRefKind: child.positionRefKind || null,
+          orderNote: child.orderNote || ""
         };
         library.push(record);
         nodeRegistry[record.id] = record;
@@ -4420,7 +4498,7 @@
         base.unit = "";
       }
     }
-    if (payload.positionMode === "after" || payload.positionMode === "parallel" || payload.positionMode === "same") {
+    if (payload.positionMode === "after" || payload.positionMode === "before" || payload.positionMode === "parallel" || payload.positionMode === "same") {
       base.positionMode = payload.positionMode;
     } else if (!base.positionMode) {
       base.positionMode = "after";
@@ -4431,6 +4509,20 @@
       base.positionRef = null;
     } else if (typeof base.positionRef !== "string") {
       base.positionRef = null;
+    }
+    if (typeof payload.positionRefKind === "string" && payload.positionRefKind) {
+      if (payload.positionRefKind === "group" || payload.positionRefKind === "node" || payload.positionRefKind === "output") {
+        base.positionRefKind = payload.positionRefKind;
+      }
+    } else if (payload.positionRef === null) {
+      base.positionRefKind = null;
+    } else if (typeof base.positionRefKind !== "string") {
+      base.positionRefKind = null;
+    }
+    if (typeof payload.orderNote === "string") {
+      base.orderNote = payload.orderNote.trim();
+    } else if (typeof base.orderNote !== "string") {
+      base.orderNote = "";
     }
     if (typeof payload.lower === "number" || payload.lower === null) {
       base.lower = payload.lower;
@@ -4518,6 +4610,32 @@
           } else {
             existing.center = null;
           }
+        }
+        if (childInput.positionMode === "after" || childInput.positionMode === "before" || childInput.positionMode === "parallel" || childInput.positionMode === "same") {
+          existing.positionMode = childInput.positionMode;
+        } else if (!existing.positionMode) {
+          existing.positionMode = "after";
+        }
+        if (typeof childInput.positionRef === "string" && childInput.positionRef) {
+          existing.positionRef = childInput.positionRef.trim();
+        } else if (childInput.positionRef === null) {
+          existing.positionRef = null;
+        } else if (typeof existing.positionRef !== "string") {
+          existing.positionRef = null;
+        }
+        if (typeof childInput.positionRefKind === "string" && childInput.positionRefKind) {
+          if (childInput.positionRefKind === "group" || childInput.positionRefKind === "node" || childInput.positionRefKind === "output") {
+            existing.positionRefKind = childInput.positionRefKind;
+          }
+        } else if (childInput.positionRef === null) {
+          existing.positionRefKind = null;
+        } else if (typeof existing.positionRefKind !== "string") {
+          existing.positionRefKind = existing.positionRef ? "node" : null;
+        }
+        if (typeof childInput.orderNote === "string") {
+          existing.orderNote = childInput.orderNote.trim();
+        } else if (typeof existing.orderNote !== "string") {
+          existing.orderNote = "";
         }
         if (typeof childInput.manual === "boolean") {
           existing.manual = childInput.manual;
@@ -4679,6 +4797,96 @@
     saveState();
     rebuildTrendNodeLibrary();
     emitTrendChange();
+  }
+
+  function updateTrendOrdering(patch) {
+    ensureTrendStore();
+    if (!patch || typeof patch !== "object" || !patch.id) {
+      return null;
+    }
+    var mode = sanitizeTrendPositionMode(patch.positionMode) || "after";
+    var rawRef = typeof patch.positionRef === "string" ? patch.positionRef.trim() : null;
+    if (rawRef === "") {
+      rawRef = null;
+    }
+    var refKind = rawRef ? detectTrendRefKind(rawRef) : null;
+    if (patch.positionRefKind && (patch.positionRefKind === "group" || patch.positionRefKind === "node" || patch.positionRefKind === "output")) {
+      refKind = patch.positionRefKind;
+    }
+    var note = typeof patch.orderNote === "string" ? patch.orderNote.trim() : "";
+    var changed = false;
+    if (patch.kind === "group") {
+      var group = findTrendNodeById(patch.id);
+      if (!group) {
+        return null;
+      }
+      if (group.positionMode !== mode) {
+        group.positionMode = mode;
+        changed = true;
+      }
+      var normalizedRef = rawRef;
+      if (normalizedRef && normalizedRef === group.id) {
+        normalizedRef = null;
+      }
+      if (group.positionRef !== normalizedRef) {
+        group.positionRef = normalizedRef;
+        changed = true;
+      }
+      var nextKind = normalizedRef ? (refKind || detectTrendRefKind(normalizedRef)) : null;
+      if (group.positionRefKind !== nextKind) {
+        group.positionRefKind = nextKind;
+        changed = true;
+      }
+      if (note !== group.orderNote) {
+        group.orderNote = note;
+        changed = true;
+      }
+    } else if (patch.kind === "node") {
+      var parent = null;
+      if (patch.groupId) {
+        parent = findTrendNodeById(patch.groupId);
+      }
+      if (!parent) {
+        parent = findTrendGroupByChildId(patch.id);
+      }
+      if (!parent) {
+        return null;
+      }
+      var child = findTrendChild(parent, patch.id);
+      if (!child) {
+        return null;
+      }
+      if (child.positionMode !== mode) {
+        child.positionMode = mode;
+        changed = true;
+      }
+      var childRef = rawRef;
+      if (childRef && childRef === child.id) {
+        childRef = null;
+      }
+      if (child.positionRef !== childRef) {
+        child.positionRef = childRef;
+        changed = true;
+      }
+      var childKind = childRef ? (refKind || detectTrendRefKind(childRef)) : null;
+      if (child.positionRefKind !== childKind) {
+        child.positionRefKind = childKind;
+        changed = true;
+      }
+      if (note !== child.orderNote) {
+        child.orderNote = note;
+        changed = true;
+      }
+    } else {
+      return null;
+    }
+    if (!changed) {
+      return null;
+    }
+    rebuildTrendNodeLibrary();
+    saveState();
+    emitTrendChange();
+    return patch.id;
   }
 
   function updateTrendSettings(patch) {
@@ -5232,18 +5440,24 @@
   }
 
   function buildTrendAdjacency(nodes) {
+    ensureTrendStore();
     var adjacency = {};
-    if (!Array.isArray(nodes)) {
-      return adjacency;
-    }
-    var nodeMap = {};
-    for (var i = 0; i < nodes.length; i += 1) {
-      var node = nodes[i];
-      if (!node || !node.id) {
-        continue;
+    var infoMap = {};
+    var siblingsByParent = {};
+    var childListByGroup = {};
+    var childOwner = {};
+    var trendNodes = Array.isArray(nodes) ? nodes : [];
+    var settings = state.tools.trend.settings || {};
+    var outputId = settings.outputNodeId || "__output__";
+    var outputTarget = settings.outputTarget || {};
+
+    function ensureAdjacency(id) {
+      if (!id) {
+        return;
       }
-      nodeMap[node.id] = node;
-      adjacency[node.id] = adjacency[node.id] || { upstream: [], downstream: [], parallel: [] };
+      if (!adjacency[id]) {
+        adjacency[id] = { upstream: [], downstream: [], parallel: [] };
+      }
     }
 
     function ensureEntry(list, nodeId, weight) {
@@ -5262,64 +5476,392 @@
       list.push({ nodeId: nodeId, weight: normalized });
     }
 
-    for (var n = 0; n < nodes.length; n += 1) {
-      var current = nodes[n];
-      if (!current || !current.id) {
+    ensureAdjacency(outputId);
+    infoMap[outputId] = {
+      id: outputId,
+      kind: "output",
+      name: settings.outputName || "引出量中心",
+      lower: typeof outputTarget.lower === "number" ? outputTarget.lower : null,
+      upper: typeof outputTarget.upper === "number" ? outputTarget.upper : null,
+      center: typeof outputTarget.center === "number" ? outputTarget.center : null,
+      positionMode: "after",
+      positionRef: null,
+      positionRefKind: null,
+      orderNote: settings.outputNote || "",
+      parentId: null
+    };
+
+    for (var i = 0; i < trendNodes.length; i += 1) {
+      var group = trendNodes[i];
+      if (!group || !group.id) {
         continue;
       }
-      var upstreamId = null;
-      if (current.positionRef && adjacency[current.positionRef]) {
-        upstreamId = current.positionRef;
-      } else if (n > 0 && nodes[n - 1] && nodes[n - 1].id && nodes[n - 1].id !== current.id) {
-        upstreamId = nodes[n - 1].id;
+      ensureAdjacency(group.id);
+      var groupInfo = {
+        id: group.id,
+        kind: "group",
+        name: group.name || "节点组",
+        parentId: group.parentId || null,
+        lower: typeof group.lower === "number" ? group.lower : null,
+        upper: typeof group.upper === "number" ? group.upper : null,
+        center: typeof group.center === "number" ? group.center : null,
+        positionMode: sanitizeTrendPositionMode(group.positionMode) || "after",
+        positionRef: group.positionRef || null,
+        positionRefKind: group.positionRefKind || null,
+        orderNote: group.orderNote || ""
+      };
+      infoMap[group.id] = groupInfo;
+      var parentKey = group.parentId || "__root__";
+      if (!siblingsByParent[parentKey]) {
+        siblingsByParent[parentKey] = [];
       }
-      if (upstreamId && adjacency[current.id]) {
-        var upstreamNode = nodeMap[upstreamId];
-        var currentNode = nodeMap[current.id];
-        ensureEntry(adjacency[current.id].upstream, upstreamId, computeRelationshipWeight(currentNode, upstreamNode, "upstream"));
-        if (adjacency[upstreamId]) {
-          ensureEntry(adjacency[upstreamId].downstream, current.id, computeRelationshipWeight(upstreamNode, currentNode, "downstream"));
-        }
-      }
-      if (current.positionMode === "same" || current.positionMode === "parallel") {
-        var peerId = current.positionRef || upstreamId;
-        if (peerId && adjacency[peerId]) {
-          var peerNode = nodeMap[peerId];
-          var currentNodeForParallel = nodeMap[current.id];
-          ensureEntry(adjacency[current.id].parallel, peerId, computeRelationshipWeight(currentNodeForParallel, peerNode, "parallel"));
-          ensureEntry(adjacency[peerId].parallel, current.id, computeRelationshipWeight(peerNode, currentNodeForParallel, "parallel"));
-        }
-      }
-    }
-    var hierarchy = state.tools.trend.hierarchy || {};
-    var groupHierarchy = hierarchy.groups || {};
-    for (var groupId in groupHierarchy) {
-      if (!Object.prototype.hasOwnProperty.call(groupHierarchy, groupId)) {
-        continue;
-      }
-      var groupEntry = groupHierarchy[groupId];
-      var currentNode = nodeMap[groupId];
-      if (!groupEntry || !currentNode) {
-        continue;
-      }
-      if (groupEntry.parentId && adjacency[groupId] && adjacency[groupEntry.parentId] && nodeMap[groupEntry.parentId]) {
-        var parentNode = nodeMap[groupEntry.parentId];
-        ensureEntry(adjacency[groupId].upstream, parentNode.id, computeRelationshipWeight(currentNode, parentNode, "upstream"));
-        ensureEntry(adjacency[parentNode.id].downstream, currentNode.id, computeRelationshipWeight(parentNode, currentNode, "downstream"));
-      }
-      if (Array.isArray(groupEntry.siblings) && groupEntry.siblings.length) {
-        for (var sb = 0; sb < groupEntry.siblings.length; sb += 1) {
-          var siblingId = groupEntry.siblings[sb];
-          if (!siblingId || !adjacency[groupId] || !adjacency[siblingId] || !nodeMap[siblingId]) {
+      siblingsByParent[parentKey].push(group.id);
+      childListByGroup[group.id] = [];
+      if (Array.isArray(group.children)) {
+        for (var c = 0; c < group.children.length; c += 1) {
+          var child = group.children[c];
+          if (!child || !child.id) {
             continue;
           }
-          var siblingNode = nodeMap[siblingId];
-          ensureEntry(adjacency[groupId].parallel, siblingId, computeRelationshipWeight(currentNode, siblingNode, "parallel"));
-          ensureEntry(adjacency[siblingId].parallel, groupId, computeRelationshipWeight(siblingNode, currentNode, "parallel"));
+          ensureAdjacency(child.id);
+          var childInfo = {
+            id: child.id,
+            kind: "node",
+            name: child.name || "节点",
+            groupId: group.id,
+            lower: typeof child.lower === "number" ? child.lower : null,
+            upper: typeof child.upper === "number" ? child.upper : null,
+            center: typeof child.center === "number" ? child.center : null,
+            positionMode: sanitizeTrendPositionMode(child.positionMode) || "after",
+            positionRef: child.positionRef || null,
+            positionRefKind: child.positionRefKind || null,
+            orderNote: child.orderNote || "",
+            parentId: group.id
+          };
+          infoMap[child.id] = childInfo;
+          childOwner[child.id] = group.id;
+          childListByGroup[group.id].push(child.id);
         }
       }
     }
+
+    function linkAfter(currentId, refId) {
+      if (!currentId || !refId || !infoMap[currentId] || !infoMap[refId]) {
+        return;
+      }
+      ensureAdjacency(currentId);
+      ensureAdjacency(refId);
+      ensureEntry(adjacency[currentId].upstream, refId, computeRelationshipWeight(infoMap[currentId], infoMap[refId], "upstream"));
+      ensureEntry(adjacency[refId].downstream, currentId, computeRelationshipWeight(infoMap[refId], infoMap[currentId], "downstream"));
+    }
+
+    function linkBefore(currentId, refId) {
+      if (!currentId || !refId || !infoMap[currentId] || !infoMap[refId]) {
+        return;
+      }
+      ensureAdjacency(currentId);
+      ensureAdjacency(refId);
+      ensureEntry(adjacency[refId].upstream, currentId, computeRelationshipWeight(infoMap[refId], infoMap[currentId], "upstream"));
+      ensureEntry(adjacency[currentId].downstream, refId, computeRelationshipWeight(infoMap[currentId], infoMap[refId], "downstream"));
+    }
+
+    function linkParallel(a, b) {
+      if (!a || !b || !infoMap[a] || !infoMap[b]) {
+        return;
+      }
+      ensureAdjacency(a);
+      ensureAdjacency(b);
+      ensureEntry(adjacency[a].parallel, b, computeRelationshipWeight(infoMap[a], infoMap[b], "parallel"));
+      ensureEntry(adjacency[b].parallel, a, computeRelationshipWeight(infoMap[b], infoMap[a], "parallel"));
+    }
+
+    for (var parentKey in siblingsByParent) {
+      if (!Object.prototype.hasOwnProperty.call(siblingsByParent, parentKey)) {
+        continue;
+      }
+      var siblingList = siblingsByParent[parentKey];
+      for (var s = 1; s < siblingList.length; s += 1) {
+        linkAfter(siblingList[s], siblingList[s - 1]);
+      }
+    }
+
+    for (var groupId in childListByGroup) {
+      if (!Object.prototype.hasOwnProperty.call(childListByGroup, groupId)) {
+        continue;
+      }
+      var childIds = childListByGroup[groupId];
+      for (var ci = 1; ci < childIds.length; ci += 1) {
+        linkAfter(childIds[ci], childIds[ci - 1]);
+      }
+      for (var cp = 0; cp < childIds.length; cp += 1) {
+        linkParallel(childIds[cp], groupId);
+      }
+    }
+
+    for (var g = 0; g < trendNodes.length; g += 1) {
+      var groupNode = trendNodes[g];
+      if (!groupNode || !groupNode.id) {
+        continue;
+      }
+      var groupRef = groupNode.positionRef || null;
+      var groupMode = sanitizeTrendPositionMode(groupNode.positionMode) || "after";
+      if (groupRef && !infoMap[groupRef]) {
+        var refKind = detectTrendRefKind(groupRef);
+        if (!refKind && groupRef !== outputId) {
+          groupRef = null;
+        }
+      }
+      if (groupRef) {
+        if (groupRef === outputId && groupMode === "before") {
+          linkBefore(groupNode.id, outputId);
+        } else if (groupMode === "before") {
+          linkBefore(groupNode.id, groupRef);
+        } else if (groupMode === "after") {
+          linkAfter(groupNode.id, groupRef);
+        } else {
+          linkParallel(groupNode.id, groupRef);
+        }
+      }
+    }
+
+    for (var childId in childOwner) {
+      if (!Object.prototype.hasOwnProperty.call(childOwner, childId)) {
+        continue;
+      }
+      var childInfo = infoMap[childId];
+      if (!childInfo) {
+        continue;
+      }
+      var childRef = childInfo.positionRef || null;
+      var childMode = sanitizeTrendPositionMode(childInfo.positionMode) || "after";
+      if (childRef && !infoMap[childRef]) {
+        var childKind = detectTrendRefKind(childRef);
+        if (!childKind && childRef !== outputId) {
+          childRef = null;
+        }
+      }
+      if (childRef) {
+        if (childRef === outputId && childMode === "before") {
+          linkBefore(childId, outputId);
+        } else if (childMode === "before") {
+          linkBefore(childId, childRef);
+        } else if (childMode === "after") {
+          linkAfter(childId, childRef);
+        } else {
+          linkParallel(childId, childRef);
+        }
+      }
+    }
+
+    for (var infoId in infoMap) {
+      if (!Object.prototype.hasOwnProperty.call(infoMap, infoId)) {
+        continue;
+      }
+      if (infoId === outputId) {
+        continue;
+      }
+      var entry = infoMap[infoId];
+      if (!entry) {
+        continue;
+      }
+      var downstreamCount = adjacency[infoId] && adjacency[infoId].downstream ? adjacency[infoId].downstream.length : 0;
+      if (entry.kind === "group") {
+        if (!downstreamCount) {
+          linkAfter(outputId, infoId);
+        }
+      } else if (entry.kind === "node") {
+        if (entry.positionRef === outputId && entry.positionMode === "before") {
+          linkBefore(entry.id, outputId);
+        } else if (!downstreamCount) {
+          var ownerId = childOwner[entry.id];
+          var ownerDownstream = ownerId && adjacency[ownerId] && adjacency[ownerId].downstream ? adjacency[ownerId].downstream.length : 0;
+          if (!ownerDownstream) {
+            linkAfter(outputId, entry.id);
+          }
+        }
+      }
+    }
+
+    state.tools.trend.orderContext = {
+      adjacency: adjacency,
+      info: infoMap,
+      siblings: siblingsByParent,
+      childOwner: childOwner,
+      children: childListByGroup
+    };
+
     return adjacency;
+  }
+
+  function computeTrendDistances(adjacency) {
+    ensureTrendStore();
+    adjacency = adjacency || {};
+    var distances = {};
+    var settings = state.tools.trend.settings || {};
+    var outputId = settings.outputNodeId || "__output__";
+    if (!adjacency[outputId]) {
+      return distances;
+    }
+    var queue = [outputId];
+    distances[outputId] = 0;
+    while (queue.length) {
+      var currentId = queue.shift();
+      var base = typeof distances[currentId] === "number" ? distances[currentId] : 0;
+      var entry = adjacency[currentId];
+      if (!entry || !Array.isArray(entry.upstream)) {
+        continue;
+      }
+      for (var i = 0; i < entry.upstream.length; i += 1) {
+        var upstream = entry.upstream[i];
+        if (!upstream || !upstream.nodeId) {
+          continue;
+        }
+        var neighborId = upstream.nodeId;
+        var step = 1 / Math.max(0.1, upstream.weight || 1);
+        var nextDistance = base + step;
+        if (distances[neighborId] === undefined || nextDistance < distances[neighborId]) {
+          distances[neighborId] = nextDistance;
+          queue.push(neighborId);
+        }
+      }
+    }
+    return distances;
+  }
+
+  function listTrendOrderPreview() {
+    ensureTrendStore();
+    var adjacency = buildTrendAdjacency(state.tools.trend.nodes || []);
+    var context = state.tools.trend.orderContext || {};
+    var infoMap = context.info || {};
+    var distances = computeTrendDistances(adjacency);
+    var entries = [];
+    for (var id in infoMap) {
+      if (!Object.prototype.hasOwnProperty.call(infoMap, id)) {
+        continue;
+      }
+      var entry = infoMap[id];
+      if (!entry || (entry.kind !== "group" && entry.kind !== "node" && entry.kind !== "output")) {
+        continue;
+      }
+      entries.push({
+        id: id,
+        name: entry.name || "节点",
+        kind: entry.kind,
+        groupId: entry.groupId || entry.parentId || null,
+        distance: typeof distances[id] === "number" ? distances[id] : Number.POSITIVE_INFINITY,
+        positionMode: entry.positionMode || "after",
+        positionRef: entry.positionRef || null,
+        positionRefKind: entry.positionRefKind || null,
+        orderNote: entry.orderNote || ""
+      });
+    }
+    entries.sort(function (a, b) {
+      var da = isFinite(a.distance) ? a.distance : Number.POSITIVE_INFINITY;
+      var db = isFinite(b.distance) ? b.distance : Number.POSITIVE_INFINITY;
+      if (da !== db) {
+        return da - db;
+      }
+      return String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN");
+    });
+    return entries;
+  }
+
+  function describeTrendOrdering() {
+    ensureTrendStore();
+    var adjacency = buildTrendAdjacency(state.tools.trend.nodes || []);
+    var context = state.tools.trend.orderContext || {};
+    var distances = computeTrendDistances(adjacency);
+    return {
+      adjacency: JSON.parse(JSON.stringify(adjacency || {})),
+      info: JSON.parse(JSON.stringify(context.info || {})),
+      distances: distances,
+      childOwner: JSON.parse(JSON.stringify(context.childOwner || {})),
+      siblings: JSON.parse(JSON.stringify(context.siblings || {})),
+      children: JSON.parse(JSON.stringify(context.children || {}))
+    };
+  }
+
+  function isTrendRising(metrics) {
+    if (!metrics) {
+      return false;
+    }
+    if (typeof metrics.slope === "number" && metrics.slope > 0.002) {
+      return true;
+    }
+    var label = metrics.trendLabel || "";
+    if (/上升|升高|攀升/.test(label)) {
+      return true;
+    }
+    var status = metrics.status || "";
+    return /高|超上限/.test(status);
+  }
+
+  function isTrendFalling(metrics) {
+    if (!metrics) {
+      return false;
+    }
+    if (typeof metrics.slope === "number" && metrics.slope < -0.002) {
+      return true;
+    }
+    var label = metrics.trendLabel || "";
+    if (/下降|回落|降低/.test(label)) {
+      return true;
+    }
+    var status = metrics.status || "";
+    return /超下限|低/.test(status);
+  }
+
+  function evaluateDownstreamModeration(targetId, context) {
+    if (!targetId || !context) {
+      return null;
+    }
+    var metricsMap = context.metricsMap || {};
+    var adjacency = context.adjacency || {};
+    var distances = context.distances || {};
+    var labelMap = context.labelMap || {};
+    var metrics = metricsMap[targetId];
+    if (!metrics || !isTrendRising(metrics)) {
+      return null;
+    }
+    var entry = adjacency[targetId];
+    if (!entry || !Array.isArray(entry.downstream) || !entry.downstream.length) {
+      return null;
+    }
+    var currentDistance = typeof distances[targetId] === "number" ? distances[targetId] : Number.POSITIVE_INFINITY;
+    var candidate = null;
+    for (var i = 0; i < entry.downstream.length; i += 1) {
+      var downstream = entry.downstream[i];
+      if (!downstream || !downstream.nodeId) {
+        continue;
+      }
+      var dsId = downstream.nodeId;
+      var dsMetrics = metricsMap[dsId];
+      if (!dsMetrics || !isTrendFalling(dsMetrics)) {
+        continue;
+      }
+      if (dsMetrics.severity && dsMetrics.severity >= 3) {
+        continue;
+      }
+      var dsDistance = typeof distances[dsId] === "number" ? distances[dsId] : Number.POSITIVE_INFINITY;
+      if (dsDistance >= currentDistance) {
+        continue;
+      }
+      if (!candidate || dsDistance < candidate.distance) {
+        candidate = {
+          id: dsId,
+          distance: dsDistance,
+          trend: dsMetrics.trendLabel || labelMap[dsId] || "回落"
+        };
+      }
+    }
+    if (!candidate) {
+      return null;
+    }
+    return {
+      action: "wait",
+      referenceId: candidate.id,
+      downstreamTrend: candidate.trend
+    };
   }
 
   function collectManualInfluenceTargets(nodes) {
@@ -5868,10 +6410,31 @@
     ensureTrendStore();
     var trend = state.tools.trend;
     var nodes = trend.nodes;
+    var labelMap = {};
+    if (Array.isArray(nodes)) {
+      for (var labelIndex = 0; labelIndex < nodes.length; labelIndex += 1) {
+        var labelGroup = nodes[labelIndex];
+        if (!labelGroup || !labelGroup.id) {
+          continue;
+        }
+        labelMap[labelGroup.id] = labelGroup.name || "节点组";
+        if (Array.isArray(labelGroup.children)) {
+          for (var lc = 0; lc < labelGroup.children.length; lc += 1) {
+            var labelChild = labelGroup.children[lc];
+            if (!labelChild || !labelChild.id) {
+              continue;
+            }
+            labelMap[labelChild.id] = labelChild.name || "节点";
+          }
+        }
+      }
+    }
     var adjacency = buildTrendAdjacency(nodes);
+    var distanceMap = computeTrendDistances(adjacency);
     var manualInfluenceMap = collectManualInfluenceTargets(nodes);
     var newSuggestions = [];
     var newForecasts = [];
+    var metricsMap = {};
     var nowIso = new Date().toISOString();
     var lookbackMs = (trend.settings.lookbackMinutes || 120) * 60000;
     var startTime = Date.now() - lookbackMs;
@@ -5960,6 +6523,14 @@
       if (Math.abs(slope) > 0.002) {
         detail.push("变化速率 " + slope.toFixed(3) + " /分钟");
       }
+      var adjacencyKey = child ? child.id : node.id;
+      metricsMap[adjacencyKey] = {
+        slope: slope,
+        trendLabel: trendLabel,
+        severity: severity,
+        status: status,
+        latestValue: latest.value
+      };
       var context = buildForecastContext(node, child, series, grouped, adjacency, manualInfluenceMap, manualSummary);
       if (context && context.summary && context.summary.length) {
         for (var ctxIndex = 0; ctxIndex < context.summary.length; ctxIndex += 1) {
@@ -6022,7 +6593,29 @@
       if (context) {
         suggestion.context = context;
       }
+      suggestion.adjacencyKey = adjacencyKey;
       newSuggestions.push(suggestion);
+    }
+    for (var ms = 0; ms < newSuggestions.length; ms += 1) {
+      var pendingSuggestion = newSuggestions[ms];
+      if (!pendingSuggestion) {
+        continue;
+      }
+      var moderation = evaluateDownstreamModeration(pendingSuggestion.adjacencyKey, {
+        metricsMap: metricsMap,
+        adjacency: adjacency,
+        distances: distanceMap,
+        labelMap: labelMap
+      });
+      if (moderation && moderation.action === "wait") {
+        var downstreamName = labelMap[moderation.referenceId] || "下游节点";
+        pendingSuggestion.severity = Math.max(1, Math.min(pendingSuggestion.severity, 2));
+        pendingSuggestion.statusLabel = "观察";
+        pendingSuggestion.summary = "暂缓调整 " + pendingSuggestion.label.replace(/：.*$/, "") + "，下游 " + downstreamName + " 正在" + moderation.downstreamTrend;
+        pendingSuggestion.detail.unshift("下游节点“" + downstreamName + "”呈现" + moderation.downstreamTrend + "，建议先观察调整效果。");
+        pendingSuggestion.moderatedBy = moderation.referenceId;
+      }
+      delete pendingSuggestion.adjacencyKey;
     }
     var existing = foldTrendSuggestionsMap();
     var merged = [];
@@ -13874,6 +14467,37 @@
     }
   }
 
+  function initTrendOrderPage() {
+    requireAuth();
+    setNavUserInfo();
+    ensureActiveBank();
+    renderBankList();
+    updateBankBadge();
+    renderFloatingFavorite();
+    renderTrendBeacon();
+    var createBankBtn = document.getElementById("createBank");
+    if (createBankBtn) {
+      createBankBtn.addEventListener("click", createBank);
+    }
+    var logoutBtn = document.getElementById("logoutButton");
+    if (logoutBtn) {
+      logoutBtn.addEventListener("click", logout);
+    }
+    var mountArgs = {
+      getSnapshot: getTrendSnapshot,
+      subscribe: subscribeTrend,
+      updateOrdering: updateTrendOrdering,
+      describeOrdering: describeTrendOrdering,
+      listSequence: listTrendOrderPreview,
+      toast: showToast
+    };
+    if (window.initTrendOrderModule && typeof window.initTrendOrderModule === "function") {
+      window.initTrendOrderModule(mountArgs);
+    } else {
+      window.__pendingTrendOrderInit = mountArgs;
+    }
+  }
+
   function initTrendRegistryPage() {
     requireAuth();
     setNavUserInfo();
@@ -13951,6 +14575,8 @@
         initTrendPage();
       } else if (page === "trend-history") {
         initTrendHistoryPage();
+      } else if (page === "trend-order") {
+        initTrendOrderPage();
       } else if (page === "trend-registry") {
         initTrendRegistryPage();
       } else {

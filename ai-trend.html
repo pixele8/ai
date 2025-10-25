@@ -46,6 +46,7 @@
             <button type="button" class="ghost-button" id="trendExplorerAddNode">新建节点</button>
             <button type="button" class="ghost-button" id="trendOpenConsole">打开趋势控制台</button>
             <a class="ghost-button" href="ai-trend-registry.html" target="_blank" rel="noopener">节点库</a>
+            <a class="ghost-button" href="ai-trend-order.html" target="_blank" rel="noopener">排序管理</a>
           </div>
         </div>
         <div class="trend-desktop-info">
@@ -132,6 +133,7 @@
                   <label for="trendNodePosition">相对位置</label>
                   <select id="trendNodePosition" name="positionMode">
                     <option value="after">位于前一节点之后</option>
+                    <option value="before">位于参考节点之前</option>
                     <option value="parallel">与前一节点并行</option>
                     <option value="same">与前一节点同位置</option>
                   </select>
@@ -325,7 +327,9 @@
         <div class="form-row double">
           <div class="form-field">
             <label for="trendNodeModalUnit">单位</label>
-            <input id="trendNodeModalUnit" name="unit" type="text" placeholder="℃ / A / % 等">
+            <select id="trendNodeModalUnit" name="unit">
+              <option value="">请选择单位</option>
+            </select>
           </div>
           <div class="form-field">
             <label for="trendNodeModalSimulate">演示模拟</label>
@@ -575,6 +579,7 @@
     </form>
   </div>
 </div>
+<script src="scripts/unit-knowledge.js"></script>
 <script src="scripts/app.js"></script>
 <script src="scripts/tools-trend.js"></script>
 </body>

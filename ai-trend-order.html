@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>趋势排序管理 · 虹小聊</title>
+<link rel="stylesheet" href="styles/app.css">
+</head>
+<body data-page="trend-order">
+<div class="app-shell">
+  <aside class="sidebar" id="bankSidebar">
+    <div class="brand"><img class="brand-logo" src="assets/logo.png" alt="虹小聊 logo"><span class="brand-name">虹小聊</span></div>
+    <div class="nav-group">
+      <a class="nav-link" href="index.html">对话</a>
+      <a class="nav-link" href="kb.html">知识库</a>
+      <a class="nav-link" href="favorites.html">收藏夹</a>
+      <a class="nav-link" href="decision.html">决策链</a>
+      <a class="nav-link active" href="ai-tools.html">AI 工具箱</a>
+      <a class="nav-link" href="admin.html">系统</a>
+    </div>
+    <div class="sidebar-section">
+      <div class="section-title">记忆库</div>
+      <div class="badge-list" id="bankList"></div>
+      <button class="ghost-button" id="createBank">新建记忆库</button>
+    </div>
+    <a class="ghost-button toolbox-link" href="ai-tools.html">返回工具箱</a>
+    <button class="ghost-button" id="logoutButton">退出登录</button>
+  </aside>
+  <main class="main-panel trend-order-main">
+    <header class="main-header">
+      <div class="header-info">
+        <div class="header-title">趋势排序管理</div>
+        <div class="header-sub">通过拖拽式文件夹视图为节点组与节点设置前后关系，帮助 AI 深入理解工艺拓扑。</div>
+      </div>
+      <div class="user-info" id="userInfo"></div>
+    </header>
+    <section class="panel trend-order-panel">
+      <div class="trend-order-layout">
+        <aside class="trend-order-sidebar" aria-label="拓扑概览">
+          <div class="trend-order-overview">
+            <h2>控制台基础信息</h2>
+            <div class="trend-order-metrics" id="trendOrderMetrics"></div>
+          </div>
+          <div class="trend-order-preview">
+            <div class="trend-order-preview-header">
+              <h3>顺序预览</h3>
+              <button type="button" class="ghost-button" id="trendOrderRefresh">刷新</button>
+            </div>
+            <ol class="trend-order-sequence" id="trendOrderSequence" aria-live="polite"></ol>
+          </div>
+        </aside>
+        <div class="trend-order-content">
+          <div class="trend-order-toolbar">
+            <button type="button" class="ghost-button" id="trendOrderUp">返回上级</button>
+            <nav class="trend-order-breadcrumb" id="trendOrderBreadcrumb" aria-label="当前位置"></nav>
+            <div class="trend-order-actions">
+              <button type="button" class="ghost-button" id="trendOrderNewGroup">新建节点组</button>
+              <button type="button" class="ghost-button" id="trendOrderNewNode">新建节点</button>
+              <button type="button" class="ghost-button" id="trendOrderOpenConsole">打开趋势控制台</button>
+            </div>
+          </div>
+          <div class="trend-order-grid" id="trendOrderGrid" role="list"></div>
+          <div class="trend-order-empty" id="trendOrderEmpty">当前目录暂无节点组或节点，可使用上方按钮或右键菜单添加。</div>
+        </div>
+        <aside class="trend-order-detail" id="trendOrderDetail" aria-live="polite">
+          <h2 id="trendOrderDetailTitle">关系设定</h2>
+          <div class="trend-order-detail-body">
+            <form id="trendOrderForm" autocomplete="off">
+              <div class="form-field">
+                <label for="trendOrderId">唯一标识</label>
+                <input id="trendOrderId" type="text" readonly>
+              </div>
+              <div class="form-field">
+                <label for="trendOrderName">名称</label>
+                <input id="trendOrderName" type="text" readonly>
+              </div>
+              <div class="form-field">
+                <label for="trendOrderMode">相对关系</label>
+                <select id="trendOrderMode">
+                  <option value="after">位于参考节点之后</option>
+                  <option value="before">位于参考节点之前</option>
+                  <option value="parallel">与参考节点并行</option>
+                  <option value="same">与参考节点同位置</option>
+                </select>
+                <p class="form-hint">可从当前目录选择参考节点，也可输入唯一 ID。</p>
+              </div>
+              <div class="form-field">
+                <label for="trendOrderRef">参考节点</label>
+                <select id="trendOrderRef"></select>
+              </div>
+              <div class="form-field">
+                <label for="trendOrderRefManual">或输入参考节点 ID</label>
+                <input id="trendOrderRefManual" type="text" placeholder="如：cooling-section" autocomplete="off">
+              </div>
+              <div class="form-field">
+                <label for="trendOrderNote">排序说明</label>
+                <textarea id="trendOrderNote" rows="2" placeholder="补充说明，例如影响链路或测点距离"></textarea>
+              </div>
+              <div class="form-actions">
+                <button type="submit" class="primary-button">保存关系</button>
+                <button type="button" class="ghost-button" id="trendOrderReset">重置</button>
+              </div>
+            </form>
+            <div class="trend-order-hints" id="trendOrderHints"></div>
+          </div>
+        </aside>
+      </div>
+    </section>
+  </main>
+</div>
+<script src="scripts/app.js"></script>
+<script src="scripts/tools-trend-order.js"></script>
+</body>
+</html>
