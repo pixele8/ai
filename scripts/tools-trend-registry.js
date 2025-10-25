@@ -234,14 +234,19 @@
     var detailSuggestions = document.getElementById("trendRegistryDetailSuggestions");
     var jumpBtn = document.getElementById("trendRegistryJump");
 
-    function sync(snapshot) {
-      state.snapshot = snapshot || (services.getSnapshot ? services.getSnapshot({}) : null);
-      var provided = services.listLibrary ? services.listLibrary() : null;
-      if (Array.isArray(provided) && provided.length) {
-        state.library = provided.map(cloneLibraryRecord).filter(Boolean);
-      } else {
-        state.library = deriveLibraryFromSnapshot(state.snapshot);
+    function normalizeLibrary(list) {
+      var next = [];
+      if (Array.isArray(list) && list.length) {
+        next = list.map(cloneLibraryRecord).filter(Boolean);
       }
+      if ((!next || !next.length) && state.snapshot) {
+        next = deriveLibraryFromSnapshot(state.snapshot);
+      }
+      return next;
+    }
+
+    function applyLibrary(list) {
+      state.library = normalizeLibrary(list);
       if (state.selectedId) {
         var exists = state.library.some(function (node) { return node && node.id === state.selectedId; });
         if (!exists) {
@@ -255,7 +260,24 @@
       buildGroupOptions();
       renderTable();
       renderDetail();
-      attemptIndexedFallback();
+      if (!state.library.length) {
+        attemptIndexedFallback();
+      }
+    }
+
+    function sync(snapshot) {
+      state.snapshot = snapshot || (services.getSnapshot ? services.getSnapshot({}) : null);
+      var provided = services.listLibrary ? services.listLibrary() : null;
+      if (provided && typeof provided.then === "function") {
+        provided.then(function (records) {
+          applyLibrary(records);
+        }).catch(function (err) {
+          console.warn("trend registry async load failed", err);
+          applyLibrary(null);
+        });
+      } else {
+        applyLibrary(provided);
+      }
     }
 
     function attemptIndexedFallback() {
@@ -343,7 +365,10 @@
       var options = Object.keys(existing).sort(function (a, b) {
         return existing[a].localeCompare(existing[b], "zh-Hans-CN");
       });
-      var current = groupSelect.value;
+      var targetValue = "";
+      if (state.group && options.indexOf(state.group) !== -1) {
+        targetValue = state.group;
+      }
       groupSelect.innerHTML = "";
       var allOption = document.createElement("option");
       allOption.value = "";
@@ -355,12 +380,8 @@
         opt.textContent = existing[key];
         groupSelect.appendChild(opt);
       });
-      if (options.indexOf(current) !== -1) {
-        groupSelect.value = current;
-        state.group = current;
-      } else if (!options.length) {
-        state.group = "";
-      }
+      groupSelect.value = targetValue;
+      state.group = groupSelect.value || "";
     }
 
     function filterLibrary() {

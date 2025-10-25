@@ -3317,10 +3317,132 @@
     }
   }
 
+  function cloneTrendHierarchyNodes() {
+    ensureTrendStore();
+    var hierarchy = state.tools.trend && state.tools.trend.hierarchy;
+    if (!hierarchy || !hierarchy.nodes) {
+      return [];
+    }
+    var records = [];
+    for (var nodeId in hierarchy.nodes) {
+      if (!Object.prototype.hasOwnProperty.call(hierarchy.nodes, nodeId)) {
+        continue;
+      }
+      var entry = hierarchy.nodes[nodeId];
+      if (!entry) {
+        continue;
+      }
+      try {
+        records.push(JSON.parse(JSON.stringify(entry)));
+      } catch (err) {
+        records.push({
+          id: entry.id || nodeId,
+          name: entry.name || "节点",
+          unit: entry.unit || "",
+          lower: typeof entry.lower === "number" ? entry.lower : null,
+          center: typeof entry.center === "number" ? entry.center : null,
+          upper: typeof entry.upper === "number" ? entry.upper : null,
+          manual: !!entry.manual,
+          manualStep: typeof entry.manualStep === "number" ? entry.manualStep : 0,
+          simulate: entry.simulate === false ? false : true,
+          note: entry.note || "",
+          groupId: entry.groupId || null,
+          parentGroupId: entry.parentGroupId || null,
+          groupPath: Array.isArray(entry.groupPath) ? entry.groupPath.slice() : [],
+          groupNamePath: Array.isArray(entry.groupNamePath) ? entry.groupNamePath.slice() : [],
+          groupNote: entry.groupNote || "",
+          mesSourceId: entry.mesSourceId ? String(entry.mesSourceId) : null,
+          createdAt: entry.createdAt || "",
+          updatedAt: entry.updatedAt || ""
+        });
+      }
+    }
+    return records;
+  }
+
+  function flattenTrendNodes() {
+    ensureTrendStore();
+    var nodes = Array.isArray(state.tools.trend.nodes) ? state.tools.trend.nodes : [];
+    if (!nodes.length) {
+      return [];
+    }
+    var pathCache = {};
+    function buildPath(groupId) {
+      if (!groupId) {
+        return [];
+      }
+      if (pathCache[groupId]) {
+        return pathCache[groupId];
+      }
+      var chain = [];
+      var guard = 0;
+      var currentId = groupId;
+      while (currentId && guard < 50) {
+        guard += 1;
+        var group = findTrendNodeById(currentId);
+        if (!group) {
+          break;
+        }
+        chain.unshift(group.id);
+        currentId = group.parentId || null;
+      }
+      pathCache[groupId] = chain;
+      return chain;
+    }
+    var list = [];
+    var nowIso = new Date().toISOString();
+    for (var i = 0; i < nodes.length; i += 1) {
+      var group = nodes[i];
+      if (!group || !group.id || !Array.isArray(group.children)) {
+        continue;
+      }
+      var groupPath = buildPath(group.id);
+      var namePath = [];
+      for (var gp = 0; gp < groupPath.length; gp += 1) {
+        var refGroup = findTrendNodeById(groupPath[gp]);
+        namePath.push(refGroup && refGroup.name ? refGroup.name : "节点组");
+      }
+      for (var c = 0; c < group.children.length; c += 1) {
+        var child = group.children[c];
+        if (!child || !child.id) {
+          continue;
+        }
+        list.push({
+          id: child.id,
+          name: child.name || "节点",
+          unit: child.unit || "",
+          lower: typeof child.lower === "number" ? child.lower : null,
+          center: typeof child.center === "number" ? child.center : (typeof child.lower === "number" && typeof child.upper === "number" ? (child.lower + child.upper) / 2 : null),
+          upper: typeof child.upper === "number" ? child.upper : null,
+          manual: !!child.manual,
+          manualStep: typeof child.manualStep === "number" ? child.manualStep : (typeof group.manualStep === "number" ? group.manualStep : 0),
+          simulate: child.simulate === false ? false : (group.simulate === false ? false : true),
+          note: child.note || "",
+          groupId: group.id,
+          parentGroupId: group.parentId || null,
+          groupPath: groupPath.slice(),
+          groupNamePath: namePath.slice(),
+          groupNote: group.note || "",
+          mesSourceId: child.mesSourceId ? String(child.mesSourceId) : null,
+          createdAt: child.createdAt || nowIso,
+          updatedAt: child.updatedAt || nowIso
+        });
+      }
+    }
+    return list;
+  }
+
   function listTrendRegistryRecords() {
     ensureTrendStore();
     rebuildTrendNodeLibrary();
-    return cloneTrendNodeLibrary();
+    var library = cloneTrendNodeLibrary();
+    if (!library.length) {
+      library = cloneTrendHierarchyNodes();
+    }
+    if (!library.length) {
+      library = flattenTrendNodes();
+    }
+    return library;
   }
 
   function cloneTrendGroupPaths() {
