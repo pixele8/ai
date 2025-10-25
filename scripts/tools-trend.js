@@ -1075,6 +1075,10 @@
           });
         }
       });
+      var outputRecord = buildOutputNodeRecord();
+      if (outputRecord) {
+        options.push({ value: outputRecord.id, label: outputRecord.name, unit: outputRecord.unit || "" });
+      }
       return options;
     }
 
@@ -1588,6 +1592,10 @@
         if (record.note) {
           parts.push(record.note);
         }
+        if (record.mesSourceId) {
+          var mesDescriptor = findMesEndpointById(record.mesSourceId);
+          parts.push("MES " + (mesDescriptor ? describeMesEndpoint(mesDescriptor) : record.mesSourceId));
+        }
       } else {
         if (record.id) {
           parts.push("ID " + record.id);
@@ -1629,7 +1637,7 @@
         if (type === "group") {
           handleNodeSelection(record.id);
         } else if (type === "output") {
-          openTargetModal({ mode: "view" });
+          openOutputNodeModal({ mode: "view" });
         } else if (parentId) {
           handleNodeSelection(parentId);
           openNodeEditor(parentId, record.id, false);
@@ -1640,7 +1648,7 @@
         if (type === "group") {
           enterExplorerGroup(record.id);
         } else if (type === "output") {
-          openTargetModal({ mode: "edit" });
+          openOutputNodeModal({ mode: "edit" });
         } else if (parentId) {
           openNodeEditor(parentId, record.id, true);
         }
@@ -1677,19 +1685,19 @@
     }
 
     function buildOutputExplorerRecord() {
-      if (!state.snapshot || !state.snapshot.settings) {
+      var record = buildOutputNodeRecord();
+      if (!record) {
         return null;
       }
-      var settings = state.snapshot.settings;
-      var target = settings.outputTarget || {};
       return {
-        id: "__output__",
-        name: settings.outputName || "引出量中心",
-        lower: typeof target.lower === "number" ? target.lower : null,
-        center: typeof target.center === "number" ? target.center : null,
-        upper: typeof target.upper === "number" ? target.upper : null,
-        unit: settings.outputUnit || "",
-        note: settings.outputNote || ""
+        id: record.id,
+        name: record.name,
+        lower: record.lower,
+        center: record.center,
+        upper: record.upper,
+        unit: record.unit,
+        note: record.note,
+        mesSourceId: record.mesSourceId
       };
     }
 
@@ -1999,13 +2007,13 @@
         actions.push({
           label: "查看引出量详情",
           handler: function () {
-            openTargetModal({ mode: "view" });
+            openOutputNodeModal({ mode: "view" });
           }
         });
         actions.push({
           label: "编辑引出量目标",
           handler: function () {
-            openTargetModal({ mode: "edit" });
+            openOutputNodeModal({ mode: "edit" });
           }
         });
         actions.push({
@@ -2602,6 +2610,42 @@
       }
     }
 
+    function openOutputNodeModal(options) {
+      if (!nodeModalEl || !nodeModalForm) {
+        return;
+      }
+      var record = buildOutputNodeRecord();
+      if (!record) {
+        return;
+      }
+      var draft = {
+        id: record.id,
+        originalId: record.id,
+        name: record.name || "引出量中心",
+        unit: record.unit || "",
+        lower: typeof record.lower === "number" ? record.lower : null,
+        center: typeof record.center === "number" ? record.center : null,
+        upper: typeof record.upper === "number" ? record.upper : null,
+        manual: false,
+        manualStep: null,
+        manualTargets: [],
+        mesSourceId: record.mesSourceId || null,
+        simulate: true
+      };
+      var mode = options && options.mode === "edit" ? "edit" : "view";
+      state.nodeModalState = {
+        index: -1,
+        isNew: false,
+        draft: draft,
+        mode: mode,
+        groupId: null,
+        isOutput: true
+      };
+      populateNodeModal(draft);
+      applyNodeModalMode(mode);
+      nodeModalEl.classList.remove("hidden");
+    }
+
     function handleExplorerDocumentClick(evt) {
       if (!explorerMenuEl || explorerMenuEl.hidden) {
         return;
@@ -2720,6 +2764,25 @@
         upper: typeof upper === "number" ? parseFloat(upper.toFixed(3)) : null,
         center: typeof center === "number" ? parseFloat(center.toFixed(3)) : null,
         manualCount: manualCount
+      };
+    }
+
+    function buildOutputNodeRecord() {
+      if (!state.snapshot || !state.snapshot.settings) {
+        return null;
+      }
+      var settings = state.snapshot.settings;
+      var target = settings.outputTarget || {};
+      var id = settings.outputNodeId && settings.outputNodeId.trim() ? settings.outputNodeId.trim() : "__output__";
+      return {
+        id: id,
+        name: settings.outputName || "引出量中心",
+        lower: typeof target.lower === "number" ? target.lower : null,
+        center: typeof target.center === "number" ? target.center : null,
+        upper: typeof target.upper === "number" ? target.upper : null,
+        unit: settings.outputUnit || "",
+        note: settings.outputNote || "",
+        mesSourceId: settings.outputMesSourceId ? String(settings.outputMesSourceId) : null
       };
     }
 
@@ -2960,6 +3023,41 @@
           nodeModalEditBtn.classList.remove("hidden");
         }
       }
+      var isOutput = state.nodeModalState && state.nodeModalState.isOutput;
+      if (nodeModalDetailBtn) {
+        if (isOutput) {
+          nodeModalDetailBtn.classList.add("hidden");
+        } else {
+          nodeModalDetailBtn.classList.remove("hidden");
+        }
+      }
+      if (isOutput) {
+        if (nodeModalManualSelect) {
+          nodeModalManualSelect.value = "false";
+          nodeModalManualSelect.disabled = true;
+        }
+        if (nodeModalManualFields) {
+          nodeModalManualFields.style.display = "none";
+        }
+        if (nodeModalImpactSelect) {
+          nodeModalImpactSelect.innerHTML = "";
+          nodeModalImpactSelect.disabled = true;
+        }
+        if (nodeModalSimulateSelect) {
+          nodeModalSimulateSelect.value = "true";
+          nodeModalSimulateSelect.disabled = true;
+        }
+      } else {
+        if (nodeModalManualSelect) {
+          nodeModalManualSelect.disabled = !editable;
+        }
+        if (nodeModalManualFields) {
+          nodeModalManualFields.style.display = nodeModalManualSelect && nodeModalManualSelect.value === "true" ? "grid" : "none";
+        }
+        if (nodeModalImpactSelect && state.nodeModalState && state.nodeModalState.draft) {
+          nodeModalImpactSelect.disabled = !editable || !state.nodeModalState.draft.manual;
+        }
+      }
     }
 
     function applyNodeModalMode(mode) {
@@ -3007,7 +3105,8 @@
         isNew: !!options.isNew,
         draft: draft,
         mode: mode,
-        groupId: state.editingNodeId || null
+        groupId: state.editingNodeId || null,
+        isOutput: false
       };
       populateNodeModal(draft);
       applyNodeModalMode(mode);
@@ -3201,6 +3300,24 @@
     function saveNodeModal() {
       var data = collectNodeModalData();
       if (!data) {
+        return;
+      }
+      if (state.nodeModalState && state.nodeModalState.isOutput) {
+        services.updateSettings({
+          outputNodeId: data.id,
+          outputName: data.name,
+          outputUnit: data.unit,
+          outputMesSourceId: data.mesSourceId || null,
+          outputTarget: {
+            lower: data.lower,
+            center: data.center,
+            upper: data.upper
+          }
+        });
+        closeNodeModal();
+        if (services.toast) {
+          services.toast("引出量节点已更新");
+        }
         return;
       }
       if (state.nodeModalState && state.nodeModalState.isNew) {
@@ -4808,14 +4925,14 @@
 
     if (outputEditBtn) {
       outputEditBtn.addEventListener("click", function () {
-        openTargetModal();
+        openOutputNodeModal({ mode: "edit" });
       });
     }
 
     if (outputCard) {
       outputCard.addEventListener("contextmenu", function (evt) {
         evt.preventDefault();
-        openTargetModal({ mode: "view" });
+        openOutputNodeModal({ mode: "view" });
       });
     }
 
@@ -4893,6 +5010,11 @@
 
     if (nodeModalManualSelect && nodeModalManualFields) {
       nodeModalManualSelect.addEventListener("change", function () {
+        if (state.nodeModalState && state.nodeModalState.isOutput) {
+          nodeModalManualSelect.value = "false";
+          nodeModalManualFields.style.display = "none";
+          return;
+        }
         if (state.nodeModalState && state.nodeModalState.mode === "view") {
           nodeModalManualSelect.value = state.nodeModalState.draft && state.nodeModalState.draft.manual ? "true" : "false";
           return;

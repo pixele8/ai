@@ -3116,6 +3116,13 @@
           lookbackMinutes: 120,
           predictionMinutes: 30,
           outputTarget: { center: 0, lower: -1, upper: 1 },
+          outputName: "引出量中心",
+          outputUnit: "",
+          outputNote: "",
+          outputNodeId: "__output__",
+          outputMesSourceId: null,
+          outputCreatedAt: new Date().toISOString(),
+          outputUpdatedAt: new Date().toISOString(),
           mesEndpoints: []
         },
         model: { version: 1, calibrations: {} },
@@ -3164,6 +3171,13 @@
         lookbackMinutes: 120,
         predictionMinutes: 30,
         outputTarget: { center: 0, lower: -1, upper: 1 },
+        outputName: "引出量中心",
+        outputUnit: "",
+        outputNote: "",
+        outputNodeId: "__output__",
+        outputMesSourceId: null,
+        outputCreatedAt: new Date().toISOString(),
+        outputUpdatedAt: new Date().toISOString(),
         mesEndpoints: []
       };
     }
@@ -3190,6 +3204,27 @@
     }
     if (!Array.isArray(trend.settings.mesEndpoints)) {
       trend.settings.mesEndpoints = [];
+    }
+    if (typeof trend.settings.outputName !== "string" || !trend.settings.outputName.trim()) {
+      trend.settings.outputName = "引出量中心";
+    }
+    if (typeof trend.settings.outputUnit !== "string") {
+      trend.settings.outputUnit = "";
+    }
+    if (typeof trend.settings.outputNote !== "string") {
+      trend.settings.outputNote = "";
+    }
+    if (typeof trend.settings.outputNodeId !== "string" || !trend.settings.outputNodeId.trim()) {
+      trend.settings.outputNodeId = "__output__";
+    }
+    if (trend.settings.outputMesSourceId && typeof trend.settings.outputMesSourceId !== "string") {
+      trend.settings.outputMesSourceId = String(trend.settings.outputMesSourceId);
+    }
+    if (typeof trend.settings.outputCreatedAt !== "string") {
+      trend.settings.outputCreatedAt = new Date().toISOString();
+    }
+    if (typeof trend.settings.outputUpdatedAt !== "string") {
+      trend.settings.outputUpdatedAt = trend.settings.outputCreatedAt;
     }
     if (!trend.model || typeof trend.model !== "object") {
       trend.model = { version: 1, calibrations: {} };
@@ -3458,7 +3493,7 @@
     ensureTrendStore();
     var nodes = Array.isArray(state.tools.trend.nodes) ? state.tools.trend.nodes : [];
     if (!nodes.length) {
-      return [];
+      return appendOutputRecord([]);
     }
     var pathCache = {};
     function buildPath(groupId) {
@@ -3523,7 +3558,7 @@
         });
       }
     }
-    return list;
+    return appendOutputRecord(list);
   }
 
   function listTrendRegistryRecords() {
@@ -3536,7 +3571,59 @@
     if (!library.length) {
       library = flattenTrendNodes();
     }
-    return library;
+    return appendOutputRecord(library);
+  }
+
+  function appendOutputRecord(list) {
+    var records = Array.isArray(list) ? list.slice() : [];
+    var outputRecord = createOutputLibraryRecord();
+    if (outputRecord) {
+      var exists = false;
+      for (var i = 0; i < records.length; i += 1) {
+        if (records[i] && records[i].id === outputRecord.id) {
+          exists = true;
+          if (!records[i].groupPath || records[i].groupPath.length) {
+            break;
+          }
+          records[i] = outputRecord;
+          break;
+        }
+      }
+      if (!exists) {
+        records.push(outputRecord);
+      }
+    }
+    return records;
+  }
+
+  function createOutputLibraryRecord() {
+    ensureTrendStore();
+    var settings = state.tools.trend.settings || {};
+    var target = settings.outputTarget || {};
+    var id = typeof settings.outputNodeId === "string" && settings.outputNodeId.trim()
+      ? settings.outputNodeId.trim()
+      : "__output__";
+    return {
+      id: id,
+      name: typeof settings.outputName === "string" && settings.outputName.trim()
+        ? settings.outputName.trim()
+        : "引出量中心",
+      unit: typeof settings.outputUnit === "string" ? settings.outputUnit : "",
+      lower: typeof target.lower === "number" ? target.lower : null,
+      center: typeof target.center === "number" ? target.center : null,
+      upper: typeof target.upper === "number" ? target.upper : null,
+      manual: false,
+      manualStep: null,
+      simulate: true,
+      note: typeof settings.outputNote === "string" ? settings.outputNote : "",
+      groupId: null,
+      parentGroupId: null,
+      groupPath: [],
+      groupNamePath: [],
+      mesSourceId: settings.outputMesSourceId ? String(settings.outputMesSourceId) : null,
+      createdAt: typeof settings.outputCreatedAt === "string" ? settings.outputCreatedAt : new Date().toISOString(),
+      updatedAt: typeof settings.outputUpdatedAt === "string" ? settings.outputUpdatedAt : new Date().toISOString()
+    };
   }
 
   function cloneTrendGroupPaths() {
@@ -4165,6 +4252,23 @@
         groupHierarchy[childId].siblings = siblings;
       }
     }
+    var outputRecord = createOutputLibraryRecord();
+    if (outputRecord) {
+      var outputCopy = JSON.parse(JSON.stringify(outputRecord));
+      var existingIndex = -1;
+      for (var li = 0; li < library.length; li += 1) {
+        if (library[li] && library[li].id === outputCopy.id) {
+          existingIndex = li;
+          break;
+        }
+      }
+      if (existingIndex === -1) {
+        library.push(outputCopy);
+      } else {
+        library[existingIndex] = outputCopy;
+      }
+      nodeRegistry[outputCopy.id] = JSON.parse(JSON.stringify(outputCopy));
+    }
     state.tools.trend.nodeLibrary = library;
     state.tools.trend.groupPaths = pathCache;
     state.tools.trend.nodeRegistry = nodeRegistry;
@@ -4576,6 +4680,7 @@
       return cloneTrendSettings();
     }
     var settings = state.tools.trend.settings;
+    var touchedOutput = false;
     if (typeof patch.sampleIntervalMs === "number" && patch.sampleIntervalMs > 0) {
       settings.sampleIntervalMs = patch.sampleIntervalMs;
     }
@@ -4586,15 +4691,62 @@
       settings.predictionMinutes = patch.predictionMinutes;
     }
     if (patch.outputTarget && typeof patch.outputTarget === "object") {
-      if (typeof patch.outputTarget.center === "number") {
-        settings.outputTarget.center = patch.outputTarget.center;
+      if (Object.prototype.hasOwnProperty.call(patch.outputTarget, "center")) {
+        if (typeof patch.outputTarget.center === "number") {
+          settings.outputTarget.center = patch.outputTarget.center;
+        } else {
+          settings.outputTarget.center = null;
+        }
+        touchedOutput = true;
       }
-      if (typeof patch.outputTarget.lower === "number") {
-        settings.outputTarget.lower = patch.outputTarget.lower;
+      if (Object.prototype.hasOwnProperty.call(patch.outputTarget, "lower")) {
+        if (typeof patch.outputTarget.lower === "number") {
+          settings.outputTarget.lower = patch.outputTarget.lower;
+        } else {
+          settings.outputTarget.lower = null;
+        }
+        touchedOutput = true;
       }
-      if (typeof patch.outputTarget.upper === "number") {
-        settings.outputTarget.upper = patch.outputTarget.upper;
+      if (Object.prototype.hasOwnProperty.call(patch.outputTarget, "upper")) {
+        if (typeof patch.outputTarget.upper === "number") {
+          settings.outputTarget.upper = patch.outputTarget.upper;
+        } else {
+          settings.outputTarget.upper = null;
+        }
+        touchedOutput = true;
       }
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "outputName") && typeof patch.outputName === "string") {
+      settings.outputName = patch.outputName.trim() || "引出量中心";
+      touchedOutput = true;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "outputUnit") && typeof patch.outputUnit === "string") {
+      settings.outputUnit = patch.outputUnit.trim();
+      touchedOutput = true;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "outputNote") && typeof patch.outputNote === "string") {
+      settings.outputNote = patch.outputNote.trim();
+      touchedOutput = true;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "outputNodeId")) {
+      var nextId = typeof patch.outputNodeId === "string" ? patch.outputNodeId.trim() : "";
+      if (nextId) {
+        settings.outputNodeId = nextId;
+        touchedOutput = true;
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "outputMesSourceId")) {
+      if (patch.outputMesSourceId === null || typeof patch.outputMesSourceId === "string") {
+        settings.outputMesSourceId = patch.outputMesSourceId ? patch.outputMesSourceId.trim() : null;
+        touchedOutput = true;
+      }
+    }
+    if (touchedOutput) {
+      if (typeof settings.outputCreatedAt !== "string" || !settings.outputCreatedAt) {
+        settings.outputCreatedAt = new Date().toISOString();
+      }
+      settings.outputUpdatedAt = new Date().toISOString();
+      rebuildTrendNodeLibrary();
     }
     saveState();
     emitTrendChange();
