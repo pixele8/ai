@@ -6438,6 +6438,8 @@ textarea:focus {
   gap: 24px;
   cursor: pointer;
   transition: transform 0.18s ease, box-shadow 0.18s ease;
+  position: relative;
+  overflow: hidden;
 }
 
 .trend-console-output:hover {
@@ -6548,14 +6550,21 @@ textarea:focus {
   flex: 0 0 220px;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  padding: 8px 0 8px 8px;
+  justify-content: center;
+  padding: 8px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.22);
+  position: relative;
+  overflow: hidden;
+  min-height: 112px;
 }
 
 .trend-target-sparkline {
-  width: 200px;
-  height: 96px;
-  max-width: 100%;
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: 200px;
+  max-height: 104px;
 }
 
 @media (max-width: 960px) {
@@ -6567,12 +6576,12 @@ textarea:focus {
   .trend-target-visual {
     flex: none;
     width: 100%;
-    justify-content: center;
+    max-width: 100%;
   }
 
   .trend-target-sparkline {
-    width: 100%;
-    height: 120px;
+    max-width: 100%;
+    max-height: 140px;
   }
 }
 
