@@ -13631,13 +13631,17 @@
     if (logoutBtn) {
       logoutBtn.addEventListener("click", logout);
     }
+    var registryMountArgs = {
+      getSnapshot: getTrendSnapshot,
+      subscribe: subscribeTrend,
+      toast: showToast,
+      listLibrary: listTrendRegistryRecords
+    };
+
     if (window.initTrendRegistryModule && typeof window.initTrendRegistryModule === "function") {
-      window.initTrendRegistryModule({
-        getSnapshot: getTrendSnapshot,
-        subscribe: subscribeTrend,
-        toast: showToast,
-        listLibrary: listTrendRegistryRecords
-      });
+      window.initTrendRegistryModule(registryMountArgs);
+    } else {
+      window.__pendingTrendRegistryInit = registryMountArgs;
     }
   }
 

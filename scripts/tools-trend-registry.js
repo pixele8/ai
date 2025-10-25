@@ -688,4 +688,13 @@
       }
     });
   };
+
+  if (window.__pendingTrendRegistryInit) {
+    try {
+      window.initTrendRegistryModule(window.__pendingTrendRegistryInit);
+    } catch (err) {
+      console.warn("mount trend registry module failed", err);
+    }
+    window.__pendingTrendRegistryInit = null;
+  }
 })();
