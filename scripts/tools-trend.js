@@ -63,8 +63,13 @@
     var plotHeight = Math.max(20, height - paddingTop - paddingBottom);
 
     ctx.clearRect(0, 0, width, height);
-    ctx.fillStyle = mini ? "#f8fafc" : "#ffffff";
-    ctx.fillRect(0, 0, width, height);
+    var background = typeof options.background === "string"
+      ? options.background
+      : (mini ? "transparent" : "#ffffff");
+    if (background !== "transparent") {
+      ctx.fillStyle = background;
+      ctx.fillRect(0, 0, width, height);
+    }
 
     var sanitized = Array.isArray(series)
       ? series
@@ -919,7 +924,6 @@
     var explorerConsoleBtn = document.getElementById("trendOpenConsole");
     var consolePanelEl = document.getElementById("trendConsolePanel");
     var consoleCloseBtn = document.getElementById("trendConsoleClose");
-    var outputEditBtn = document.getElementById("trendOutputEdit");
     var explorerMenuContext = null;
     var nodeForm = document.getElementById("trendNodeForm");
     var nodeKeyInput = document.getElementById("trendNodeKey");
@@ -1008,6 +1012,8 @@
     var targetSummaryWindowEl = document.getElementById("trendTargetSummaryWindow");
     var targetSummaryContextEl = document.getElementById("trendTargetSummaryContext");
     var targetSummaryStatusEl = document.getElementById("trendTargetSummaryStatus");
+    var targetBriefEl = document.getElementById("trendTargetBrief");
+    var targetSparkline = document.getElementById("trendTargetSparkline");
     var chartCanvas = document.getElementById("trendChart");
     var chartToolbar = document.querySelector(".trend-chart-toolbar");
     var matrixGridEl = document.getElementById("trendMatrixGrid");
@@ -2952,6 +2958,9 @@
         if (item.manual) {
           parts.push("手动节点");
         }
+        if (item.simulate === false) {
+          parts.push("演示停用");
+        }
         if (item.mesSourceId) {
           var mesEndpoint = findMesEndpointById(item.mesSourceId);
           if (mesEndpoint) {
@@ -3530,19 +3539,153 @@
       }
     }
 
+    function collectOutputCompositeSeries(minutes) {
+      var snapshot = state.snapshot;
+      if (!snapshot || !Array.isArray(snapshot.streams)) {
+        return [];
+      }
+      var windowMinutes = typeof minutes === "number" && minutes > 0 ? minutes : 30;
+      var cutoff = Date.now() - windowMinutes * 60000;
+      var buckets = {};
+      var keys = [];
+      for (var i = 0; i < snapshot.streams.length; i += 1) {
+        var sample = snapshot.streams[i];
+        if (!sample || typeof sample.value !== "number") {
+          continue;
+        }
+        var stamp = sample.capturedAt || sample.receivedAt;
+        var ts = new Date(stamp || Date.now()).getTime();
+        if (!isFinite(ts) || ts < cutoff) {
+          continue;
+        }
+        var bucketKey = Math.floor(ts / 60000) * 60000;
+        if (!buckets[bucketKey]) {
+          buckets[bucketKey] = { sum: 0, count: 0 };
+          keys.push(bucketKey);
+        }
+        buckets[bucketKey].sum += sample.value;
+        buckets[bucketKey].count += 1;
+      }
+      keys.sort(function (a, b) {
+        return a - b;
+      });
+      var series = [];
+      for (var k = 0; k < keys.length; k += 1) {
+        var key = keys[k];
+        var bucket = buckets[key];
+        if (!bucket || !bucket.count) {
+          continue;
+        }
+        var avg = bucket.sum / bucket.count;
+        if (!isFinite(avg)) {
+          continue;
+        }
+        series.push({ capturedAt: new Date(key).toISOString(), value: parseFloat(avg.toFixed(3)) });
+      }
+      return series;
+    }
+
+    function forecastOutputValue(series, horizonMinutes) {
+      if (!Array.isArray(series) || series.length < 2) {
+        return null;
+      }
+      var latest = series[series.length - 1];
+      if (!latest || typeof latest.value !== "number") {
+        return null;
+      }
+      var profile = analyzeTrendProfile(series, { windowSize: Math.min(series.length, 60) });
+      var slope = typeof profile.slope === "number" && isFinite(profile.slope) ? profile.slope : 0;
+      var horizon = typeof horizonMinutes === "number" && horizonMinutes > 0 ? horizonMinutes : 30;
+      return {
+        value: latest.value + slope * horizon,
+        horizonMinutes: horizon,
+        slope: slope
+      };
+    }
+
+    function buildOutputBrief(series, bounds) {
+      var settings = state.snapshot && state.snapshot.settings ? state.snapshot.settings : {};
+      var unit = typeof settings.outputUnit === "string" ? settings.outputUnit : "";
+      var horizon = typeof settings.predictionMinutes === "number" && settings.predictionMinutes > 0
+        ? settings.predictionMinutes
+        : 30;
+      if (!Array.isArray(series) || !series.length) {
+        return "暂无实时数据";
+      }
+      var latest = series[series.length - 1];
+      var latestValue = latest && typeof latest.value === "number" ? latest.value : null;
+      var parts = [];
+      if (latestValue !== null) {
+        var status = bounds ? describeLevel(latestValue, bounds) : null;
+        var label = status && status.label ? status.label : null;
+        var currentText = "当前值 " + formatNumber(latestValue, unit);
+        if (label && label !== "平稳") {
+          currentText += "（" + label + "）";
+        }
+        parts.push(currentText);
+      }
+      var profile = analyzeTrendProfile(series, { windowSize: Math.min(series.length, 60) });
+      var evaluation = evaluateTrendProfile(profile);
+      if (evaluation && evaluation.text) {
+        parts.push(evaluation.text);
+      }
+      var forecast = forecastOutputValue(series, horizon);
+      if (forecast && typeof forecast.value === "number" && isFinite(forecast.value)) {
+        parts.push("预测 " + forecast.horizonMinutes + " 分钟后约 " + formatNumber(forecast.value, unit));
+      }
+      if (bounds && typeof bounds.center === "number" && latestValue !== null) {
+        var delta = latestValue - bounds.center;
+        if (Math.abs(delta) < 0.001) {
+          parts.push("已贴合中心");
+        } else {
+          var deltaText = (delta > 0 ? "高于中心 " : "低于中心 ") + Math.abs(delta).toFixed(3);
+          if (unit) {
+            deltaText += " " + unit;
+          }
+          parts.push(deltaText);
+        }
+      }
+      if (!parts.length) {
+        return "暂无实时数据";
+      }
+      return parts.join(" · ");
+    }
+
     function renderTargetCard() {
       if (!targetCenterEl || !targetRangeEl) {
         return;
       }
       var target = state.snapshot && state.snapshot.settings ? state.snapshot.settings.outputTarget : null;
+      var lowerValue = target && typeof target.lower === "number" ? target.lower : null;
+      var centerValue = target && typeof target.center === "number" ? target.center : null;
+      var upperValue = target && typeof target.upper === "number" ? target.upper : null;
       if (!target) {
         targetCenterEl.textContent = "--";
         targetRangeEl.textContent = "上下限 -- / --";
       } else {
-        targetCenterEl.textContent = formatTargetNumber(target.center);
-        var lower = formatTargetNumber(target.lower);
-        var upper = formatTargetNumber(target.upper);
+        targetCenterEl.textContent = formatTargetNumber(centerValue);
+        var lower = formatTargetNumber(lowerValue);
+        var upper = formatTargetNumber(upperValue);
         targetRangeEl.textContent = "上下限 " + lower + " / " + upper;
+      }
+      var bounds = {
+        lower: typeof lowerValue === "number" ? lowerValue : null,
+        upper: typeof upperValue === "number" ? upperValue : null,
+        center: typeof centerValue === "number" ? centerValue : null
+      };
+      var series = collectOutputCompositeSeries(30);
+      if (targetBriefEl) {
+        targetBriefEl.textContent = buildOutputBrief(series, bounds);
+      }
+      if (targetSparkline) {
+        drawSeries(targetSparkline, series, {
+          mini: true,
+          color: "#7c3aed",
+          lower: bounds.lower,
+          upper: bounds.upper,
+          center: bounds.center,
+          background: "transparent"
+        });
       }
       if (state.snapshot && state.snapshot.demo && state.snapshot.demo.enabled) {
         outputCard.classList.add("demo-active");
@@ -4923,16 +5066,23 @@
       }
     }
 
-    if (outputEditBtn) {
-      outputEditBtn.addEventListener("click", function () {
-        openOutputNodeModal({ mode: "edit" });
-      });
-    }
-
     if (outputCard) {
-      outputCard.addEventListener("contextmenu", function (evt) {
-        evt.preventDefault();
+      outputCard.addEventListener("click", function () {
         openOutputNodeModal({ mode: "view" });
+      });
+      outputCard.addEventListener("keydown", function (evt) {
+        if (evt.key === "Enter" || evt.key === " ") {
+          evt.preventDefault();
+          openOutputNodeModal({ mode: "view" });
+        }
+      });
+      outputCard.addEventListener("contextmenu", function (evt) {
+        var record = buildOutputNodeRecord();
+        openExplorerMenu(evt, {
+          type: "output",
+          id: record && record.id ? record.id : "__output__",
+          parentId: null
+        });
       });
     }
 
@@ -5036,6 +5186,15 @@
           }
         }
         applyNodeModalMode(state.nodeModalState ? state.nodeModalState.mode : "edit");
+      });
+    }
+
+    if (nodeModalSimulateSelect) {
+      nodeModalSimulateSelect.addEventListener("change", function () {
+        if (!state.nodeModalState || !state.nodeModalState.draft) {
+          return;
+        }
+        state.nodeModalState.draft.simulate = nodeModalSimulateSelect.value === "false" ? false : true;
       });
     }
 

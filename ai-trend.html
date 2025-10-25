@@ -56,13 +56,20 @@
             </div>
             <div class="trend-console-items" id="trendSummary"></div>
           </div>
-          <div class="trend-console-output" id="trendOutputCard">
-            <div class="trend-target-title">引出量中心</div>
-            <div class="trend-target-values">
-              <span class="trend-target-center" id="trendTargetCenter">--</span>
-              <span class="trend-target-range" id="trendTargetRange">上下限 -- / --</span>
+          <div class="trend-console-output" id="trendOutputCard" role="button" tabindex="0" title="点击查看引出量详情">
+            <div class="trend-target-content">
+              <div class="trend-target-header">
+                <div class="trend-target-title">引出量中心</div>
+                <div class="trend-target-values">
+                  <span class="trend-target-center" id="trendTargetCenter">--</span>
+                  <span class="trend-target-range" id="trendTargetRange">上下限 -- / --</span>
+                </div>
+              </div>
+              <p class="trend-target-brief" id="trendTargetBrief">实时趋势准备中…</p>
             </div>
-            <button type="button" class="ghost-button" id="trendOutputEdit">编辑引出量</button>
+            <div class="trend-target-visual" aria-hidden="true">
+              <canvas id="trendTargetSparkline" class="trend-target-sparkline"></canvas>
+            </div>
           </div>
         </div>
         <div class="trend-folder-strip">
