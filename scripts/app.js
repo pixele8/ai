@@ -3751,6 +3751,26 @@
         return state.tools.trend.nodes[i];
       }
     }
+    var settings = state.tools.trend.settings || {};
+    var outputId = typeof settings.outputNodeId === "string" && settings.outputNodeId.trim()
+      ? settings.outputNodeId.trim()
+      : "__output__";
+    if (nodeId === outputId) {
+      var target = settings.outputTarget || {};
+      return {
+        id: outputId,
+        name: settings.outputName || "引出量中心",
+        note: settings.outputNote || "",
+        unit: typeof settings.outputUnit === "string" ? settings.outputUnit : "",
+        lower: typeof target.lower === "number" ? target.lower : null,
+        center: typeof target.center === "number" ? target.center : null,
+        upper: typeof target.upper === "number" ? target.upper : null,
+        parentId: null,
+        manual: false,
+        simulate: true,
+        children: []
+      };
+    }
     return null;
   }
 

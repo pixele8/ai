@@ -3813,49 +3813,71 @@
     }
 
     function collectOutputCompositeSeries(minutes) {
-      var snapshot = state.snapshot;
-      if (!snapshot || !Array.isArray(snapshot.streams)) {
-        return [];
-      }
       var windowMinutes = typeof minutes === "number" && minutes > 0 ? minutes : 60;
       var cutoff = Date.now() - windowMinutes * 60000;
-      var buckets = {};
-      var keys = [];
-      for (var i = 0; i < snapshot.streams.length; i += 1) {
-        var sample = snapshot.streams[i];
-        if (!sample || typeof sample.value !== "number") {
-          continue;
+
+      function bucketize(points) {
+        if (!Array.isArray(points) || !points.length) {
+          return [];
         }
-        var stamp = sample.capturedAt || sample.receivedAt;
-        var ts = new Date(stamp || Date.now()).getTime();
-        if (!isFinite(ts) || ts < cutoff) {
-          continue;
+        var buckets = {};
+        var keys = [];
+        for (var i = 0; i < points.length; i += 1) {
+          var item = points[i];
+          if (!item || typeof item.value !== "number") {
+            continue;
+          }
+          var stamp = item.capturedAt || item.receivedAt;
+          var ts = new Date(stamp || Date.now()).getTime();
+          if (!isFinite(ts) || ts < cutoff) {
+            continue;
+          }
+          var bucketKey = Math.floor(ts / 60000) * 60000;
+          if (!buckets[bucketKey]) {
+            buckets[bucketKey] = { sum: 0, count: 0 };
+            keys.push(bucketKey);
+          }
+          buckets[bucketKey].sum += item.value;
+          buckets[bucketKey].count += 1;
         }
-        var bucketKey = Math.floor(ts / 60000) * 60000;
-        if (!buckets[bucketKey]) {
-          buckets[bucketKey] = { sum: 0, count: 0 };
-          keys.push(bucketKey);
+        keys.sort(function (a, b) {
+          return a - b;
+        });
+        var series = [];
+        for (var k = 0; k < keys.length; k += 1) {
+          var bucket = buckets[keys[k]];
+          if (!bucket || !bucket.count) {
+            continue;
+          }
+          var avg = bucket.sum / bucket.count;
+          if (!isFinite(avg)) {
+            continue;
+          }
+          series.push({ capturedAt: new Date(keys[k]).toISOString(), value: parseFloat(avg.toFixed(3)) });
         }
-        buckets[bucketKey].sum += sample.value;
-        buckets[bucketKey].count += 1;
+        return series;
       }
-      keys.sort(function (a, b) {
-        return a - b;
-      });
-      var series = [];
-      for (var k = 0; k < keys.length; k += 1) {
-        var key = keys[k];
-        var bucket = buckets[key];
-        if (!bucket || !bucket.count) {
-          continue;
-        }
-        var avg = bucket.sum / bucket.count;
-        if (!isFinite(avg)) {
-          continue;
-        }
-        series.push({ capturedAt: new Date(key).toISOString(), value: parseFloat(avg.toFixed(3)) });
+
+      var settings = state.snapshot && state.snapshot.settings ? state.snapshot.settings : {};
+      var outputId = typeof settings.outputNodeId === "string" && settings.outputNodeId.trim()
+        ? settings.outputNodeId.trim()
+        : "__output__";
+      var primarySeries = collectFullSeries(outputId, null);
+      var aggregated = bucketize(primarySeries);
+      if (aggregated.length) {
+        return aggregated;
       }
-      return series;
+      var fallbackPoints = [];
+      if (state.snapshot && Array.isArray(state.snapshot.streams)) {
+        for (var i = 0; i < state.snapshot.streams.length; i += 1) {
+          var sample = state.snapshot.streams[i];
+          if (!sample || typeof sample.value !== "number") {
+            continue;
+          }
+          fallbackPoints.push({ capturedAt: sample.capturedAt || sample.receivedAt, value: sample.value });
+        }
+      }
+      return bucketize(fallbackPoints);
     }
 
     function forecastOutputValue(series, horizonMinutes) {

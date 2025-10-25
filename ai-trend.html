@@ -32,7 +32,18 @@
         <div class="header-title">趋势分析预测系统</div>
         <div class="header-sub">定义监测节点、实时生成趋势预测并采集人工订正，预留 MES 数据接入接口。</div>
       </div>
-      <div class="user-info" id="userInfo"></div>
+      <div class="header-tools">
+        <div class="trend-sim-head">
+          <button
+            type="button"
+            class="trend-simulation-toggle"
+            id="trendSimulationToggle"
+            aria-pressed="false"
+          >模拟模式</button>
+          <div class="trend-simulation-status" id="trendSimulationStatus" aria-live="polite">模拟模式未开启。</div>
+        </div>
+        <div class="user-info" id="userInfo"></div>
+      </div>
     </header>
     <section class="panel trend-panel">
       <div class="trend-explorer-panel" id="trendExplorerPanel">
@@ -155,17 +166,10 @@
                 </div>
               </form>
               <div class="trend-config-footer">
-                <h3>模拟模式</h3>
-                <div class="trend-simulation-controls">
-                  <button
-                    type="button"
-                    class="ghost-button trend-simulation-toggle"
-                    id="trendSimulationToggle"
-                    aria-pressed="false"
-                  >模拟模式</button>
+                <h3>操作管理</h3>
+                <div class="trend-config-actions">
                   <button type="button" class="ghost-button" id="trendManualAdjust">记录手动调整</button>
                 </div>
-                <div class="trend-simulation-status" id="trendSimulationStatus" aria-live="polite">模拟模式未开启。</div>
                 <div class="trend-mes-hint">预留 REST / WebSocket / 数据库 接口：可在右键设置中注册 MES 数据源。</div>
               </div>
             </aside>

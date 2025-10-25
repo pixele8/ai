@@ -15,6 +15,28 @@
 
   function flattenNodes(snapshot) {
     var results = [];
+    var settings = snapshot && snapshot.settings ? snapshot.settings : null;
+    if (settings) {
+      var target = settings.outputTarget || {};
+      var outputId = typeof settings.outputNodeId === "string" && settings.outputNodeId.trim()
+        ? settings.outputNodeId.trim()
+        : "__output__";
+      var lower = isNumber(target.lower) ? target.lower : null;
+      var upper = isNumber(target.upper) ? target.upper : null;
+      var center = isNumber(target.center) ? target.center : null;
+      results.push({
+        groupId: outputId,
+        nodeId: null,
+        key: outputId + "::output",
+        name: settings.outputName || "引出量中心",
+        unit: settings.outputUnit || "",
+        lower: lower,
+        upper: upper,
+        center: center,
+        manual: false,
+        simulate: true
+      });
+    }
     if (!snapshot || !Array.isArray(snapshot.nodes)) {
       return results;
     }
@@ -24,6 +46,9 @@
       }
       group.children.forEach(function (child) {
         if (!child || !child.id) {
+          return;
+        }
+        if (group.simulate === false || child.simulate === false) {
           return;
         }
         var key = group.id + "::" + child.id;
